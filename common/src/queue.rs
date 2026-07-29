@@ -15,6 +15,7 @@ pub struct QueueSettings {
 pub struct Queue {
     pub id: i64,
     pub name: String,
+    pub position: i32,
     pub settings: QueueSettings,
     pub scheduler: Scheduler,
     pub created_at: DateTime<Utc>,
