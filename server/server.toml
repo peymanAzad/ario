@@ -1,0 +1,35 @@
+[settings]
+default_download_location = "~/Downloads"
+start_daemon_on_login = false
+stop_daemon_on_close = false
+
+[settings.category_locations]
+
+[settings.category_extensions]
+Video = ["mp4", "mkv", "avi", "mov", "webm", "flv", "m4v"]
+Music = ["mp3", "flac", "wav", "aac", "ogg", "m4a", "opus"]
+Document = ["pdf", "doc", "docx", "txt", "epub", "odt", "rtf"]
+Archive = ["zip", "rar", "7z", "tar", "gz", "xz", "bz2"]
+Program = [
+  "exe",
+  "msi",
+  "apk",
+  "deb",
+  "rpm",
+  "app",
+  "dmg",
+  "pkg",
+  "bin",
+  "run",
+  "com",
+  "jar"
+]
+Image = ["jpg", "jpeg", "png", "gif", "bmp", "webp", "svg", "tiff", "ico"]
+
+[settings.proxy]
+enabled = false
+
+[aria2]
+binary_path = "aria2c"
+rpc_port = 6800
+download_dir = "~/Downloads"

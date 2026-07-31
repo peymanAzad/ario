@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::{DateTime, NaiveTime, Utc, Weekday};
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +21,54 @@ pub enum FileCategory {
     Archive,
     Program,
     Other,
+}
+
+pub type CategoryExtensions = HashMap<FileCategory, Vec<String>>;
+
+impl FileCategory {
+    pub fn infer_from_filename(filename: &str, map: &CategoryExtensions) -> FileCategory {
+        let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
+
+        for (category, extensions) in map {
+            if extensions.iter().any(|e| e == &ext) {
+                return category.clone();
+            }
+        }
+        FileCategory::Other
+    }
+
+    pub fn default_extensions() -> CategoryExtensions {
+        let mut map = HashMap::new();
+        map.insert(
+            FileCategory::Video,
+            vec!["mp4", "mkv", "avi", "mov", "webm", "flv", "m4v"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+        );
+        map.insert(
+            FileCategory::Music,
+            vec!["mp3", "flac", "wav", "aac", "ogg", "m4a", "opus"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+        );
+        map.insert(
+            FileCategory::Document,
+            vec!["pdf", "doc", "docx", "txt", "epub", "odt", "rtf"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+        );
+        map.insert(
+            FileCategory::Archive,
+            vec!["zip", "rar", "7z", "tar", "gz", "xz", "bz2"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+        );
+        map
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
