@@ -67,6 +67,15 @@ impl FileCategory {
                 .map(String::from)
                 .collect(),
         );
+        map.insert(
+            FileCategory::Program,
+            vec![
+                "exe", "msi", "apk", "deb", "rpm", "app", "dmg", "pkg", "bin", "run", "com", "jar",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+        );
         map
     }
 }
