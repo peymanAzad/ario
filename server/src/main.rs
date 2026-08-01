@@ -13,6 +13,8 @@ mod aria2_process;
 mod config;
 mod db;
 mod error;
+mod live_status;
+mod poller;
 mod routes;
 mod scheduler;
 mod state;
@@ -43,6 +45,7 @@ async fn main() -> anyhow::Result<()> {
 
     let state = AppState::new(database, aria2_client, server_config);
     tokio::spawn(scheduler::run(state.clone()));
+    tokio::spawn(poller::run(state.clone()));
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -52,6 +55,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .merge(routes::downloads::router())
         .merge(routes::queues::router())
+        .merge(routes::misc::router())
         .layer(cors)
         .with_state(state.clone());
 

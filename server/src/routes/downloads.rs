@@ -1,3 +1,5 @@
+use crate::state::AppState;
+use crate::{error::AppError, live_status::LiveStats};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -5,13 +7,12 @@ use axum::{
 };
 use chrono::Utc;
 use common::{
-    download::{AddDownloadInput, AddDownloadsRequest, Download, DownloadFilter},
+    download::{
+        AddDownloadInput, AddDownloadsRequest, Download, DownloadFilter, DownloadLiveStatus,
+    },
     enums::{DownloadStatus, FileCategory, SourceType},
     finetune::FineTune,
 };
-
-use crate::error::AppError;
-use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -32,30 +33,61 @@ pub fn router() -> Router<AppState> {
         )
 }
 
+async fn merge_live(state: &AppState, download: Download) -> DownloadLiveStatus {
+    let live = state
+        .live_status
+        .read()
+        .await
+        .get(&download.id)
+        .copied()
+        .unwrap_or(LiveStats {
+            completed_length: 0,
+            download_speed: 0,
+        });
+
+    let eta_seconds = match (download.size, live.download_speed) {
+        (Some(total), speed) if speed > 0 && total > live.completed_length => {
+            Some((total - live.completed_length) / speed)
+        }
+        _ => None,
+    };
+
+    DownloadLiveStatus {
+        completed_length: live.completed_length,
+        download_speed: live.download_speed,
+        eta_seconds,
+        download,
+    }
+}
+
 /// `GET /downloads?queue_id=&status=&category=&sort_by=&sort_desc=`
 async fn list_downloads(
     State(state): State<AppState>,
     Query(filter): Query<DownloadFilter>,
-) -> Result<Json<Vec<Download>>, AppError> {
+) -> Result<Json<Vec<DownloadLiveStatus>>, AppError> {
     let downloads = state.db.list_downloads(&filter)?;
-    Ok(Json(downloads))
+    let mut result = Vec::with_capacity(downloads.len());
+    for d in downloads {
+        result.push(merge_live(&state, d).await);
+    }
+    Ok(Json(result))
 }
 
 async fn get_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> Result<Json<Download>, AppError> {
+) -> Result<Json<DownloadLiveStatus>, AppError> {
     let download = state
         .db
         .get_download(id)?
         .ok_or_else(|| AppError::NotFound(format!("download {id}")))?;
-    Ok(Json(download))
+    Ok(Json(merge_live(&state, download).await))
 }
 
 async fn add_downloads(
     State(state): State<AppState>,
     Json(req): Json<AddDownloadsRequest>,
-) -> Result<Json<Vec<Download>>, AppError> {
+) -> Result<Json<Vec<DownloadLiveStatus>>, AppError> {
     if req.inputs.is_empty() {
         return Err(AppError::BadRequest("inputs must not be empty".into()));
     }
@@ -168,7 +200,7 @@ async fn add_downloads(
             .db
             .get_download(id)?
             .ok_or_else(|| AppError::NotFound(format!("download {id}")))?;
-        created.push(row);
+        created.push(merge_live(&state, row).await);
     }
 
     Ok(Json(created))
@@ -195,19 +227,19 @@ async fn update_finetune(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Json(finetune): Json<FineTune>,
-) -> Result<Json<Download>, AppError> {
+) -> Result<Json<DownloadLiveStatus>, AppError> {
     state.db.update_download_finetune(id, &finetune)?;
     let updated = state
         .db
         .get_download(id)?
         .ok_or_else(|| AppError::NotFound(format!("download {id}")))?;
-    Ok(Json(updated))
+    Ok(Json(merge_live(&state, updated).await))
 }
 
 async fn pause_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> Result<Json<Download>, AppError> {
+) -> Result<Json<DownloadLiveStatus>, AppError> {
     let download = state
         .db
         .get_download(id)?
@@ -226,13 +258,13 @@ async fn pause_download(
         .db
         .get_download(id)?
         .ok_or_else(|| AppError::NotFound(format!("download {id}")))?;
-    Ok(Json(updated))
+    Ok(Json(merge_live(&state, updated).await))
 }
 
 async fn resume_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> Result<Json<Download>, AppError> {
+) -> Result<Json<DownloadLiveStatus>, AppError> {
     let download = state
         .db
         .get_download(id)?
@@ -250,7 +282,7 @@ async fn resume_download(
         .db
         .get_download(id)?
         .ok_or_else(|| AppError::NotFound(format!("download {id}")))?;
-    Ok(Json(updated))
+    Ok(Json(merge_live(&state, updated).await))
 }
 
 #[derive(serde::Deserialize)]
