@@ -305,6 +305,15 @@ impl Database {
         )?;
         Ok(())
     }
+
+    pub fn set_completed_at_now(&self, id: i64) -> SqlResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE downloads SET completed_at = ?1 WHERE id = ?2",
+            params![Utc::now(), id],
+        )?;
+        Ok(())
+    }
 }
 
 fn status_to_str(s: &DownloadStatus) -> (&'static str, Option<String>) {

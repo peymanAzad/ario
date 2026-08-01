@@ -133,6 +133,11 @@ impl Aria2Client {
         Ok(())
     }
 
+    pub async fn get_version(&self) -> Result<(), Aria2Error> {
+        self.call("aria2.getVersion", vec![]).await?;
+        Ok(())
+    }
+
     pub async fn shutdown(&self) -> Result<(), Aria2Error> {
         self.call("aria2.shutdown", vec![]).await?;
         Ok(())
@@ -203,4 +208,11 @@ pub struct Aria2Status {
     pub download_speed: String,
     #[serde(rename = "errorMessage")]
     pub error_message: Option<String>,
+    #[serde(default)]
+    pub files: Vec<Aria2File>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Aria2File {
+    pub path: String,
 }
