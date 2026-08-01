@@ -24,13 +24,34 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings {
+        let mut defaults = Settings {
             default_download_location: "~/Downloads".to_string(),
             category_locations: HashMap::new(),
             category_extensions: FileCategory::default_extensions(),
             proxy: ProxySettings::default(),
             start_daemon_on_login: false,
             stop_daemon_on_close: false,
-        }
+        };
+        defaults.category_locations.insert(
+            FileCategory::Music,
+            defaults.default_download_location.clone() + "/Musics",
+        );
+        defaults.category_locations.insert(
+            FileCategory::Document,
+            defaults.default_download_location.clone() + "/Documents",
+        );
+        defaults.category_locations.insert(
+            FileCategory::Archive,
+            defaults.default_download_location.clone() + "/Compressed",
+        );
+        defaults.category_locations.insert(
+            FileCategory::Video,
+            defaults.default_download_location.clone() + "/Videos",
+        );
+        defaults.category_locations.insert(
+            FileCategory::Program,
+            defaults.default_download_location.clone() + "/Programs",
+        );
+        defaults
     }
 }
