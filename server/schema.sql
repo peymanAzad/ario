@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS downloads (
 
     status              TEXT NOT NULL DEFAULT 'Pending', -- 'Pending'|'Active'|'Paused'|'Completed'|'Error'|'Removed'
     status_error        TEXT,                      -- populated only when status = 'Error'
+    paused_by_scheduler INTEGER NOT NULL DEFAULT 0, -- 0/1 boolean
 
     size                INTEGER,                   -- bytes; NULL until aria2 reports it
 

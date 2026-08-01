@@ -121,6 +121,7 @@ async fn add_downloads(
             source_type,
             category,
             status: DownloadStatus::Pending,
+            paused_by_scheduler: false,
             size: None,
             queue_id: queue.id,
             position_in_queue: next_position,
@@ -219,6 +220,7 @@ async fn pause_download(
     state
         .db
         .update_download_status(id, &DownloadStatus::Paused)?;
+    state.db.set_paused_by_scheduler(id, false)?;
 
     let updated = state
         .db

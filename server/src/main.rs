@@ -14,6 +14,7 @@ mod config;
 mod db;
 mod error;
 mod routes;
+mod scheduler;
 mod state;
 
 #[tokio::main(flavor = "current_thread")]
@@ -41,6 +42,7 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(Arc::clone(&aria2_process).supervise());
 
     let state = AppState::new(database, aria2_client, server_config);
+    tokio::spawn(scheduler::run(state.clone()));
 
     let cors = CorsLayer::new()
         .allow_origin(Any)

@@ -17,6 +17,7 @@ pub struct Download {
     pub source_type: SourceType,
     pub category: FileCategory,
     pub status: DownloadStatus,
+    pub paused_by_scheduler: bool,
     pub size: Option<u64>,
     pub queue_id: i64,
     pub position_in_queue: i32,

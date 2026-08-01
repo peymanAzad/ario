@@ -108,9 +108,9 @@ impl Database {
 
         conn.execute(
             "INSERT INTO downloads (aria2_gid, url, filename, destination_path, source_type,
-                                     category, status, status_error, size, queue_id,
+                                     category, status, status_error, paused_by_scheduler, size, queue_id,
                                      position_in_queue, finetune, created_at, started_at, completed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 d.aria2_gid,
                 d.url,
@@ -120,6 +120,7 @@ impl Database {
                 category_to_str(&d.category),
                 status_str,
                 status_err,
+                d.paused_by_scheduler as i64,
                 d.size.map(|v| v as i64),
                 d.queue_id,
                 d.position_in_queue,
@@ -266,6 +267,44 @@ impl Database {
         conn.execute("DELETE FROM downloads WHERE id = ?1", params![id])?;
         Ok(())
     }
+
+    pub fn count_active_downloads_in_queue(&self, queue_id: i64) -> SqlResult<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM downloads WHERE queue_id = ?1 AND status = 'Active'",
+            params![queue_id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn list_startable_downloads(&self, queue_id: i64) -> SqlResult<Vec<Download>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT * FROM downloads
+             WHERE queue_id = ?1
+               AND (status = 'Pending' OR (status = 'Paused' AND paused_by_scheduler = 1))
+             ORDER BY position_in_queue ASC",
+        )?;
+        let rows = stmt.query_map(params![queue_id], row_to_download)?;
+        rows.collect()
+    }
+
+    pub fn list_active_downloads_in_queue(&self, queue_id: i64) -> SqlResult<Vec<Download>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt =
+            conn.prepare("SELECT * FROM downloads WHERE queue_id = ?1 AND status = 'Active'")?;
+        let rows = stmt.query_map(params![queue_id], row_to_download)?;
+        rows.collect()
+    }
+
+    pub fn set_paused_by_scheduler(&self, id: i64, value: bool) -> SqlResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE downloads SET paused_by_scheduler = ?1 WHERE id = ?2",
+            params![value as i64, id],
+        )?;
+        Ok(())
+    }
 }
 
 fn status_to_str(s: &DownloadStatus) -> (&'static str, Option<String>) {
@@ -344,6 +383,7 @@ fn row_to_download(row: &Row) -> SqlResult<Download> {
         source_type: source_from_str(&row.get::<_, String>("source_type")?),
         category: category_from_str(&row.get::<_, String>("category")?),
         status: status_from_str(&status_str, status_err),
+        paused_by_scheduler: row.get::<_, i64>("paused_by_scheduler")? != 0,
         size: row.get::<_, Option<i64>>("size")?.map(|v| v as u64),
         queue_id: row.get("queue_id")?,
         position_in_queue: row.get("position_in_queue")?,
