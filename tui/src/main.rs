@@ -1,6 +1,8 @@
 mod api;
 mod app;
+mod config;
 mod event;
+mod theme;
 mod tui;
 mod ui;
 mod update;
@@ -8,14 +10,23 @@ mod update;
 use app::App;
 use event::{Event, EventHandler};
 use ratatui::{Terminal, backend::CrosstermBackend};
+use theme::Theme;
 use tui::Tui;
 use update::update;
 
-const API_BASE: &str = "http://127.0.0.1:47812";
 const TICK_RATE_MS: u64 = 500;
 
 fn main() -> anyhow::Result<()> {
-    let mut app = App::new(API_BASE.to_string());
+    let tui_config = config::load_or_create()?;
+
+    for warning in theme::validate(&tui_config.custom_theme) {
+        eprintln!("{warning}");
+    }
+
+    let resolved_theme =
+        Theme::from_name(&tui_config.theme).apply_overrides(&tui_config.custom_theme);
+
+    let mut app = App::new(tui_config.server_url, resolved_theme);
 
     let backend = CrosstermBackend::new(std::io::stderr());
     let terminal = Terminal::new(backend)?;

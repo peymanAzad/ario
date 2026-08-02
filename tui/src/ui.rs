@@ -3,7 +3,7 @@ use common::enums::DownloadStatus;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
 };
@@ -20,31 +20,38 @@ pub fn render(app: &mut App, f: &mut Frame) {
 
     draw_status_bar(f, app, chunks[0]);
     draw_downloads_table(f, app, chunks[1]);
-    draw_footer(f, chunks[2]);
+    draw_footer(f, app, chunks[2]);
 }
 
 fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
+
     let aria2_indicator = if app.aria2_reachable {
         Span::styled(
             " aria2: up ",
-            Style::default().fg(Color::Black).bg(Color::Green),
+            Style::default().fg(theme.selected_fg).bg(theme.status_ok),
         )
     } else {
         Span::styled(
             " aria2: down ",
-            Style::default().fg(Color::White).bg(Color::Red),
+            Style::default().fg(theme.foreground).bg(theme.status_error),
         )
     };
 
     let mut spans = vec![
-        Span::styled(" Ario ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " Ario ",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
         aria2_indicator,
     ];
 
     if let Some(err) = &app.last_error {
         spans.push(Span::styled(
             format!("  {err}"),
-            Style::default().fg(Color::Red),
+            Style::default().fg(theme.status_error),
         ));
     }
 
@@ -52,8 +59,13 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_downloads_table(f: &mut Frame, app: &App, area: Rect) {
-    let header = Row::new(vec!["Name", "Status", "Progress", "Speed", "ETA"])
-        .style(Style::default().add_modifier(Modifier::BOLD));
+    let theme = &app.theme;
+
+    let header = Row::new(vec!["Name", "Status", "Progress", "Speed", "ETA"]).style(
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD),
+    );
 
     let rows: Vec<Row> = app
         .downloads
@@ -101,20 +113,29 @@ fn draw_downloads_table(f: &mut Frame, app: &App, area: Rect) {
 
     let table = Table::new(rows, widths)
         .header(header)
-        .block(Block::default().borders(Borders::ALL).title(" Downloads "))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.border))
+                .title(Span::styled(
+                    " Downloads ",
+                    Style::default().fg(theme.foreground),
+                )),
+        )
         .row_highlight_style(
             Style::default()
-                .bg(Color::Blue)
+                .bg(theme.selected_bg)
+                .fg(theme.selected_fg)
                 .add_modifier(Modifier::BOLD),
         );
 
     f.render_stateful_widget(table, area, &mut state);
 }
 
-fn draw_footer(f: &mut Frame, area: Rect) {
+fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let help = "q: quit   j/k ↑/↓: navigate   p: pause   r: resume   d: delete";
     f.render_widget(
-        Paragraph::new(help).style(Style::default().fg(Color::DarkGray)),
+        Paragraph::new(help).style(Style::default().fg(app.theme.text_muted)),
         area,
     );
 }

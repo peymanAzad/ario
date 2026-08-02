@@ -9,7 +9,7 @@ axum = "0.8"
 base64 = "0.23.0"
 chrono = { workspace = true }
 common = { path = "../common" }
-directories = "6.0.0"
+directories = { workspace = true }
 rand = "0.10"
 reqwest = { workspace = true }
 rusqlite = { version = "0.40", features = ["bundled", "chrono"] }
@@ -19,5 +19,5 @@ tokio = {
   version = "1",
   features = ["macros", "net", "process", "rt", "signal", "sync", "time"]
 }
-toml = "1.1.4"
+toml = { workspace = true }
 tower-http = { version = "0.7", features = ["cors"] }

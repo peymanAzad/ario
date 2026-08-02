@@ -1,4 +1,5 @@
 use crate::api;
+use crate::theme::Theme;
 use common::{download::DownloadLiveStatus, queue::Queue};
 
 pub struct App {
@@ -9,10 +10,11 @@ pub struct App {
     pub aria2_reachable: bool,
     pub last_error: Option<String>,
     pub should_quit: bool,
+    pub theme: Theme,
 }
 
 impl App {
-    pub fn new(api_base: String) -> Self {
+    pub fn new(api_base: String, theme: Theme) -> Self {
         Self {
             api_base,
             downloads: Vec::new(),
@@ -21,6 +23,7 @@ impl App {
             aria2_reachable: false,
             last_error: None,
             should_quit: false,
+            theme,
         }
     }
 
