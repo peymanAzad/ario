@@ -6,16 +6,16 @@ use std::{
 
 use crossterm::event::{self, Event as CrosstermEvent, KeyEvent, MouseEvent};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub enum Event {
     Tick,
     Key(KeyEvent),
     Mouse(MouseEvent),
     Resize(u16, u16),
+    App(crate::app::AppEvent),
 }
 
 pub struct EventHandler {
-    #[allow(dead_code)]
     sender: mpsc::Sender<Event>,
     receiver: mpsc::Receiver<Event>,
     #[allow(dead_code)]
@@ -72,6 +72,14 @@ impl EventHandler {
         }
     }
 
+    /// Returns a cloneable sender into the same channel this handler's
+    /// receiver reads from — `App` uses this to push background API results
+    /// in as `Event::App(...)`, from threads it spawns itself.
+    pub fn sender(&self) -> mpsc::Sender<Event> {
+        self.sender.clone()
+    }
+
+    /// Blocks until the next event is available.
     pub fn next(&self) -> anyhow::Result<Event> {
         Ok(self.receiver.recv()?)
     }

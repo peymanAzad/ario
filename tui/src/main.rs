@@ -14,6 +14,8 @@ use theme::Theme;
 use tui::Tui;
 use update::update;
 
+use crate::app::AppEvent;
+
 const TICK_RATE_MS: u64 = 500;
 
 fn main() -> anyhow::Result<()> {
@@ -26,11 +28,11 @@ fn main() -> anyhow::Result<()> {
     let resolved_theme =
         Theme::from_name(&tui_config.theme).apply_overrides(&tui_config.custom_theme);
 
-    let mut app = App::new(tui_config.server_url, resolved_theme);
+    let events = EventHandler::new(TICK_RATE_MS);
+    let mut app = App::new(tui_config.server_url, resolved_theme, events.sender());
 
     let backend = CrosstermBackend::new(std::io::stderr());
     let terminal = Terminal::new(backend)?;
-    let events = EventHandler::new(TICK_RATE_MS);
     let mut tui = Tui::new(terminal, events);
     tui.enter()?;
 
@@ -42,6 +44,11 @@ fn main() -> anyhow::Result<()> {
             Event::Key(key_event) => update(&mut app, key_event),
             Event::Mouse(_) => {}
             Event::Resize(_, _) => {}
+            Event::App(AppEvent::Refreshed {
+                downloads,
+                queues,
+                aria2_reachable,
+            }) => app.apply_refresh(downloads, queues, aria2_reachable),
         }
     }
 
