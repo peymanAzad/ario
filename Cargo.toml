@@ -5,4 +5,6 @@ members = ["common", "server", "tui"]
 [workspace.dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
-reqwest = { version = "0.13", features = ["json"] }
+reqwest = { version = "0.13", features = ["json", "blocking"] }
+serde_json = "1"
+anyhow = "1"
