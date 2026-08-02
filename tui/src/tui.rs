@@ -23,7 +23,7 @@ impl Tui {
 
     pub fn enter(&mut self) -> anyhow::Result<()> {
         enable_raw_mode()?;
-        execute!(io::stdout(), EnterAlternateScreen)?;
+        execute!(io::stderr(), EnterAlternateScreen)?;
 
         let panic_hook = panic::take_hook();
         panic::set_hook(Box::new(move |info| {
@@ -38,7 +38,7 @@ impl Tui {
 
     fn reset() -> anyhow::Result<()> {
         disable_raw_mode()?;
-        execute!(io::stdout(), LeaveAlternateScreen)?;
+        execute!(io::stderr(), LeaveAlternateScreen)?;
         Ok(())
     }
 
