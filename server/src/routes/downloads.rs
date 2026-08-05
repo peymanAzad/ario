@@ -263,6 +263,25 @@ async fn pause_download(
     Ok(Json(merge_live(&state, updated).await))
 }
 
+async fn start_in_aria2(state: &AppState, download: &Download) -> Result<String, AppError> {
+    match download.source_type {
+        // NOTE: a "Save For Later" torrent can't be started this way for now
+        SourceType::Torrent => Err(AppError::BadRequest(
+            "torrents currently can only be started immediately (\"Start Now\"), not \
+             resumed after being saved."
+                .into(),
+        )),
+        SourceType::Http | SourceType::Magnet => Ok(state
+            .aria2
+            .add_uri(
+                &download.url,
+                &download.finetune,
+                &download.destination_path,
+            )
+            .await?),
+    }
+}
+
 async fn resume_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -271,14 +290,22 @@ async fn resume_download(
         .db
         .get_download(id)?
         .ok_or_else(|| AppError::NotFound(format!("download {id}")))?;
-    let gid = download
-        .aria2_gid
-        .ok_or_else(|| AppError::BadRequest("download has not been started in aria2 yet".into()))?;
 
-    state.aria2.unpause(&gid).await?;
-    state
-        .db
-        .update_download_status(id, &DownloadStatus::Active)?;
+    match download.aria2_gid {
+        Some(gid) => {
+            state.aria2.unpause(&gid).await?;
+            state
+                .db
+                .update_download_status(id, &DownloadStatus::Active)?;
+        }
+        None => {
+            let gid = start_in_aria2(&state, &download).await?;
+            state.db.update_download_gid(download.id, &gid)?;
+            state
+                .db
+                .update_download_status(download.id, &DownloadStatus::Active)?;
+        }
+    }
 
     let updated = state
         .db
