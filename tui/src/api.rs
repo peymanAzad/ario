@@ -1,4 +1,4 @@
-use common::{download::DownloadLiveStatus, queue::Queue};
+use common::{download::DownloadFilter, queue::Queue};
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -16,9 +16,25 @@ fn client() -> reqwest::blocking::Client {
         .expect("failed to build http client")
 }
 
-pub fn list_downloads(base: &str) -> anyhow::Result<Vec<DownloadLiveStatus>> {
+pub fn list_downloads(
+    base: &str,
+    filter: &DownloadFilter,
+) -> anyhow::Result<Vec<common::download::DownloadLiveStatus>> {
     let resp = client()
         .get(format!("{base}/downloads"))
+        .query(filter) // serde_urlencoded serializes DownloadFilter's fields as
+        .send()?
+        .error_for_status()?;
+    Ok(resp.json()?)
+}
+
+pub fn add_downloads(
+    base: &str,
+    request: &common::download::AddDownloadsRequest,
+) -> anyhow::Result<Vec<common::download::DownloadLiveStatus>> {
+    let resp = client()
+        .post(format!("{base}/downloads"))
+        .json(request)
         .send()?
         .error_for_status()?;
     Ok(resp.json()?)

@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use crate::state::AppState;
 use crate::{error::AppError, live_status::LiveStats};
 use axum::{
@@ -15,7 +13,6 @@ use common::{
     enums::{DownloadStatus, FileCategory, SourceType},
     finetune::FineTune,
 };
-use tokio::time::sleep;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -170,32 +167,34 @@ async fn add_downloads(
         let id = state.db.insert_download(&download)?;
         download.id = id;
 
-        let aria2_result = match (&torrent_b64, download.source_type) {
-            (Some(b64), _) => {
-                state
-                    .aria2
-                    .add_torrent(b64, &download.finetune, &destination_path)
-                    .await
-            }
-            (None, _) => {
-                state
-                    .aria2
-                    .add_uri(&download.url, &download.finetune, &destination_path)
-                    .await
-            }
-        };
+        if req.start_immediately {
+            let aria2_result = match (&torrent_b64, download.source_type) {
+                (Some(b64), _) => {
+                    state
+                        .aria2
+                        .add_torrent(b64, &download.finetune, &destination_path)
+                        .await
+                }
+                (None, _) => {
+                    state
+                        .aria2
+                        .add_uri(&download.url, &download.finetune, &destination_path)
+                        .await
+                }
+            };
 
-        match aria2_result {
-            Ok(gid) => {
-                state.db.update_download_gid(id, &gid)?;
-                state
-                    .db
-                    .update_download_status(id, &DownloadStatus::Active)?;
-            }
-            Err(e) => {
-                state
-                    .db
-                    .update_download_status(id, &DownloadStatus::Error(e.to_string()))?;
+            match aria2_result {
+                Ok(gid) => {
+                    state.db.update_download_gid(id, &gid)?;
+                    state
+                        .db
+                        .update_download_status(id, &DownloadStatus::Active)?;
+                }
+                Err(e) => {
+                    state
+                        .db
+                        .update_download_status(id, &DownloadStatus::Error(e.to_string()))?;
+                }
             }
         }
 

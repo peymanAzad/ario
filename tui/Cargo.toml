@@ -5,11 +5,13 @@ edition = "2024"
 
 [dependencies]
 anyhow = { workspace = true }
+arboard = {version = "3.6.1", features = ["wayland-data-control"]}
 catppuccin = "2"
 common = { path = "../common" }
 crossterm = "0.29"
 directories = { workspace = true }
 ratatui = "0.30"
+regex = "1.13.1"
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

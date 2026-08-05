@@ -1,5 +1,6 @@
 mod api;
 mod app;
+mod clipboard;
 mod config;
 mod event;
 mod theme;

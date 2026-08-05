@@ -50,6 +50,12 @@ pub struct AddDownloadsRequest {
     pub queue_id: i64,
     /// `None` = use the queue's `default_finetune` as-is.
     pub finetune_override: Option<FineTune>,
+    #[serde(default = "default_start_immediately")]
+    pub start_immediately: bool,
+}
+
+fn default_start_immediately() -> bool {
+    true
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
