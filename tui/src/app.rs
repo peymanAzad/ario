@@ -1,5 +1,13 @@
+pub mod category_list;
+pub mod clipboard_import_modal;
+pub mod downloads_table;
+pub mod queue_list;
+pub mod queue_modal;
+
 use std::{sync::mpsc::Sender, thread};
 
+use crate::app::clipboard_import_modal::ClipboardImportModal;
+use crate::app::queue_modal::QueueModal;
 use crate::theme::Theme;
 use crate::{api, event::Event};
 use common::download::{AddDownloadInput, AddDownloadsRequest, DownloadFilter, DownloadLiveStatus};
@@ -14,6 +22,7 @@ pub enum AppEvent {
         queues: anyhow::Result<Vec<Queue>>,
         aria2_reachable: bool,
     },
+    QueueDownloadsLoaded(anyhow::Result<Vec<DownloadLiveStatus>>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,15 +70,6 @@ pub struct ImportUrlEntry {
     pub selected: bool,
 }
 
-pub struct ClipboardImportModal {
-    pub tab: ModalTab,
-    pub entries: Vec<ImportUrlEntry>,
-    pub url_cursor: usize,
-    pub queue_cursor: usize,
-    pub finetune: FineTune,
-    pub finetune_cursor: usize,
-}
-
 pub struct App {
     pub api_base: String,
     pub downloads: Vec<DownloadLiveStatus>,
@@ -83,6 +83,7 @@ pub struct App {
     pub should_quit: bool,
     pub theme: Theme,
     pub modal: Option<ClipboardImportModal>,
+    pub queue_modal: Option<QueueModal>,
     event_sender: Sender<Event>,
     refresh_in_flight: bool,
 }
@@ -102,6 +103,7 @@ impl App {
             should_quit: false,
             theme,
             modal: None,
+            queue_modal: None,
             event_sender,
             refresh_in_flight: false,
         }
@@ -184,247 +186,7 @@ impl App {
         if let Ok(queues) = queues {
             self.queues = queues;
         }
-
         self.aria2_reachable = aria2_reachable;
-    }
-
-    pub fn select_next_download(&mut self) {
-        if !self.downloads.is_empty() {
-            self.selected_download = (self.selected_download + 1).min(self.downloads.len() - 1);
-        }
-    }
-
-    pub fn select_prev_download(&mut self) {
-        self.selected_download = self.selected_download.saturating_sub(1);
-    }
-
-    pub fn current_download(&self) -> Option<&DownloadLiveStatus> {
-        self.downloads.get(self.selected_download)
-    }
-
-    pub fn select_next_queue(&mut self) {
-        let len = self.queues.len() + 1; // +1 for "All"
-        self.selected_queue = (self.selected_queue + 1).min(len - 1);
-        self.refresh();
-    }
-
-    pub fn select_prev_queue(&mut self) {
-        self.selected_queue = self.selected_queue.saturating_sub(1);
-        self.refresh();
-    }
-
-    pub fn select_next_category(&mut self) {
-        let len = ALL_CATEGORIES.len() + 1; // +1 for "All"
-        self.selected_category = (self.selected_category + 1).min(len - 1);
-        self.refresh();
-    }
-
-    pub fn select_prev_category(&mut self) {
-        self.selected_category = self.selected_category.saturating_sub(1);
-        self.refresh();
-    }
-
-    pub fn pause_selected(&mut self) {
-        if let Some(id) = self.current_download().map(|d| d.download.id) {
-            let api_base = self.api_base.clone();
-            thread::spawn(move || {
-                let _ = api::pause_download(&api_base, id);
-            });
-        }
-    }
-
-    pub fn resume_selected(&mut self) {
-        if let Some(id) = self.current_download().map(|d| d.download.id) {
-            let api_base = self.api_base.clone();
-            thread::spawn(move || {
-                let _ = api::resume_download(&api_base, id);
-            });
-        }
-    }
-
-    pub fn delete_selected(&mut self) {
-        if let Some(id) = self.current_download().map(|d| d.download.id) {
-            let api_base = self.api_base.clone();
-            thread::spawn(move || {
-                let _ = api::delete_download(&api_base, id);
-            });
-        }
-    }
-
-    pub fn open_clipboard_import(&mut self) {
-        let urls = crate::clipboard::scan_clipboard_for_urls();
-        if urls.is_empty() {
-            eprintln!("clipboard is empty");
-            return;
-        }
-
-        let entries = urls
-            .into_iter()
-            .map(|url| ImportUrlEntry {
-                url,
-                selected: true, // all selected by default, per spec
-            })
-            .collect();
-
-        let queue_cursor = self
-            .queues
-            .iter()
-            .position(|q| q.name == "Main Queue")
-            .unwrap_or(0);
-
-        self.modal = Some(ClipboardImportModal {
-            tab: ModalTab::Urls,
-            entries,
-            url_cursor: 0,
-            queue_cursor,
-            finetune: FineTune::default(),
-            finetune_cursor: 0,
-        });
-    }
-
-    pub fn cancel_modal(&mut self) {
-        self.modal = None;
-    }
-
-    pub fn modal_next_tab(&mut self) {
-        if let Some(m) = &mut self.modal {
-            m.tab = match m.tab {
-                ModalTab::Urls => ModalTab::FineTuning,
-                ModalTab::FineTuning => ModalTab::Urls,
-            };
-        }
-    }
-
-    pub fn modal_prev_tab(&mut self) {
-        self.modal_next_tab();
-    }
-
-    pub fn modal_move_down(&mut self) {
-        if let Some(m) = &mut self.modal {
-            match m.tab {
-                ModalTab::Urls => {
-                    if !m.entries.is_empty() {
-                        m.url_cursor = (m.url_cursor + 1).min(m.entries.len() - 1);
-                    }
-                }
-                ModalTab::FineTuning => {
-                    m.finetune_cursor = (m.finetune_cursor + 1).min(3);
-                }
-            }
-        }
-    }
-
-    pub fn modal_move_up(&mut self) {
-        if let Some(m) = &mut self.modal {
-            match m.tab {
-                ModalTab::Urls => m.url_cursor = m.url_cursor.saturating_sub(1),
-                ModalTab::FineTuning => m.finetune_cursor = m.finetune_cursor.saturating_sub(1),
-            }
-        }
-    }
-
-    fn modal_adjust(&mut self, forward: bool) {
-        let queues_len = self.queues.len();
-        if let Some(m) = &mut self.modal {
-            match m.tab {
-                ModalTab::Urls => {
-                    if queues_len == 0 {
-                        return;
-                    }
-                    if forward {
-                        m.queue_cursor = (m.queue_cursor + 1).min(queues_len - 1);
-                    } else {
-                        m.queue_cursor = m.queue_cursor.saturating_sub(1);
-                    }
-                }
-                ModalTab::FineTuning => {
-                    adjust_finetune_field(&mut m.finetune, m.finetune_cursor, forward)
-                }
-            }
-        }
-    }
-
-    pub fn modal_adjust_left(&mut self) {
-        self.modal_adjust(false);
-    }
-
-    pub fn modal_adjust_right(&mut self) {
-        self.modal_adjust(true);
-    }
-
-    pub fn modal_toggle_selected_url(&mut self) {
-        if let Some(m) = &mut self.modal {
-            if let Some(entry) = m.entries.get_mut(m.url_cursor) {
-                entry.selected = !entry.selected;
-            }
-        }
-    }
-
-    pub fn modal_select_all(&mut self) {
-        if let Some(m) = &mut self.modal {
-            for e in &mut m.entries {
-                e.selected = true;
-            }
-        }
-    }
-
-    pub fn modal_select_none(&mut self) {
-        if let Some(m) = &mut self.modal {
-            for e in &mut m.entries {
-                e.selected = false;
-            }
-        }
-    }
-
-    fn submit_modal(&mut self, start_immediately: bool) {
-        let Some(modal) = self.modal.take() else {
-            return;
-        };
-
-        let inputs: Vec<AddDownloadInput> = modal
-            .entries
-            .into_iter()
-            .filter(|e| e.selected)
-            .map(|e| AddDownloadInput::Url(e.url))
-            .collect();
-
-        if inputs.is_empty() {
-            return;
-        }
-
-        let queue_id = self
-            .queues
-            .get(modal.queue_cursor)
-            .map(|q| q.id)
-            .unwrap_or(1);
-
-        let finetune_override = if modal.finetune == FineTune::default() {
-            None
-        } else {
-            Some(modal.finetune)
-        };
-
-        let request = AddDownloadsRequest {
-            inputs,
-            queue_id,
-            finetune_override,
-            start_immediately,
-        };
-
-        let api_base = self.api_base.clone();
-        thread::spawn(move || {
-            let _ = api::add_downloads(&api_base, &request);
-        });
-
-        self.refresh();
-    }
-
-    pub fn start_modal_now(&mut self) {
-        self.submit_modal(true);
-    }
-
-    pub fn save_modal_for_later(&mut self) {
-        self.submit_modal(false);
     }
 }
 
@@ -443,7 +205,7 @@ fn adjust_finetune_field(f: &mut FineTune, cursor: usize, forward: bool) {
     }
 }
 
-fn adjust_opt_u32(current: Option<u32>, forward: bool, max: u32) -> Option<u32> {
+pub fn adjust_opt_u32(current: Option<u32>, forward: bool, max: u32) -> Option<u32> {
     let val = current.unwrap_or(0);
     let new_val = if forward {
         (val + 1).min(max)

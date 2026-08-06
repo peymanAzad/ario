@@ -3193,6 +3193,7 @@ dependencies = [
  "anyhow",
  "arboard",
  "catppuccin",
+ "chrono",
  "common",
  "crossterm",
  "directories",

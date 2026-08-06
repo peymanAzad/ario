@@ -3,6 +3,7 @@ mod clipboard_import_modal;
 mod downloads_table;
 mod footer;
 mod queue_list;
+mod queue_modal;
 mod status_bar;
 
 use crate::{
@@ -10,7 +11,7 @@ use crate::{
     ui::{
         category_list::draw_categories_list, clipboard_import_modal::draw_clipboard_import_modal,
         downloads_table::draw_downloads_table, footer::draw_footer, queue_list::draw_queues_list,
-        status_bar::draw_status_bar,
+        queue_modal::draw_queue_modal, status_bar::draw_status_bar,
     },
 };
 use common::enums::{DownloadStatus, FileCategory};
@@ -31,7 +32,7 @@ pub fn render(app: &mut App, f: &mut Frame) {
         .split(f.area());
     let body_layout = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(20), Constraint::Percentage(80)])
+        .constraints([Constraint::Percentage(25), Constraint::Percentage(75)])
         .split(main_layout[1]);
     let left_layout = Layout::default()
         .direction(Direction::Vertical)
@@ -44,7 +45,9 @@ pub fn render(app: &mut App, f: &mut Frame) {
     draw_downloads_table(f, app, body_layout[1]);
     draw_footer(f, app, main_layout[2]);
 
-    if let Some(modal) = &app.modal {
+    if let Some(modal) = &app.queue_modal {
+        draw_queue_modal(f, app, modal);
+    } else if let Some(modal) = &app.modal {
         draw_clipboard_import_modal(f, app, modal);
     }
 }

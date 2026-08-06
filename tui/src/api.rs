@@ -79,3 +79,42 @@ pub fn delete_download(base: &str, id: i64) -> anyhow::Result<()> {
         .error_for_status()?;
     Ok(())
 }
+
+pub fn create_queue(
+    base: &str,
+    request: &common::queue::CreateQueueRequest,
+) -> anyhow::Result<common::queue::Queue> {
+    let resp = client()
+        .post(format!("{base}/queues"))
+        .json(request)
+        .send()?
+        .error_for_status()?;
+    Ok(resp.json()?)
+}
+
+pub fn update_queue(
+    base: &str,
+    id: i64,
+    request: &common::queue::UpdateQueueRequest,
+) -> anyhow::Result<common::queue::Queue> {
+    let resp = client()
+        .put(format!("{base}/queues/{id}"))
+        .json(request)
+        .send()?
+        .error_for_status()?;
+    Ok(resp.json()?)
+}
+
+pub fn reorder_queue(base: &str, queue_id: i64, ordered_ids: &[i64]) -> anyhow::Result<()> {
+    #[derive(serde::Serialize)]
+    struct ReorderRequest<'a> {
+        ordered_ids: &'a [i64],
+    }
+
+    client()
+        .put(format!("{base}/queues/{queue_id}/reorder"))
+        .json(&ReorderRequest { ordered_ids })
+        .send()?
+        .error_for_status()?;
+    Ok(())
+}

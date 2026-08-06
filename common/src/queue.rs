@@ -21,8 +21,20 @@ pub struct Queue {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CreateQueueRequest {
+    pub name: String,
+    pub position: i32,
+    pub max_concurrent_downloads: u32,
+    pub max_retries: u32,
+    pub default_finetune: FineTune,
+    pub scheduler_enabled: bool,
+    pub recurrence: Recurrence,
+    pub run_missed_on_startup: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UpdateQueueRequest {
     pub name: String,
     pub position: i32,
     pub max_concurrent_downloads: u32,

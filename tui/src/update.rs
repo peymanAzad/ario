@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::{App, Focus, ModalTab};
+use crate::app::{App, Focus, ModalTab, queue_modal::QueueModalTab};
 
 pub fn update(app: &mut App, key_event: KeyEvent) {
     if key_event.modifiers == KeyModifiers::CONTROL
@@ -10,8 +10,13 @@ pub fn update(app: &mut App, key_event: KeyEvent) {
         return;
     }
 
+    if app.queue_modal.is_some() {
+        handle_queue_modal_key(app, key_event);
+        return;
+    }
+
     if app.modal.is_some() {
-        handle_modal_key(app, key_event);
+        handle_clipboard_modal_key(app, key_event);
         return;
     }
 
@@ -51,6 +56,8 @@ pub fn update(app: &mut App, key_event: KeyEvent) {
         Focus::Queues => match key_event.code {
             KeyCode::Down | KeyCode::Char('j') => app.select_next_queue(),
             KeyCode::Up | KeyCode::Char('k') => app.select_prev_queue(),
+            KeyCode::Char('n') => app.open_create_queue_modal(),
+            KeyCode::Enter => app.open_edit_queue_modal(),
             _ => {}
         },
         Focus::Categories => match key_event.code {
@@ -69,7 +76,7 @@ pub fn update(app: &mut App, key_event: KeyEvent) {
     }
 }
 
-fn handle_modal_key(app: &mut App, key_event: KeyEvent) {
+fn handle_clipboard_modal_key(app: &mut App, key_event: KeyEvent) {
     match key_event.code {
         KeyCode::Esc | KeyCode::Char('c') => app.cancel_modal(),
         KeyCode::Tab => app.modal_next_tab(),
@@ -89,6 +96,55 @@ fn handle_modal_key(app: &mut App, key_event: KeyEvent) {
         KeyCode::Char('n') if app.modal.as_ref().map(|m| m.tab) == Some(ModalTab::Urls) => {
             app.modal_select_none()
         }
+        _ => {}
+    }
+}
+
+fn handle_queue_modal_key(app: &mut App, key_event: KeyEvent) {
+    let editing = app
+        .queue_modal
+        .as_ref()
+        .map(|m| m.editing_text)
+        .unwrap_or(false);
+
+    if editing {
+        match key_event.code {
+            KeyCode::Enter => app.queue_modal_confirm_text_edit(),
+            KeyCode::Esc => app.queue_modal_cancel_text_edit(),
+            KeyCode::Backspace => app.queue_modal_text_backspace(),
+            KeyCode::Char(c) => app.queue_modal_text_input(c),
+            _ => {}
+        }
+        return;
+    }
+
+    let on_items_tab = app
+        .queue_modal
+        .as_ref()
+        .map(|m| m.tab == QueueModalTab::DownloadItems)
+        .unwrap_or(false);
+
+    match key_event.code {
+        KeyCode::Esc | KeyCode::Char('c') => app.cancel_queue_modal(),
+        KeyCode::Tab => app.queue_modal_next_tab(),
+        KeyCode::BackTab => app.queue_modal_prev_tab(),
+        // Enter: on the name field or a Once date field, starts text
+        // editing; everywhere else on the Common/Scheduler tabs it's
+        // unused, and on Download Items it's likewise a no-op.
+        KeyCode::Enter => app.queue_modal_start_text_edit(),
+        KeyCode::Char('s') if !on_items_tab => app.save_queue_modal(),
+        // Reordering uses dedicated shifted keys rather than left/right,
+        // since left/right has no natural meaning for moving an item up
+        // or down a vertical list.
+        KeyCode::Char('J') if on_items_tab => app.queue_modal_move_item_down(),
+        KeyCode::Char('K') if on_items_tab => app.queue_modal_move_item_up(),
+        KeyCode::Down | KeyCode::Char('j') => app.queue_modal_move_down(),
+        KeyCode::Up | KeyCode::Char('k') => app.queue_modal_move_up(),
+        KeyCode::Left | KeyCode::Char('h') => app.queue_modal_adjust_left(),
+        KeyCode::Right | KeyCode::Char('l') => app.queue_modal_adjust_right(),
+        // Space: toggles the highlighted day (Scheduler tab, Weekly days
+        // row) — a no-op elsewhere, since the method itself checks context.
+        KeyCode::Char(' ') => app.queue_modal_toggle_day(),
         _ => {}
     }
 }

@@ -5,7 +5,7 @@ use axum::{
 };
 use chrono::Utc;
 use common::{
-    queue::{CreateQueueRequest, Queue, QueueSettings},
+    queue::{CreateQueueRequest, Queue, QueueSettings, UpdateQueueRequest},
     scheduler::Scheduler,
 };
 
@@ -69,9 +69,30 @@ async fn create_queue(
 async fn update_queue(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-    Json(mut queue): Json<Queue>,
+    Json(req): Json<UpdateQueueRequest>,
 ) -> Result<Json<Queue>, AppError> {
-    queue.id = id; // path id is authoritative, ignore whatever the body says
+    let existing = state
+        .db
+        .get_queue(id)?
+        .ok_or_else(|| AppError::NotFound(format!("queue {id}")))?;
+
+    let queue = Queue {
+        id,
+        name: req.name,
+        position: req.position,
+        settings: QueueSettings {
+            max_concurrent_downloads: req.max_concurrent_downloads,
+            max_retries: req.max_retries,
+            default_finetune: req.default_finetune,
+        },
+        scheduler: Scheduler {
+            enabled: req.scheduler_enabled,
+            recurrence: req.recurrence,
+            run_missed_on_startup: req.run_missed_on_startup,
+        },
+        created_at: existing.created_at,
+    };
+
     state.db.update_queue(&queue)?;
     let updated = state
         .db

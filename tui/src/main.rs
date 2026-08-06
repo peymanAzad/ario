@@ -39,7 +39,6 @@ fn main() -> anyhow::Result<()> {
 
     while !app.should_quit {
         tui.draw(&mut app)?;
-
         match tui.events.next()? {
             Event::Tick => app.refresh(),
             Event::Key(key_event) => update(&mut app, key_event),
@@ -50,6 +49,9 @@ fn main() -> anyhow::Result<()> {
                 queues,
                 aria2_reachable,
             }) => app.apply_refresh(downloads, queues, aria2_reachable),
+            Event::App(AppEvent::QueueDownloadsLoaded(result)) => {
+                app.apply_queue_downloads_loaded(result)
+            }
         }
     }
 

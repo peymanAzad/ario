@@ -1,4 +1,4 @@
-use crate::app::{App, ClipboardImportModal, ModalTab};
+use crate::app::{App, ModalTab, clipboard_import_modal::ClipboardImportModal};
 use common::enums::{AllocStrategy, StreamPieceSelector};
 use ratatui::{
     Frame,
