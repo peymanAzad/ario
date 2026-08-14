@@ -149,12 +149,6 @@ impl App {
         });
     }
 
-    /// Opens the edit modal for the currently-selected queue in the sidebar
-    /// (a no-op if "All" — index 0 — is selected, since that's not a real
-    /// queue). Populates every field from the existing queue immediately;
-    /// the Download Items tab starts empty and is filled in shortly after
-    /// by a background fetch (see `apply_queue_downloads_loaded`) so opening
-    /// the modal never blocks on the network.
     pub fn open_edit_queue_modal(&mut self) {
         if self.modal.is_some() || self.queue_modal.is_some() || self.download_modal.is_some() {
             return;
@@ -544,8 +538,11 @@ impl App {
                     recurrence,
                     run_missed_on_startup: modal.run_missed_on_startup,
                 };
+                let sender = self.event_sender.clone();
                 thread::spawn(move || {
-                    let _ = api::create_queue(&api_base, &request);
+                    if let Err(e) = api::create_queue(&api_base, &request) {
+                        let _ = sender.send(Event::App(AppEvent::ActionFailed(e.to_string())));
+                    }
                 });
             }
             QueueModalMode::Edit { queue_id } => {
@@ -560,10 +557,16 @@ impl App {
                     run_missed_on_startup: modal.run_missed_on_startup,
                 };
                 let ordered_ids: Vec<i64> = modal.items.iter().map(|d| d.id).collect();
+                let sender = self.event_sender.clone();
                 thread::spawn(move || {
-                    let _ = api::update_queue(&api_base, queue_id, &request);
+                    if let Err(e) = api::update_queue(&api_base, queue_id, &request) {
+                        let _ = sender.send(Event::App(AppEvent::ActionFailed(e.to_string())));
+                        return;
+                    }
                     if !ordered_ids.is_empty() {
-                        let _ = api::reorder_queue(&api_base, queue_id, &ordered_ids);
+                        if let Err(e) = api::reorder_queue(&api_base, queue_id, &ordered_ids) {
+                            let _ = sender.send(Event::App(AppEvent::ActionFailed(e.to_string())));
+                        }
                     }
                 });
             }

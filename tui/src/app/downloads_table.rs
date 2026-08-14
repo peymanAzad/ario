@@ -18,8 +18,11 @@ impl App {
     pub fn pause_selected(&mut self) {
         if let Some(id) = self.current_download().map(|d| d.download.id) {
             let api_base = self.api_base.clone();
+            let sender = self.event_sender.clone();
             thread::spawn(move || {
-                let _ = api::pause_download(&api_base, id);
+                if let Err(e) = api::pause_download(&api_base, id) {
+                    let _ = sender.send(Event::App(AppEvent::ActionFailed(e.to_string())));
+                }
             });
         }
     }
@@ -27,8 +30,11 @@ impl App {
     pub fn resume_selected(&mut self) {
         if let Some(id) = self.current_download().map(|d| d.download.id) {
             let api_base = self.api_base.clone();
+            let sender = self.event_sender.clone();
             thread::spawn(move || {
-                let _ = api::resume_download(&api_base, id);
+                if let Err(e) = api::resume_download(&api_base, id) {
+                    let _ = sender.send(Event::App(AppEvent::ActionFailed(e.to_string())));
+                }
             });
         }
     }
@@ -36,8 +42,11 @@ impl App {
     pub fn delete_selected(&mut self) {
         if let Some(id) = self.current_download().map(|d| d.download.id) {
             let api_base = self.api_base.clone();
+            let sender = self.event_sender.clone();
             thread::spawn(move || {
-                let _ = api::delete_download(&api_base, id);
+                if let Err(e) = api::delete_download(&api_base, id) {
+                    let _ = sender.send(Event::App(AppEvent::ActionFailed(e.to_string())));
+                }
             });
         }
     }

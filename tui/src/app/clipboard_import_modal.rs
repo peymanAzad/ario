@@ -174,8 +174,11 @@ impl App {
         };
 
         let api_base = self.api_base.clone();
+        let sender = self.event_sender.clone();
         thread::spawn(move || {
-            let _ = api::add_downloads(&api_base, &request);
+            if let Err(e) = api::add_downloads(&api_base, &request) {
+                let _ = sender.send(Event::App(AppEvent::ActionFailed(e.to_string())));
+            }
         });
 
         self.refresh();

@@ -4,7 +4,8 @@ use common::{enums::DownloadStatus, finetune::FineTune};
 
 use crate::{
     api,
-    app::{App, adjust_finetune_field},
+    app::{App, AppEvent, adjust_finetune_field},
+    event::Event,
 };
 
 pub struct DownloadEditModal {
@@ -101,7 +102,11 @@ impl App {
             return;
         };
         let api_base = self.api_base.clone();
+        let sender = self.event_sender.clone();
         thread::spawn(move || {
+            if let Err(e) = api::update_finetune(&api_base, modal.download_id, &modal.finetune) {
+                let _ = sender.send(Event::App(AppEvent::ActionFailed(e.to_string())));
+            }
             let _ = api::update_finetune(&api_base, modal.download_id, &modal.finetune);
         });
         self.refresh();

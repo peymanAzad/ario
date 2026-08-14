@@ -4,6 +4,7 @@ mod clipboard;
 mod config;
 mod event;
 mod theme;
+mod toast;
 mod tui;
 mod ui;
 mod update;
@@ -52,6 +53,7 @@ fn main() -> anyhow::Result<()> {
             Event::App(AppEvent::QueueDownloadsLoaded(result)) => {
                 app.apply_queue_downloads_loaded(result)
             }
+            Event::App(AppEvent::ActionFailed(msg)) => app.apply_action_failed(msg),
         }
     }
 

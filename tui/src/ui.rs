@@ -6,6 +6,7 @@ mod footer;
 mod queue_list;
 mod queue_modal;
 mod status_bar;
+mod toast_popup;
 
 use crate::{
     app::App,
@@ -13,7 +14,7 @@ use crate::{
         category_list::draw_categories_list, clipboard_import_modal::draw_clipboard_import_modal,
         download_edit_modal::draw_download_modal, downloads_table::draw_downloads_table,
         footer::draw_footer, queue_list::draw_queues_list, queue_modal::draw_queue_modal,
-        status_bar::draw_status_bar,
+        status_bar::draw_status_bar, toast_popup::draw_toasts,
     },
 };
 use common::enums::{DownloadStatus, FileCategory};
@@ -54,6 +55,8 @@ pub fn render(app: &mut App, f: &mut Frame) {
     } else if let Some(modal) = &app.modal {
         draw_clipboard_import_modal(f, app, modal);
     }
+
+    draw_toasts(f, app);
 }
 
 fn border_style(theme: &crate::theme::Theme, focused: bool) -> Style {
