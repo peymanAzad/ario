@@ -1,5 +1,6 @@
 mod category_list;
 mod clipboard_import_modal;
+mod download_edit_modal;
 mod downloads_table;
 mod footer;
 mod queue_list;
@@ -10,8 +11,9 @@ use crate::{
     app::App,
     ui::{
         category_list::draw_categories_list, clipboard_import_modal::draw_clipboard_import_modal,
-        downloads_table::draw_downloads_table, footer::draw_footer, queue_list::draw_queues_list,
-        queue_modal::draw_queue_modal, status_bar::draw_status_bar,
+        download_edit_modal::draw_download_modal, downloads_table::draw_downloads_table,
+        footer::draw_footer, queue_list::draw_queues_list, queue_modal::draw_queue_modal,
+        status_bar::draw_status_bar,
     },
 };
 use common::enums::{DownloadStatus, FileCategory};
@@ -47,6 +49,8 @@ pub fn render(app: &mut App, f: &mut Frame) {
 
     if let Some(modal) = &app.queue_modal {
         draw_queue_modal(f, app, modal);
+    } else if let Some(modal) = &app.download_modal {
+        draw_download_modal(f, app, modal);
     } else if let Some(modal) = &app.modal {
         draw_clipboard_import_modal(f, app, modal);
     }
@@ -142,5 +146,16 @@ fn format_eta(seconds: u64) -> String {
         format!("{m}m{s}s")
     } else {
         format!("{s}s")
+    }
+}
+
+fn field_style(theme: &crate::theme::Theme, active: bool) -> Style {
+    if active {
+        Style::default()
+            .bg(theme.selected_bg)
+            .fg(theme.selected_fg)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.foreground)
     }
 }

@@ -1,4 +1,8 @@
-use common::{download::DownloadFilter, queue::Queue};
+use common::{
+    download::{DownloadFilter, DownloadLiveStatus},
+    finetune::FineTune,
+    queue::Queue,
+};
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -117,4 +121,17 @@ pub fn reorder_queue(base: &str, queue_id: i64, ordered_ids: &[i64]) -> anyhow::
         .send()?
         .error_for_status()?;
     Ok(())
+}
+
+pub fn update_finetune(
+    base: &str,
+    id: i64,
+    finetune: &FineTune,
+) -> anyhow::Result<DownloadLiveStatus> {
+    let resp = client()
+        .put(format!("{base}/downloads/{id}/finetune"))
+        .json(finetune)
+        .send()?
+        .error_for_status()?;
+    Ok(resp.json()?)
 }

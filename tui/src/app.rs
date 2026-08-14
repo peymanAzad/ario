@@ -1,5 +1,6 @@
 pub mod category_list;
 pub mod clipboard_import_modal;
+pub mod download_edit_modal;
 pub mod downloads_table;
 pub mod queue_list;
 pub mod queue_modal;
@@ -7,6 +8,7 @@ pub mod queue_modal;
 use std::{sync::mpsc::Sender, thread};
 
 use crate::app::clipboard_import_modal::ClipboardImportModal;
+use crate::app::download_edit_modal::DownloadEditModal;
 use crate::app::queue_modal::QueueModal;
 use crate::theme::Theme;
 use crate::{api, event::Event};
@@ -84,6 +86,7 @@ pub struct App {
     pub theme: Theme,
     pub modal: Option<ClipboardImportModal>,
     pub queue_modal: Option<QueueModal>,
+    pub download_modal: Option<DownloadEditModal>,
     event_sender: Sender<Event>,
     refresh_in_flight: bool,
 }
@@ -104,6 +107,7 @@ impl App {
             theme,
             modal: None,
             queue_modal: None,
+            download_modal: None,
             event_sender,
             refresh_in_flight: false,
         }

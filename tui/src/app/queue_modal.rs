@@ -119,7 +119,7 @@ pub struct QueueModal {
 
 impl App {
     pub fn open_create_queue_modal(&mut self) {
-        if self.modal.is_some() || self.queue_modal.is_some() {
+        if self.modal.is_some() || self.queue_modal.is_some() || self.download_modal.is_some() {
             return;
         }
 
@@ -156,7 +156,7 @@ impl App {
     /// by a background fetch (see `apply_queue_downloads_loaded`) so opening
     /// the modal never blocks on the network.
     pub fn open_edit_queue_modal(&mut self) {
-        if self.modal.is_some() || self.queue_modal.is_some() {
+        if self.modal.is_some() || self.queue_modal.is_some() || self.download_modal.is_some() {
             return;
         }
         if self.selected_queue == 0 {

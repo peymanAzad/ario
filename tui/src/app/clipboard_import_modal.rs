@@ -11,6 +11,9 @@ pub struct ClipboardImportModal {
 
 impl App {
     pub fn open_clipboard_import(&mut self) {
+        if self.modal.is_some() || self.queue_modal.is_some() || self.download_modal.is_some() {
+            return;
+        }
         let urls = crate::clipboard::scan_clipboard_for_urls();
         if urls.is_empty() {
             eprintln!("clipboard is empty");

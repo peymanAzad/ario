@@ -100,17 +100,6 @@ fn draw_queue_modal_tab_bar(
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn field_style(theme: &crate::theme::Theme, active: bool) -> Style {
-    if active {
-        Style::default()
-            .bg(theme.selected_bg)
-            .fg(theme.selected_fg)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(theme.foreground)
-    }
-}
-
 fn draw_queue_modal_common_tab(
     f: &mut Frame,
     theme: &crate::theme::Theme,

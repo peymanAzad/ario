@@ -20,6 +20,11 @@ pub fn update(app: &mut App, key_event: KeyEvent) {
         return;
     }
 
+    if app.download_modal.is_some() {
+        handle_download_modal_key(app, key_event);
+        return;
+    }
+
     match key_event.code {
         KeyCode::Esc | KeyCode::Char('q') => {
             app.quit();
@@ -68,6 +73,7 @@ pub fn update(app: &mut App, key_event: KeyEvent) {
         Focus::Downloads => match key_event.code {
             KeyCode::Down | KeyCode::Char('j') => app.select_next_download(),
             KeyCode::Up | KeyCode::Char('k') => app.select_prev_download(),
+            KeyCode::Enter => app.activate_selected_download(),
             KeyCode::Char('p') => app.pause_selected(),
             KeyCode::Char('r') => app.resume_selected(),
             KeyCode::Char('d') => app.delete_selected(),
@@ -145,6 +151,18 @@ fn handle_queue_modal_key(app: &mut App, key_event: KeyEvent) {
         // Space: toggles the highlighted day (Scheduler tab, Weekly days
         // row) — a no-op elsewhere, since the method itself checks context.
         KeyCode::Char(' ') => app.queue_modal_toggle_day(),
+        _ => {}
+    }
+}
+
+fn handle_download_modal_key(app: &mut App, key_event: KeyEvent) {
+    match key_event.code {
+        KeyCode::Esc | KeyCode::Char('c') => app.cancel_download_modal(),
+        KeyCode::Char('s') => app.save_download_modal(),
+        KeyCode::Down | KeyCode::Char('j') => app.download_modal_move_down(),
+        KeyCode::Up | KeyCode::Char('k') => app.download_modal_move_up(),
+        KeyCode::Left | KeyCode::Char('h') => app.download_modal_adjust_left(),
+        KeyCode::Right | KeyCode::Char('l') => app.download_modal_adjust_right(),
         _ => {}
     }
 }
