@@ -9,6 +9,8 @@ use common::{
     queue::{CreateQueueRequest, UpdateQueueRequest},
 };
 
+const TIME_STEP_MIN: i64 = 5;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueueModalTab {
     Common,
@@ -586,9 +588,9 @@ fn adjust_u32_bounded(current: u32, forward: bool, min: u32, max: u32) -> u32 {
 
 fn adjust_time(time: NaiveTime, forward: bool) -> NaiveTime {
     let delta = if forward {
-        ChronoDuration::minutes(30)
+        ChronoDuration::minutes(TIME_STEP_MIN)
     } else {
-        ChronoDuration::minutes(-30)
+        ChronoDuration::minutes(-TIME_STEP_MIN)
     };
     time + delta
 }
