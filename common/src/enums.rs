@@ -13,6 +13,12 @@ pub enum DownloadStatus {
     Removed,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum QueueStatus {
+    Active,
+    Paused,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FileCategory {
     Video,

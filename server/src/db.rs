@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use common::{
     download::{Download, DownloadFilter},
-    enums::{DownloadStatus, FileCategory, Recurrence, SortField, SourceType},
+    enums::{DownloadStatus, FileCategory, QueueStatus, Recurrence, SortField, SourceType},
     finetune::FineTune,
     queue::{Queue, QueueSettings},
     scheduler::Scheduler,
@@ -282,7 +282,7 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT * FROM downloads
              WHERE queue_id = ?1
-               AND (status = 'Pending' OR (status = 'Paused' AND paused_by_scheduler = 1))
+               AND (status = 'Pending' OR status = 'Paused')
              ORDER BY position_in_queue ASC",
         )?;
         let rows = stmt.query_map(params![queue_id], row_to_download)?;
@@ -295,6 +295,15 @@ impl Database {
             conn.prepare("SELECT * FROM downloads WHERE queue_id = ?1 AND status = 'Active'")?;
         let rows = stmt.query_map(params![queue_id], row_to_download)?;
         rows.collect()
+    }
+
+    pub fn update_queue_status(&self, queue_id: i64, new_status: QueueStatus) -> SqlResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE queues SET status = $1 WHERE id = $2",
+            params![queue_status_to_str(&new_status), queue_id],
+        )?;
+        Ok(())
     }
 
     pub fn set_paused_by_scheduler(&self, id: i64, value: bool) -> SqlResult<()> {
@@ -335,6 +344,21 @@ fn status_from_str(s: &str, err: Option<String>) -> DownloadStatus {
         "Error" => DownloadStatus::Error(err.unwrap_or_default()),
         "Removed" => DownloadStatus::Removed,
         _ => DownloadStatus::Pending,
+    }
+}
+
+fn queue_status_to_str(s: &QueueStatus) -> &'static str {
+    match s {
+        QueueStatus::Paused => "Paused",
+        QueueStatus::Active => "Active",
+    }
+}
+
+fn queue_status_from_str(s: &str) -> QueueStatus {
+    match s {
+        "Paused" => QueueStatus::Paused,
+        "Active" => QueueStatus::Active,
+        _ => QueueStatus::Paused,
     }
 }
 
@@ -416,6 +440,7 @@ fn row_to_queue(row: &Row) -> SqlResult<Queue> {
     let recurrence: Recurrence = recurrence_json
         .and_then(|j| serde_json::from_str(&j).ok())
         .unwrap_or_else(fallback_recurrence);
+    let status: String = row.get("status")?;
 
     Ok(Queue {
         id: row.get("id")?,
@@ -431,6 +456,7 @@ fn row_to_queue(row: &Row) -> SqlResult<Queue> {
             recurrence,
             run_missed_on_startup: row.get::<_, i64>("scheduler_run_missed")? != 0,
         },
+        status: queue_status_from_str(&status),
         created_at: row.get::<_, DateTime<Utc>>("created_at")?,
     })
 }

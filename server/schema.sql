@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS queues (
     scheduler_recurrence        TEXT,                       -- JSON: Recurrence, NULL if scheduler disabled
     scheduler_run_missed        INTEGER NOT NULL DEFAULT 0, -- 0/1 boolean
 
+    status                      TEXT NOT NULL DEFAULT 'Paused', -- 'Paused'|'Active'
     created_at                  TEXT NOT NULL               -- RFC3339 UTC
 );
 

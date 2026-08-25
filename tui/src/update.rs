@@ -63,6 +63,8 @@ pub fn update(app: &mut App, key_event: KeyEvent) {
             KeyCode::Up | KeyCode::Char('k') => app.select_prev_queue(),
             KeyCode::Char('n') => app.open_create_queue_modal(),
             KeyCode::Enter => app.open_edit_queue_modal(),
+            KeyCode::Char('p') => app.pause_selected_queue(),
+            KeyCode::Char('r') => app.resume_selected_queue(),
             _ => {}
         },
         Focus::Categories => match key_event.code {

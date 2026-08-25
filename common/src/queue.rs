@@ -1,7 +1,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{enums::Recurrence, finetune::FineTune, scheduler::Scheduler};
+use crate::{
+    enums::{QueueStatus, Recurrence},
+    finetune::FineTune,
+    scheduler::Scheduler,
+};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct QueueSettings {
@@ -19,6 +23,7 @@ pub struct Queue {
     pub settings: QueueSettings,
     pub scheduler: Scheduler,
     pub created_at: DateTime<Utc>,
+    pub status: QueueStatus,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

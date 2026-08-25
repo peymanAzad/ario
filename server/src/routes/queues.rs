@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     extract::{Path, State},
-    routing::get,
+    routing::{get, post},
 };
 use chrono::Utc;
 use common::{
@@ -9,8 +9,11 @@ use common::{
     scheduler::Scheduler,
 };
 
-use crate::error::AppError;
 use crate::state::AppState;
+use crate::{
+    error::AppError,
+    scheduler::{pause_downloads, start_eligible_downloads},
+};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -19,6 +22,8 @@ pub fn router() -> Router<AppState> {
             "/queues/{id}",
             get(get_queue).put(update_queue).delete(delete_queue),
         )
+        .route("/queues/{id}/resume", post(resume_queue))
+        .route("/queues/{id}/pause", post(pause_queue))
 }
 
 async fn list_queues(State(state): State<AppState>) -> Result<Json<Vec<Queue>>, AppError> {
@@ -55,6 +60,7 @@ async fn create_queue(
             recurrence: req.recurrence,
             run_missed_on_startup: req.run_missed_on_startup,
         },
+        status: common::enums::QueueStatus::Paused,
         created_at: Utc::now(),
     };
 
@@ -90,6 +96,7 @@ async fn update_queue(
             recurrence: req.recurrence,
             run_missed_on_startup: req.run_missed_on_startup,
         },
+        status: existing.status,
         created_at: existing.created_at,
     };
 
@@ -107,4 +114,34 @@ async fn delete_queue(
 ) -> Result<axum::http::StatusCode, AppError> {
     state.db.delete_queue(id)?;
     Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+async fn resume_queue(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<axum::http::StatusCode, AppError> {
+    let queue = state
+        .db
+        .get_queue(id)?
+        .ok_or_else(|| AppError::NotFound(format!("queue {id}")))?;
+    state
+        .db
+        .update_queue_status(id, common::enums::QueueStatus::Active)?;
+    start_eligible_downloads(&state, &queue).await?;
+    Ok(axum::http::StatusCode::OK)
+}
+
+async fn pause_queue(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<axum::http::StatusCode, AppError> {
+    let queue = state
+        .db
+        .get_queue(id)?
+        .ok_or_else(|| AppError::NotFound(format!("queue {id}")))?;
+    state
+        .db
+        .update_queue_status(id, common::enums::QueueStatus::Paused)?;
+    pause_downloads(&state, &queue, false).await?;
+    Ok(axum::http::StatusCode::OK)
 }

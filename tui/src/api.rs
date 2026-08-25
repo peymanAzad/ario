@@ -52,6 +52,22 @@ pub fn list_queues(base: &str) -> anyhow::Result<Vec<Queue>> {
     Ok(resp.json()?)
 }
 
+pub fn pause_queue(base: &str, queue_id: i64) -> anyhow::Result<()> {
+    client()
+        .post(format!("{base}/queues/{queue_id}/pause"))
+        .send()?
+        .error_for_status()?;
+    Ok(())
+}
+
+pub fn resume_queue(base: &str, queue_id: i64) -> anyhow::Result<()> {
+    client()
+        .post(format!("{base}/queues/{queue_id}/resume"))
+        .send()?
+        .error_for_status()?;
+    Ok(())
+}
+
 pub fn health(base: &str) -> anyhow::Result<HealthResponse> {
     let resp = client()
         .get(format!("{base}/health"))

@@ -85,7 +85,7 @@ pub async fn run(state: AppState) {
 /// `queue` to fill up to `max_concurrent_downloads`, in `position_in_queue`
 /// order — this is the app-level concurrency cap we enforce ourselves
 /// (independent of aria2's own global settings), per the queue design.
-async fn start_eligible_downloads(state: &AppState, queue: &Queue) -> anyhow::Result<()> {
+pub async fn start_eligible_downloads(state: &AppState, queue: &Queue) -> anyhow::Result<()> {
     let active_count = state.db.count_active_downloads_in_queue(queue.id)?;
     let capacity = (queue.settings.max_concurrent_downloads as i64 - active_count).max(0);
     if capacity == 0 {
@@ -133,9 +133,11 @@ async fn start_eligible_downloads(state: &AppState, queue: &Queue) -> anyhow::Re
     Ok(())
 }
 
-/// Pauses every currently-`Active` download in `queue`, marking each as
-/// scheduler-paused so the next open window knows it's safe to auto-resume.
-async fn pause_scheduled_downloads(state: &AppState, queue: &Queue) -> anyhow::Result<()> {
+pub async fn pause_downloads(
+    state: &AppState,
+    queue: &Queue,
+    paused_by_scheduler: bool,
+) -> anyhow::Result<()> {
     let active = state.db.list_active_downloads_in_queue(queue.id)?;
     for download in active {
         if let Some(gid) = &download.aria2_gid {
@@ -144,9 +146,17 @@ async fn pause_scheduled_downloads(state: &AppState, queue: &Queue) -> anyhow::R
         state
             .db
             .update_download_status(download.id, &DownloadStatus::Paused)?;
-        state.db.set_paused_by_scheduler(download.id, true)?;
+        state
+            .db
+            .set_paused_by_scheduler(download.id, paused_by_scheduler)?;
     }
     Ok(())
+}
+
+/// Pauses every currently-`Active` download in `queue`, marking each as
+/// scheduler-paused so the next open window knows it's safe to auto-resume.
+async fn pause_scheduled_downloads(state: &AppState, queue: &Queue) -> anyhow::Result<()> {
+    pause_downloads(state, queue, true).await
 }
 
 /// See module doc comment: `Weekly` uses local time, `Once` uses UTC instant.
