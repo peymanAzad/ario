@@ -30,7 +30,10 @@
 
 use crate::state::AppState;
 use chrono::{Datelike, Local, NaiveTime, Utc, Weekday};
-use common::{enums::DownloadStatus, enums::Recurrence, queue::Queue};
+use common::{
+    enums::{DownloadStatus, QueueStatus, Recurrence},
+    queue::Queue,
+};
 use std::time::Duration;
 
 const TICK_INTERVAL: Duration = Duration::from_secs(60);
@@ -41,7 +44,10 @@ pub async fn run(state: AppState) {
     // SIMPLIFICATION" note.
     if let Ok(queues) = state.db.list_queues() {
         for queue in &queues {
-            if queue.scheduler.enabled && queue.scheduler.run_missed_on_startup {
+            if queue.status == QueueStatus::Active
+                && queue.scheduler.enabled
+                && queue.scheduler.run_missed_on_startup
+            {
                 if let Err(e) = start_eligible_downloads(&state, queue).await {
                     eprintln!(
                         "scheduler: startup catch-up failed for queue {}: {e}",
@@ -64,11 +70,14 @@ pub async fn run(state: AppState) {
         };
 
         for queue in &queues {
-            if !queue.scheduler.enabled {
+            // Manual pause is the queue-level override: it must win over an
+            // open schedule window and also catch any download that became
+            // active after the pause route's immediate pass.
+            let result = if queue.status == QueueStatus::Paused {
+                pause_downloads(&state, queue, false).await
+            } else if !queue.scheduler.enabled {
                 continue;
-            }
-
-            let result = if is_within_window(&queue.scheduler.recurrence) {
+            } else if is_within_window(&queue.scheduler.recurrence) {
                 start_eligible_downloads(&state, queue).await
             } else {
                 pause_scheduled_downloads(&state, queue).await

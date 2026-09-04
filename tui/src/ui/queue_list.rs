@@ -3,18 +3,31 @@ use ratatui::{
     Frame,
     layout::Rect,
     style::Style,
-    text::Span,
-    widgets::{Block, Borders, List, ListState},
+    text::{Line, Span},
+    widgets::{Block, Borders, List, ListItem, ListState},
 };
 
 use crate::app::Focus;
+use common::enums::QueueStatus;
 
 pub fn draw_queues_list(f: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
     let focused = app.focus == Focus::Queues;
 
-    let mut items: Vec<String> = app.queues.iter().map(|q| q.name.clone()).collect();
-    items.insert(0, "All".to_string());
+    let mut items = vec![ListItem::new("All")];
+    items.extend(app.queues.iter().map(|queue| {
+        let mut spans = vec![Span::styled(
+            queue.name.clone(),
+            Style::default().fg(theme.foreground),
+        )];
+        if queue.status == QueueStatus::Paused {
+            spans.push(Span::styled(
+                " [paused]",
+                Style::default().fg(theme.status_error),
+            ));
+        }
+        ListItem::new(Line::from(spans))
+    }));
 
     let mut state = ListState::default();
     state.select(Some(app.selected_queue));

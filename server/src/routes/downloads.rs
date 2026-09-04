@@ -10,7 +10,7 @@ use common::{
     download::{
         AddDownloadInput, AddDownloadsRequest, Download, DownloadFilter, DownloadLiveStatus,
     },
-    enums::{DownloadStatus, FileCategory, SourceType},
+    enums::{DownloadStatus, FileCategory, QueueStatus, SourceType},
     finetune::FineTune,
 };
 
@@ -21,6 +21,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/downloads/{id}/finetune",
             axum::routing::put(update_finetune),
+        )
+        .route(
+            "/downloads/{id}/queue",
+            axum::routing::put(update_download_queue),
         )
         .route("/downloads/{id}/pause", axum::routing::post(pause_download))
         .route(
@@ -167,7 +171,7 @@ async fn add_downloads(
         let id = state.db.insert_download(&download)?;
         download.id = id;
 
-        if req.start_immediately {
+        if req.start_immediately && queue.status == QueueStatus::Active {
             let aria2_result = match (&torrent_b64, download.source_type) {
                 (Some(b64), _) => {
                     state
@@ -231,6 +235,37 @@ async fn update_finetune(
     Json(finetune): Json<FineTune>,
 ) -> Result<Json<DownloadLiveStatus>, AppError> {
     state.db.update_download_finetune(id, &finetune)?;
+    let updated = state
+        .db
+        .get_download(id)?
+        .ok_or_else(|| AppError::NotFound(format!("download {id}")))?;
+    Ok(Json(merge_live(&state, updated).await))
+}
+
+#[derive(serde::Deserialize)]
+struct UpdateDownloadQueueRequest {
+    queue_id: i64,
+}
+
+async fn update_download_queue(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(req): Json<UpdateDownloadQueueRequest>,
+) -> Result<Json<DownloadLiveStatus>, AppError> {
+    let download = state
+        .db
+        .get_download(id)?
+        .ok_or_else(|| AppError::NotFound(format!("download {id}")))?;
+    state
+        .db
+        .get_queue(req.queue_id)?
+        .ok_or_else(|| AppError::BadRequest(format!("queue {} does not exist", req.queue_id)))?;
+
+    if download.queue_id != req.queue_id {
+        let position = state.db.next_position_in_queue(req.queue_id)?;
+        state.db.update_download_queue(id, req.queue_id, position)?;
+    }
+
     let updated = state
         .db
         .get_download(id)?

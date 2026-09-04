@@ -151,3 +151,21 @@ pub fn update_finetune(
         .error_for_status()?;
     Ok(resp.json()?)
 }
+
+pub fn move_download_queue(
+    base: &str,
+    id: i64,
+    queue_id: i64,
+) -> anyhow::Result<DownloadLiveStatus> {
+    #[derive(serde::Serialize)]
+    struct UpdateDownloadQueueRequest {
+        queue_id: i64,
+    }
+
+    let resp = client()
+        .put(format!("{base}/downloads/{id}/queue"))
+        .json(&UpdateDownloadQueueRequest { queue_id })
+        .send()?
+        .error_for_status()?;
+    Ok(resp.json()?)
+}

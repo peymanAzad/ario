@@ -12,6 +12,8 @@ pub struct DownloadEditModal {
     pub download_id: i64,
     pub finetune: FineTune,
     pub cursor: usize,
+    pub queue_cursor: usize,
+    pub original_queue_id: i64,
     pub error: Option<String>,
 }
 
@@ -26,16 +28,24 @@ impl App {
         let is_completed = live.download.status == DownloadStatus::Completed;
         let download_id = live.download.id;
         let finetune = live.download.finetune.clone();
+        let original_queue_id = live.download.queue_id;
         let destination_path = live.download.destination_path.clone();
         let filename = live.download.filename.clone();
 
         if is_completed {
             self.open_download_file(destination_path, filename);
         } else {
+            let queue_cursor = self
+                .queues
+                .iter()
+                .position(|queue| queue.id == original_queue_id)
+                .unwrap_or(0);
             self.download_modal = Some(DownloadEditModal {
                 download_id,
                 finetune,
                 cursor: 0,
+                queue_cursor,
+                original_queue_id,
                 error: None,
             });
         }
@@ -73,7 +83,7 @@ impl App {
 
     pub fn download_modal_move_down(&mut self) {
         if let Some(m) = &mut self.download_modal {
-            m.cursor = (m.cursor + 1).min(3);
+            m.cursor = (m.cursor + 1).min(4);
         }
     }
 
@@ -84,30 +94,52 @@ impl App {
     }
 
     pub fn download_modal_adjust_left(&mut self) {
-        if let Some(m) = &mut self.download_modal {
-            adjust_finetune_field(&mut m.finetune, m.cursor, false);
-        }
+        self.download_modal_adjust(false);
     }
 
     pub fn download_modal_adjust_right(&mut self) {
+        self.download_modal_adjust(true);
+    }
+
+    fn download_modal_adjust(&mut self, forward: bool) {
         if let Some(m) = &mut self.download_modal {
-            adjust_finetune_field(&mut m.finetune, m.cursor, true);
+            if m.cursor == 4 {
+                if !self.queues.is_empty() {
+                    let len = self.queues.len();
+                    m.queue_cursor = if forward {
+                        (m.queue_cursor + 1) % len
+                    } else {
+                        (m.queue_cursor + len - 1) % len
+                    };
+                }
+            } else {
+                adjust_finetune_field(&mut m.finetune, m.cursor, forward);
+            }
         }
     }
 
-    /// Saves via the existing `PUT /downloads/:id/finetune` — no new server
-    /// endpoint needed since finetune is the only currently-editable field.
     pub fn save_download_modal(&mut self) {
-        let Some(modal) = self.download_modal.take() else {
+        let Some(mut modal) = self.download_modal.take() else {
+            return;
+        };
+        let Some(queue_id) = self.queues.get(modal.queue_cursor).map(|queue| queue.id) else {
+            modal.error = Some("No queue is available".into());
+            self.download_modal = Some(modal);
             return;
         };
         let api_base = self.api_base.clone();
         let sender = self.event_sender.clone();
         thread::spawn(move || {
-            if let Err(e) = api::update_finetune(&api_base, modal.download_id, &modal.finetune) {
+            let result = api::update_finetune(&api_base, modal.download_id, &modal.finetune)
+                .and_then(|_| {
+                    if queue_id != modal.original_queue_id {
+                        api::move_download_queue(&api_base, modal.download_id, queue_id)?;
+                    }
+                    Ok(())
+                });
+            if let Err(e) = result {
                 let _ = sender.send(Event::App(AppEvent::ActionFailed(e.to_string())));
             }
-            let _ = api::update_finetune(&api_base, modal.download_id, &modal.finetune);
         });
         self.refresh();
     }

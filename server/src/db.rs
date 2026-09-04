@@ -23,6 +23,7 @@ impl Database {
              PRAGMA busy_timeout = 5000;",
         )?;
         conn.execute_batch(SCHEMA)?;
+        run_migrations(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -240,6 +241,20 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_download_queue(
+        &self,
+        id: i64,
+        queue_id: i64,
+        position_in_queue: i32,
+    ) -> SqlResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE downloads SET queue_id = ?1, position_in_queue = ?2 WHERE id = ?3",
+            params![queue_id, position_in_queue, id],
+        )?;
+        Ok(())
+    }
+
     pub fn reorder_queue(&self, queue_id: i64, ordered_ids: &[i64]) -> SqlResult<()> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
@@ -323,6 +338,25 @@ impl Database {
         )?;
         Ok(())
     }
+}
+
+fn run_migrations(conn: &Connection) -> SqlResult<()> {
+    let has_queue_status: bool = conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM pragma_table_info('queues') WHERE name = 'status'
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+
+    if !has_queue_status {
+        conn.execute(
+            "ALTER TABLE queues ADD COLUMN status TEXT NOT NULL DEFAULT 'Paused'",
+            [],
+        )?;
+    }
+
+    Ok(())
 }
 
 fn status_to_str(s: &DownloadStatus) -> (&'static str, Option<String>) {
@@ -459,4 +493,32 @@ fn row_to_queue(row: &Row) -> SqlResult<Queue> {
         status: queue_status_from_str(&status),
         created_at: row.get::<_, DateTime<Utc>>("created_at")?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn queue_status_migration_is_idempotent_and_backfills_paused() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE queues (
+                 id INTEGER PRIMARY KEY,
+                 name TEXT NOT NULL
+             );
+             INSERT INTO queues (id, name) VALUES (1, 'Existing Queue');",
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+
+        let status: String = conn
+            .query_row("SELECT status FROM queues WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(status, "Paused");
+    }
 }

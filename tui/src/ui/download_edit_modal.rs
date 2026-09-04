@@ -50,7 +50,12 @@ pub fn draw_download_modal(f: &mut Frame, app: &App, modal: &DownloadEditModal) 
         Some(StreamPieceSelector::Geom) => "geom".to_string(),
     };
 
-    let rows: [(&str, String); 4] = [
+    let queue_label = app
+        .queues
+        .get(modal.queue_cursor)
+        .map(|queue| queue.name.clone())
+        .unwrap_or_else(|| "(unavailable)".into());
+    let rows: [(&str, String); 5] = [
         (
             "Connections per download",
             modal
@@ -69,6 +74,7 @@ pub fn draw_download_modal(f: &mut Frame, app: &App, modal: &DownloadEditModal) 
         ),
         ("File allocation", alloc_label),
         ("Stream piece selector", selector_label),
+        ("Queue", queue_label),
     ];
 
     let items: Vec<ListItem> = rows
