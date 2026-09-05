@@ -29,7 +29,7 @@
 //! if this proves annoying in practice.
 
 use crate::state::AppState;
-use chrono::{Datelike, Local, NaiveTime, Utc, Weekday};
+use chrono::{Datelike, Local, NaiveDate, NaiveTime, Utc, Weekday};
 use common::{
     enums::{DownloadStatus, QueueStatus, Recurrence},
     queue::Queue,
@@ -44,9 +44,17 @@ pub async fn run(state: AppState) {
     // SIMPLIFICATION" note.
     if let Ok(queues) = state.db.list_queues() {
         for queue in &queues {
+            let occurrence = current_schedule_occurrence(&queue.scheduler.recurrence);
+            let suppressed = state
+                .db
+                .get_queue_scheduler_suppression(queue.id)
+                .ok()
+                .flatten();
+            let current_occurrence_is_suppressed = occurrence.is_some() && occurrence == suppressed;
             if queue.status == QueueStatus::Active
                 && queue.scheduler.enabled
                 && queue.scheduler.run_missed_on_startup
+                && !current_occurrence_is_suppressed
             {
                 if let Err(e) = start_eligible_downloads(&state, queue).await {
                     eprintln!(
@@ -70,22 +78,55 @@ pub async fn run(state: AppState) {
         };
 
         for queue in &queues {
-            // Manual pause is the queue-level override: it must win over an
-            // open schedule window and also catch any download that became
-            // active after the pause route's immediate pass.
-            let result = if queue.status == QueueStatus::Paused {
-                pause_downloads(&state, queue, false).await
-            } else if !queue.scheduler.enabled {
-                continue;
-            } else if is_within_window(&queue.scheduler.recurrence) {
-                start_eligible_downloads(&state, queue).await
-            } else {
-                pause_scheduled_downloads(&state, queue).await
-            };
-
-            if let Err(e) = result {
+            if let Err(e) = process_queue(&state, queue).await {
                 eprintln!("scheduler: error processing queue {}: {e}", queue.id);
             }
+        }
+    }
+}
+
+async fn process_queue(state: &AppState, queue: &Queue) -> anyhow::Result<()> {
+    if !queue.scheduler.enabled {
+        return Ok(());
+    }
+
+    let occurrence = current_schedule_occurrence(&queue.scheduler.recurrence);
+    match schedule_decision(&state.db, queue.id, occurrence.as_deref())? {
+        ScheduleDecision::Start => start_eligible_downloads(state, queue).await,
+        ScheduleDecision::StayPaused => pause_downloads(state, queue, false).await,
+        ScheduleDecision::CloseWindow => pause_scheduled_downloads(state, queue).await,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScheduleDecision {
+    Start,
+    StayPaused,
+    CloseWindow,
+}
+
+/// Resolves and advances the persisted per-occurrence suppression state. A
+/// stale key is cleared as soon as a different occurrence opens (or the
+/// current window closes), so it cannot leak into a later scheduled day.
+fn schedule_decision(
+    db: &crate::db::Database,
+    queue_id: i64,
+    occurrence: Option<&str>,
+) -> anyhow::Result<ScheduleDecision> {
+    let suppressed = db.get_queue_scheduler_suppression(queue_id)?;
+    match occurrence {
+        Some(current) if suppressed.as_deref() == Some(current) => Ok(ScheduleDecision::StayPaused),
+        Some(_) => {
+            if suppressed.is_some() {
+                db.set_queue_scheduler_suppression(queue_id, None)?;
+            }
+            Ok(ScheduleDecision::Start)
+        }
+        None => {
+            if suppressed.is_some() {
+                db.set_queue_scheduler_suppression(queue_id, None)?;
+            }
+            Ok(ScheduleDecision::CloseWindow)
         }
     }
 }
@@ -168,34 +209,125 @@ async fn pause_scheduled_downloads(state: &AppState, queue: &Queue) -> anyhow::R
     pause_downloads(state, queue, true).await
 }
 
-/// See module doc comment: `Weekly` uses local time, `Once` uses UTC instant.
-pub fn is_within_window(recurrence: &Recurrence) -> bool {
+/// Identifies the currently-open schedule occurrence. A manual queue pause
+/// stores this key so only this occurrence is skipped; the next scheduled day
+/// naturally has a different key and can start normally.
+pub fn current_schedule_occurrence(recurrence: &Recurrence) -> Option<String> {
     match recurrence {
         Recurrence::Once { start, end } => {
             let now = Utc::now();
-            now >= *start && now <= *end
+            (now >= *start && now <= *end).then(|| format!("once:{}", start.to_rfc3339()))
         }
         Recurrence::Weekly {
             days,
             start_time,
             end_time,
-        } => is_within_weekly_window(days, *start_time, *end_time),
+        } => {
+            let now = Local::now();
+            weekly_occurrence_date(days, *start_time, *end_time, now.date_naive(), now.time())
+                .map(|date| format!("weekly:{date}:{start_time}"))
+        }
     }
 }
 
-fn is_within_weekly_window(days: &[Weekday], start: NaiveTime, end: NaiveTime) -> bool {
-    let now = Local::now();
-    let today = now.weekday();
-    let time_now = now.time();
+fn weekly_occurrence_date(
+    days: &[Weekday],
+    start: NaiveTime,
+    end: NaiveTime,
+    today: NaiveDate,
+    time_now: NaiveTime,
+) -> Option<NaiveDate> {
+    let weekday = today.weekday();
 
     if start <= end {
         // Same-day window, no midnight crossing.
-        days.contains(&today) && time_now >= start && time_now <= end
+        (days.contains(&weekday) && time_now >= start && time_now <= end).then_some(today)
     } else {
         // Crosses midnight (e.g. 22:00-02:00): either today's late part, or
         // yesterday's window continuing into this morning.
-        let late_part = days.contains(&today) && time_now >= start;
-        let early_part = days.contains(&today.pred()) && time_now <= end;
-        late_part || early_part
+        if days.contains(&weekday) && time_now >= start {
+            Some(today)
+        } else if days.contains(&weekday.pred()) && time_now <= end {
+            today.pred_opt()
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn date(year: i32, month: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(year, month, day).unwrap()
+    }
+
+    fn time(hour: u32, minute: u32) -> NaiveTime {
+        NaiveTime::from_hms_opt(hour, minute, 0).unwrap()
+    }
+
+    #[test]
+    fn weekly_occurrences_are_distinct_on_later_scheduled_days() {
+        let days = [Weekday::Mon, Weekday::Tue];
+        let monday = weekly_occurrence_date(
+            &days,
+            time(9, 0),
+            time(17, 0),
+            date(2026, 9, 7),
+            time(12, 0),
+        );
+        let tuesday = weekly_occurrence_date(
+            &days,
+            time(9, 0),
+            time(17, 0),
+            date(2026, 9, 8),
+            time(12, 0),
+        );
+
+        assert_eq!(monday, Some(date(2026, 9, 7)));
+        assert_eq!(tuesday, Some(date(2026, 9, 8)));
+        assert_ne!(monday, tuesday);
+    }
+
+    #[test]
+    fn overnight_occurrence_keeps_the_scheduled_start_day() {
+        let occurrence = weekly_occurrence_date(
+            &[Weekday::Mon],
+            time(22, 0),
+            time(2, 0),
+            date(2026, 9, 8),
+            time(1, 0),
+        );
+
+        assert_eq!(occurrence, Some(date(2026, 9, 7)));
+    }
+
+    #[test]
+    fn suppression_holds_for_one_occurrence_then_clears_for_the_next() {
+        let db = crate::db::Database::open(":memory:").unwrap();
+        let queue_id = 1;
+        let monday = "weekly:2026-09-07:09:00:00";
+        let tuesday = "weekly:2026-09-08:09:00:00";
+
+        // This is the state written when the user pauses during Monday's
+        // open window.
+        db.set_queue_scheduler_suppression(queue_id, Some(monday))
+            .unwrap();
+
+        assert_eq!(
+            schedule_decision(&db, queue_id, Some(monday)).unwrap(),
+            ScheduleDecision::StayPaused
+        );
+        assert_eq!(
+            schedule_decision(&db, queue_id, Some(monday)).unwrap(),
+            ScheduleDecision::StayPaused
+        );
+
+        assert_eq!(
+            schedule_decision(&db, queue_id, Some(tuesday)).unwrap(),
+            ScheduleDecision::Start
+        );
+        assert_eq!(db.get_queue_scheduler_suppression(queue_id).unwrap(), None);
     }
 }

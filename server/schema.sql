@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS queues (
     scheduler_enabled           INTEGER NOT NULL DEFAULT 0, -- 0/1 boolean
     scheduler_recurrence        TEXT,                       -- JSON: Recurrence, NULL if scheduler disabled
     scheduler_run_missed        INTEGER NOT NULL DEFAULT 0, -- 0/1 boolean
+    scheduler_suppressed_occurrence TEXT,                   -- current occurrence key skipped by a manual pause
+    scheduler_active_occurrence TEXT,                       -- occurrence that most recently started this queue
 
     status                      TEXT NOT NULL DEFAULT 'Paused', -- 'Paused'|'Active'
     created_at                  TEXT NOT NULL               -- RFC3339 UTC
@@ -68,4 +70,3 @@ CREATE INDEX IF NOT EXISTS idx_downloads_status         ON downloads(status);
 CREATE INDEX IF NOT EXISTS idx_downloads_category       ON downloads(category);
 CREATE INDEX IF NOT EXISTS idx_downloads_created_at     ON downloads(created_at);
 CREATE INDEX IF NOT EXISTS idx_downloads_queue_position ON downloads(queue_id, position_in_queue);
-

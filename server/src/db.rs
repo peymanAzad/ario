@@ -321,6 +321,28 @@ impl Database {
         Ok(())
     }
 
+    pub fn get_queue_scheduler_suppression(&self, queue_id: i64) -> SqlResult<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT scheduler_suppressed_occurrence FROM queues WHERE id = ?1",
+            params![queue_id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn set_queue_scheduler_suppression(
+        &self,
+        queue_id: i64,
+        occurrence: Option<&str>,
+    ) -> SqlResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE queues SET scheduler_suppressed_occurrence = ?1 WHERE id = ?2",
+            params![occurrence, queue_id],
+        )?;
+        Ok(())
+    }
+
     pub fn set_paused_by_scheduler(&self, id: i64, value: bool) -> SqlResult<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -352,6 +374,22 @@ fn run_migrations(conn: &Connection) -> SqlResult<()> {
     if !has_queue_status {
         conn.execute(
             "ALTER TABLE queues ADD COLUMN status TEXT NOT NULL DEFAULT 'Paused'",
+            [],
+        )?;
+    }
+
+    let has_scheduler_suppression: bool = conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM pragma_table_info('queues')
+             WHERE name = 'scheduler_suppressed_occurrence'
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+
+    if !has_scheduler_suppression {
+        conn.execute(
+            "ALTER TABLE queues ADD COLUMN scheduler_suppressed_occurrence TEXT",
             [],
         )?;
     }
@@ -500,7 +538,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn queue_status_migration_is_idempotent_and_backfills_paused() {
+    fn queue_migrations_are_idempotent_and_backfill_paused_status() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
             "CREATE TABLE queues (
@@ -520,5 +558,14 @@ mod tests {
             })
             .unwrap();
         assert_eq!(status, "Paused");
+
+        let suppression: Option<String> = conn
+            .query_row(
+                "SELECT scheduler_suppressed_occurrence FROM queues WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(suppression, None);
     }
 }

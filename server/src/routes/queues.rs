@@ -12,7 +12,7 @@ use common::{
 use crate::state::AppState;
 use crate::{
     error::AppError,
-    scheduler::{pause_downloads, start_eligible_downloads},
+    scheduler::{current_schedule_occurrence, pause_downloads, start_eligible_downloads},
 };
 
 pub fn router() -> Router<AppState> {
@@ -100,7 +100,13 @@ async fn update_queue(
         created_at: existing.created_at,
     };
 
+    let scheduler_changed = queue.scheduler != existing.scheduler;
     state.db.update_queue(&queue)?;
+    if scheduler_changed {
+        // Occurrence keys belong to the old schedule definition and must not
+        // suppress or claim ownership of a newly edited schedule.
+        state.db.set_queue_scheduler_suppression(id, None)?;
+    }
     let updated = state
         .db
         .get_queue(id)?
@@ -124,6 +130,7 @@ async fn resume_queue(
         .db
         .get_queue(id)?
         .ok_or_else(|| AppError::NotFound(format!("queue {id}")))?;
+    state.db.set_queue_scheduler_suppression(id, None)?;
     state
         .db
         .update_queue_status(id, common::enums::QueueStatus::Active)?;
@@ -139,6 +146,14 @@ async fn pause_queue(
         .db
         .get_queue(id)?
         .ok_or_else(|| AppError::NotFound(format!("queue {id}")))?;
+    let suppressed_occurrence = queue
+        .scheduler
+        .enabled
+        .then(|| current_schedule_occurrence(&queue.scheduler.recurrence))
+        .flatten();
+    state
+        .db
+        .set_queue_scheduler_suppression(id, suppressed_occurrence.as_deref())?;
     state
         .db
         .update_queue_status(id, common::enums::QueueStatus::Paused)?;
