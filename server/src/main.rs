@@ -5,6 +5,7 @@ use crate::{
     state::AppState,
 };
 use axum::Router;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -21,6 +22,7 @@ mod state;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
+    let launch = LaunchOptions::parse(std::env::args().skip(1))?;
     let server_config = config::load_or_create()?;
 
     let db_path = config::config_dir()?.join("ario.db");
@@ -43,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
     aria2_process.start().await?;
     tokio::spawn(Arc::clone(&aria2_process).supervise());
 
-    let state = AppState::new(database, aria2_client, server_config);
+    let state = AppState::new(database, aria2_client, server_config, launch.tui_managed);
     tokio::spawn(scheduler::run(state.clone()));
     tokio::spawn(poller::run(state.clone()));
 
@@ -59,14 +61,16 @@ async fn main() -> anyhow::Result<()> {
         .layer(cors)
         .with_state(state.clone());
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:47812").await?;
-    println!("ario is running on http://localhost:47812");
+    let listen_addr = SocketAddr::new(launch.host, launch.port);
+    let listener = tokio::net::TcpListener::bind(listen_addr).await?;
+    println!("ario is running on http://{listen_addr}");
 
     let shutdown_state = state.clone();
     let shutdown_process = Arc::clone(&aria2_process);
+    let shutdown_notify = Arc::clone(&state.shutdown_notify);
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
-            shutdown_signal().await;
+            shutdown_signal(shutdown_notify).await;
             println!("shutting down: stopping aria2c...");
             shutdown_process.shutdown(&shutdown_state.aria2).await;
         })
@@ -75,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn shutdown_signal() {
+async fn shutdown_signal(shutdown_notify: Arc<tokio::sync::Notify>) {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
             .await
@@ -96,5 +100,90 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => {},
         _ = terminate => {},
+        _ = shutdown_notify.notified() => {},
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LaunchOptions {
+    host: IpAddr,
+    port: u16,
+    tui_managed: bool,
+}
+
+impl Default for LaunchOptions {
+    fn default() -> Self {
+        Self {
+            host: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: 47812,
+            tui_managed: false,
+        }
+    }
+}
+
+impl LaunchOptions {
+    fn parse(args: impl IntoIterator<Item = String>) -> anyhow::Result<Self> {
+        let mut options = Self::default();
+        let mut args = args.into_iter();
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--host" => {
+                    let value = args
+                        .next()
+                        .ok_or_else(|| anyhow::anyhow!("--host requires a value"))?;
+                    options.host = if value.eq_ignore_ascii_case("localhost") {
+                        IpAddr::V4(Ipv4Addr::LOCALHOST)
+                    } else {
+                        value
+                            .parse()
+                            .map_err(|_| anyhow::anyhow!("invalid --host: {value}"))?
+                    };
+                    if !options.host.is_loopback() {
+                        anyhow::bail!("--host must be a loopback address");
+                    }
+                }
+                "--port" => {
+                    let value = args
+                        .next()
+                        .ok_or_else(|| anyhow::anyhow!("--port requires a value"))?;
+                    options.port = value
+                        .parse()
+                        .map_err(|_| anyhow::anyhow!("invalid --port: {value}"))?;
+                    if options.port == 0 {
+                        anyhow::bail!("--port must be greater than zero");
+                    }
+                }
+                "--tui-managed" => options.tui_managed = true,
+                _ => anyhow::bail!("unknown argument: {arg}"),
+            }
+        }
+        Ok(options)
+    }
+}
+
+#[cfg(test)]
+mod launch_tests {
+    use super::*;
+
+    #[test]
+    fn parses_custom_managed_listener() {
+        let options = LaunchOptions::parse(
+            ["--host", "::1", "--port", "49123", "--tui-managed"]
+                .into_iter()
+                .map(str::to_string),
+        )
+        .unwrap();
+        assert_eq!(options.host, "::1".parse::<IpAddr>().unwrap());
+        assert_eq!(options.port, 49123);
+        assert!(options.tui_managed);
+    }
+
+    #[test]
+    fn rejects_non_loopback_and_unknown_arguments() {
+        assert!(
+            LaunchOptions::parse(["--host", "192.168.1.2"].into_iter().map(str::to_string))
+                .is_err()
+        );
+        assert!(LaunchOptions::parse(["--wat"].into_iter().map(str::to_string)).is_err());
     }
 }

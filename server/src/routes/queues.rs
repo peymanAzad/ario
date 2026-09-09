@@ -46,6 +46,7 @@ async fn create_queue(
     State(state): State<AppState>,
     Json(req): Json<CreateQueueRequest>,
 ) -> Result<Json<Queue>, AppError> {
+    let _activity = state.activity_guard().await?;
     let queue = Queue {
         id: 0, // placeholder — overwritten by the id sqlite assigns on insert
         name: req.name,
@@ -77,6 +78,7 @@ async fn update_queue(
     Path(id): Path<i64>,
     Json(req): Json<UpdateQueueRequest>,
 ) -> Result<Json<Queue>, AppError> {
+    let _activity = state.activity_guard().await?;
     let existing = state
         .db
         .get_queue(id)?
@@ -118,6 +120,7 @@ async fn delete_queue(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<axum::http::StatusCode, AppError> {
+    let _activity = state.activity_guard().await?;
     state.db.delete_queue(id)?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
@@ -126,6 +129,7 @@ async fn resume_queue(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<axum::http::StatusCode, AppError> {
+    let _activity = state.activity_guard().await?;
     let queue = state
         .db
         .get_queue(id)?
@@ -142,6 +146,7 @@ async fn pause_queue(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<axum::http::StatusCode, AppError> {
+    let _activity = state.activity_guard().await?;
     let queue = state
         .db
         .get_queue(id)?

@@ -5,15 +5,11 @@ pub mod downloads_table;
 pub mod queue_list;
 pub mod queue_modal;
 
-use std::{
-    sync::{Arc, mpsc::Sender},
-    thread,
-};
+use std::{sync::mpsc::Sender, thread};
 
 use crate::app::clipboard_import_modal::ClipboardImportModal;
 use crate::app::download_edit_modal::DownloadEditModal;
 use crate::app::queue_modal::QueueModal;
-use crate::server_process::ServerProcess;
 use crate::theme::Theme;
 use crate::toast::{ToastLevel, ToastStack};
 use crate::{api, event::Event};
@@ -98,7 +94,6 @@ pub struct App {
     pub toasts: ToastStack,
     /// When true, TUI may spawn/supervise ario_daemon for a local URL.
     manages_server: bool,
-    server_process: Option<Arc<ServerProcess>>,
     event_sender: Sender<Event>,
     refresh_in_flight: bool,
 }
@@ -109,7 +104,6 @@ impl App {
         theme: Theme,
         event_sender: Sender<Event>,
         manages_server: bool,
-        server_process: Option<Arc<ServerProcess>>,
     ) -> Self {
         Self {
             api_base,
@@ -129,7 +123,6 @@ impl App {
             download_modal: None,
             event_sender,
             manages_server,
-            server_process,
             refresh_in_flight: false,
             toasts: ToastStack::new(),
         }
@@ -173,25 +166,15 @@ impl App {
         let filter = self.current_filter();
         let sender = self.event_sender.clone();
         let manages_server = self.manages_server;
-        let server_process = self.server_process.clone();
 
         thread::spawn(move || {
             let health = api::health(&api_base);
             let server_reachable = health.is_ok();
             let aria2_reachable = health.map(|h| h.aria2_reachable).unwrap_or(false);
 
-            if !server_reachable {
-                if let Some(process) = server_process.as_ref()
-                    && manages_server
-                    && !process.has_child()
-                {
-                    let _ = process.ensure_started();
-                }
-            }
-
             let downloads = api::list_downloads(&api_base, &filter);
             let queues = api::list_queues(&api_base);
-            // Re-check health after a possible ensure_started so status catches up.
+            // A managed daemon may have been restarted by the supervisor between requests.
             let (server_reachable, aria2_reachable) = if !server_reachable && manages_server {
                 match api::health(&api_base) {
                     Ok(h) => (true, h.aria2_reachable),

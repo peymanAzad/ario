@@ -92,6 +92,7 @@ async fn add_downloads(
     State(state): State<AppState>,
     Json(req): Json<AddDownloadsRequest>,
 ) -> Result<Json<Vec<DownloadLiveStatus>>, AppError> {
+    let _activity = state.activity_guard().await?;
     if req.inputs.is_empty() {
         return Err(AppError::BadRequest("inputs must not be empty".into()));
     }
@@ -217,6 +218,7 @@ async fn delete_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<axum::http::StatusCode, AppError> {
+    let _activity = state.activity_guard().await?;
     let download = state
         .db
         .get_download(id)?
@@ -235,6 +237,7 @@ async fn update_finetune(
     Path(id): Path<i64>,
     Json(finetune): Json<FineTune>,
 ) -> Result<Json<DownloadLiveStatus>, AppError> {
+    let _activity = state.activity_guard().await?;
     state.db.update_download_finetune(id, &finetune)?;
     let updated = state
         .db
@@ -253,6 +256,7 @@ async fn update_download_queue(
     Path(id): Path<i64>,
     Json(req): Json<UpdateDownloadQueueRequest>,
 ) -> Result<Json<DownloadLiveStatus>, AppError> {
+    let _activity = state.activity_guard().await?;
     let download = state
         .db
         .get_download(id)?
@@ -278,6 +282,7 @@ async fn pause_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<DownloadLiveStatus>, AppError> {
+    let _activity = state.activity_guard().await?;
     let download = state
         .db
         .get_download(id)?
@@ -323,6 +328,7 @@ async fn resume_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<DownloadLiveStatus>, AppError> {
+    let _activity = state.activity_guard().await?;
     let download = state
         .db
         .get_download(id)?
@@ -375,6 +381,7 @@ async fn reorder_queue(
     Path(queue_id): Path<i64>,
     Json(req): Json<ReorderRequest>,
 ) -> Result<axum::http::StatusCode, AppError> {
+    let _activity = state.activity_guard().await?;
     state.db.reorder_queue(queue_id, &req.ordered_ids)?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
