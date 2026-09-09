@@ -1,13 +1,11 @@
-//! TUI-owned supervision of the local `ario_daemon` process.
-//! Mirrors the server's aria2 supervisor: wait on exit, respawn with a
-//! crash-loop guard, and only shut down a child we spawned.
+//! TUI-owned supervision of a local `ario_daemon` process.
 
-use std::net::TcpListener;
+use std::net::{IpAddr, TcpListener};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::api;
@@ -17,22 +15,40 @@ const HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const HEALTH_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 const FAST_EXIT_THRESHOLD: Duration = Duration::from_secs(3);
 const MAX_FAST_EXITS: u32 = 5;
+const RESPAWN_BACKOFF: Duration = Duration::from_secs(2);
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(5);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ManagedServerTarget {
+    pub host: IpAddr,
+    pub port: u16,
+}
+
+impl ManagedServerTarget {
+    pub fn api_base(self) -> String {
+        format!("http://{}", std::net::SocketAddr::new(self.host, self.port))
+    }
+}
 
 pub struct ServerProcessConfig {
     pub binary_path: String,
     pub api_base: String,
-    pub port: u16,
+    pub target: ManagedServerTarget,
     pub log_path: PathBuf,
+}
+
+struct RunningChild {
+    process: Child,
+    started_at: Instant,
 }
 
 pub struct ServerProcess {
     config: ServerProcessConfig,
-    child: Mutex<Option<Child>>,
+    child: Mutex<Option<RunningChild>>,
+    spawn_lock: Mutex<()>,
     stop: AtomicBool,
-    /// True once we have successfully spawned at least one child this session.
-    /// Used so shutdown only kills processes we own.
     owns_process: AtomicBool,
+    supervisor: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl ServerProcess {
@@ -40,8 +56,10 @@ impl ServerProcess {
         Self {
             config,
             child: Mutex::new(None),
+            spawn_lock: Mutex::new(()),
             stop: AtomicBool::new(false),
             owns_process: AtomicBool::new(false),
+            supervisor: Mutex::new(None),
         }
     }
 
@@ -49,26 +67,32 @@ impl ServerProcess {
         self.child.lock().map(|g| g.is_some()).unwrap_or(false)
     }
 
-    /// If the server is already healthy, do nothing. Otherwise spawn a daemon
-    /// (when the port is free) and wait briefly for `/health`.
+    pub fn owns_process(&self) -> bool {
+        self.owns_process.load(Ordering::SeqCst)
+    }
+
     pub fn ensure_started(&self) -> anyhow::Result<()> {
         if api::health(&self.config.api_base).is_ok() {
             return Ok(());
         }
 
-        {
-            let guard = self.child.lock().expect("server child lock poisoned");
-            if guard.is_some() {
-                // Child is running but not healthy yet — give it a moment.
-                drop(guard);
-                let _ = wait_until_healthy(&self.config.api_base);
+        let _spawn_guard = self.spawn_lock.lock().expect("server spawn lock poisoned");
+        if api::health(&self.config.api_base).is_ok() {
+            return Ok(());
+        }
+        if self.has_child() {
+            if wait_until_healthy(&self.config.api_base) {
                 return Ok(());
             }
+            anyhow::bail!("ario_daemon is running but is not healthy");
         }
 
         let child = self.spawn_child_checked()?;
         self.owns_process.store(true, Ordering::SeqCst);
-        *self.child.lock().expect("server child lock poisoned") = Some(child);
+        *self.child.lock().expect("server child lock poisoned") = Some(RunningChild {
+            process: child,
+            started_at: Instant::now(),
+        });
 
         if !wait_until_healthy(&self.config.api_base) {
             anyhow::bail!(
@@ -87,6 +111,11 @@ impl ServerProcess {
         let log_err = log_out.try_clone()?;
 
         Command::new(&self.config.binary_path)
+            .arg("--host")
+            .arg(self.config.target.host.to_string())
+            .arg("--port")
+            .arg(self.config.target.port.to_string())
+            .arg("--tui-managed")
             .stdout(Stdio::from(log_out))
             .stderr(Stdio::from(log_err))
             .stdin(Stdio::null())
@@ -94,7 +123,7 @@ impl ServerProcess {
     }
 
     fn ensure_port_available(&self) -> std::io::Result<()> {
-        match TcpListener::bind(("127.0.0.1", self.config.port)) {
+        match TcpListener::bind((self.config.target.host, self.config.target.port)) {
             Ok(listener) => {
                 drop(listener);
                 Ok(())
@@ -102,9 +131,8 @@ impl ServerProcess {
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => Err(std::io::Error::new(
                 std::io::ErrorKind::AddrInUse,
                 format!(
-                    "port {} is already in use — another ario_daemon (or unrelated \
-                     process) is already listening there.",
-                    self.config.port
+                    "port {} is already in use on {}",
+                    self.config.target.port, self.config.target.host
                 ),
             )),
             Err(e) => Err(e),
@@ -116,85 +144,131 @@ impl ServerProcess {
         self.spawn_child()
     }
 
-    pub fn supervise(self: Arc<Self>) {
-        let mut consecutive_fast_exits = 0u32;
-
-        loop {
-            if self.stop.load(Ordering::SeqCst) {
-                return;
-            }
-
-            let maybe_child = self.child.lock().expect("server child lock poisoned").take();
-            let mut child = match maybe_child {
-                Some(c) => c,
-                None => {
-                    thread::sleep(Duration::from_secs(1));
-                    continue;
-                }
-            };
-
-            let started_at = Instant::now();
-            match child.wait() {
-                Ok(status) => eprintln!("ario_daemon exited: {status}"),
-                Err(e) => eprintln!("ario_daemon wait() failed: {e}"),
-            }
-
-            if self.stop.load(Ordering::SeqCst) {
-                return;
-            }
-
-            consecutive_fast_exits = if started_at.elapsed() < FAST_EXIT_THRESHOLD {
-                consecutive_fast_exits + 1
-            } else {
-                0
-            };
-
-            if consecutive_fast_exits >= MAX_FAST_EXITS {
-                eprintln!(
-                    "ario_daemon crash-looping — giving up on respawning. Check {}",
-                    self.config.log_path.display()
-                );
-                return;
-            }
-
-            match self.spawn_child_checked() {
-                Ok(new_child) => {
-                    self.owns_process.store(true, Ordering::SeqCst);
-                    *self.child.lock().expect("server child lock poisoned") = Some(new_child);
-                }
-                Err(e) => {
-                    eprintln!("failed to respawn ario_daemon: {e}");
-                    thread::sleep(Duration::from_secs(2));
-                }
-            }
+    pub fn start_supervisor(self: &Arc<Self>) {
+        let mut slot = self.supervisor.lock().expect("supervisor lock poisoned");
+        if slot.is_none() {
+            self.stop.store(false, Ordering::SeqCst);
+            let process = Arc::clone(self);
+            *slot = Some(thread::spawn(move || process.supervise()));
         }
     }
 
-    pub fn shutdown(&self) {
-        self.stop.store(true, Ordering::SeqCst);
+    fn supervise(&self) {
+        let mut consecutive_fast_exits = 0u32;
+        let mut next_spawn = Instant::now();
 
-        if !self.owns_process.load(Ordering::SeqCst) {
+        while !self.stop.load(Ordering::SeqCst) {
+            let exited = {
+                let mut child = self.child.lock().expect("server child lock poisoned");
+                match child.as_mut() {
+                    Some(running) => match running.process.try_wait() {
+                        Ok(Some(status)) => {
+                            let runtime = running.started_at.elapsed();
+                            eprintln!("ario_daemon exited: {status}");
+                            *child = None;
+                            Some(runtime)
+                        }
+                        Ok(None) => None,
+                        Err(e) => {
+                            eprintln!("ario_daemon try_wait() failed: {e}");
+                            *child = None;
+                            Some(Duration::ZERO)
+                        }
+                    },
+                    None => None,
+                }
+            };
+
+            if let Some(runtime) = exited {
+                consecutive_fast_exits = if runtime < FAST_EXIT_THRESHOLD {
+                    consecutive_fast_exits + 1
+                } else {
+                    0
+                };
+                if consecutive_fast_exits >= MAX_FAST_EXITS {
+                    eprintln!(
+                        "ario_daemon crash-looping — giving up on respawning. Check {}",
+                        self.config.log_path.display()
+                    );
+                    return;
+                }
+                next_spawn = Instant::now();
+            }
+
+            if !self.has_child()
+                && Instant::now() >= next_spawn
+                && api::health(&self.config.api_base).is_err()
+            {
+                let _spawn_guard = self.spawn_lock.lock().expect("server spawn lock poisoned");
+                if !self.has_child() && !self.stop.load(Ordering::SeqCst) {
+                    match self.spawn_child_checked() {
+                        Ok(process) => {
+                            self.owns_process.store(true, Ordering::SeqCst);
+                            *self.child.lock().expect("server child lock poisoned") =
+                                Some(RunningChild {
+                                    process,
+                                    started_at: Instant::now(),
+                                });
+                        }
+                        Err(e) => {
+                            eprintln!("failed to respawn ario_daemon: {e}");
+                            next_spawn = Instant::now() + RESPAWN_BACKOFF;
+                        }
+                    }
+                }
+            }
+
+            thread::sleep(HEALTH_POLL_INTERVAL);
+        }
+    }
+
+    pub fn stop_supervisor(&self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = self
+            .supervisor
+            .lock()
+            .expect("supervisor lock poisoned")
+            .take()
+        {
+            let _ = handle.join();
+        }
+    }
+
+    pub fn detach(&self) {
+        self.stop_supervisor();
+        let _ = self
+            .child
+            .lock()
+            .expect("server child lock poisoned")
+            .take();
+    }
+
+    pub fn wait_for_shutdown(&self) {
+        self.stop_supervisor();
+        if !self.owns_process() {
             return;
         }
-
-        let Some(mut child) = self.child.lock().expect("server child lock poisoned").take() else {
+        let Some(mut child) = self
+            .child
+            .lock()
+            .expect("server child lock poisoned")
+            .take()
+        else {
             return;
         };
 
-        terminate_child(&mut child);
-
         let deadline = Instant::now() + SHUTDOWN_WAIT;
         loop {
-            match child.try_wait() {
+            match child.process.try_wait() {
                 Ok(Some(_)) => return,
                 Ok(None) if Instant::now() >= deadline => {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    let _ = child.process.kill();
+                    let _ = child.process.wait();
                     return;
                 }
                 Ok(None) => thread::sleep(Duration::from_millis(50)),
                 Err(_) => {
-                    let _ = child.kill();
+                    let _ = child.process.kill();
                     return;
                 }
             }
@@ -202,26 +276,45 @@ impl ServerProcess {
     }
 }
 
-fn terminate_child(child: &mut Child) {
-    let _ = child.kill();
-}
-
-pub fn is_loopback_url(url: &str) -> bool {
-    let Some(host) = url_host(url) else {
-        return false;
+pub fn managed_server_target(
+    auto_start_server: bool,
+    server_url: &str,
+) -> Option<ManagedServerTarget> {
+    if !auto_start_server {
+        return None;
+    }
+    let url = reqwest::Url::parse(server_url).ok()?;
+    if url.scheme() != "http"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return None;
+    }
+    let host = match url.host_str()? {
+        "localhost" => "127.0.0.1".parse().ok()?,
+        value => value
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<IpAddr>()
+            .ok()?,
     };
-    matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1")
-}
-
-pub fn port_from_url(url: &str) -> u16 {
-    url_port(url).unwrap_or(DEFAULT_PORT)
+    if !host.is_loopback() {
+        return None;
+    }
+    let port = url.port().unwrap_or(DEFAULT_PORT);
+    if port == 0 {
+        return None;
+    }
+    Some(ManagedServerTarget { host, port })
 }
 
 pub fn resolve_binary_path(configured: &str) -> String {
     if !configured.is_empty() {
         return configured.to_string();
     }
-
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
     {
@@ -230,7 +323,6 @@ pub fn resolve_binary_path(configured: &str) -> String {
             return sibling.to_string_lossy().into_owned();
         }
     }
-
     daemon_binary_name().to_string()
 }
 
@@ -240,10 +332,6 @@ fn daemon_binary_name() -> &'static str {
     } else {
         "ario_daemon"
     }
-}
-
-pub fn should_manage(auto_start_server: bool, server_url: &str) -> bool {
-    auto_start_server && is_loopback_url(server_url)
 }
 
 fn wait_until_healthy(api_base: &str) -> bool {
@@ -257,54 +345,95 @@ fn wait_until_healthy(api_base: &str) -> bool {
     false
 }
 
-fn url_host(url: &str) -> Option<String> {
-    // Minimal parse: scheme://host[:port][/...]
-    let rest = url.split("://").nth(1)?;
-    let authority = rest.split('/').next()?;
-    let host = authority
-        .rsplit_once('@')
-        .map(|(_, host_port)| host_port)
-        .unwrap_or(authority);
-    if let Some(host) = host.strip_prefix('[') {
-        // IPv6 literal [::1]:port
-        return host.split(']').next().map(str::to_string);
-    }
-    Some(host.split(':').next()?.to_string())
-}
-
-fn url_port(url: &str) -> Option<u16> {
-    let rest = url.split("://").nth(1)?;
-    let authority = rest.split('/').next()?;
-    let host_port = authority
-        .rsplit_once('@')
-        .map(|(_, host_port)| host_port)
-        .unwrap_or(authority);
-    if host_port.starts_with('[') {
-        // [::1]:port
-        let after = host_port.split("]:").nth(1)?;
-        return after.parse().ok();
-    }
-    let port = host_port.splitn(2, ':').nth(1)?;
-    port.parse().ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn loopback_detection() {
-        assert!(is_loopback_url("http://127.0.0.1:47812"));
-        assert!(is_loopback_url("http://localhost:47812"));
-        assert!(is_loopback_url("http://[::1]:47812"));
-        assert!(!is_loopback_url("http://example.com:47812"));
-        assert!(!is_loopback_url("http://192.168.1.5:47812"));
+    #[cfg(unix)]
+    fn test_process() -> Arc<ServerProcess> {
+        Arc::new(ServerProcess::new(ServerProcessConfig {
+            binary_path: "/bin/false".into(),
+            api_base: "http://127.0.0.1:9".into(),
+            target: ManagedServerTarget {
+                host: "127.0.0.1".parse().unwrap(),
+                port: 9,
+            },
+            log_path: std::env::temp_dir().join("ario-supervisor-test.log"),
+        }))
     }
 
     #[test]
-    fn port_parsing() {
-        assert_eq!(port_from_url("http://127.0.0.1:47812"), 47812);
-        assert_eq!(port_from_url("http://127.0.0.1"), DEFAULT_PORT);
-        assert_eq!(port_from_url("http://[::1]:9999"), 9999);
+    fn parses_manageable_loopback_urls() {
+        assert_eq!(
+            managed_server_target(true, "http://localhost:9999"),
+            Some(ManagedServerTarget {
+                host: "127.0.0.1".parse().unwrap(),
+                port: 9999
+            })
+        );
+        assert_eq!(
+            managed_server_target(true, "http://[::1]:47813"),
+            Some(ManagedServerTarget {
+                host: "::1".parse().unwrap(),
+                port: 47813
+            })
+        );
+        assert_eq!(
+            managed_server_target(true, "http://127.0.0.1")
+                .unwrap()
+                .port,
+            DEFAULT_PORT
+        );
+        assert_eq!(
+            managed_server_target(true, "http://127.0.0.1")
+                .unwrap()
+                .api_base(),
+            "http://127.0.0.1:47812"
+        );
+        assert_eq!(
+            managed_server_target(true, "http://[::1]:47813")
+                .unwrap()
+                .api_base(),
+            "http://[::1]:47813"
+        );
+    }
+
+    #[test]
+    fn rejects_urls_that_must_be_externally_managed() {
+        for url in [
+            "https://localhost:47812",
+            "http://example.com:47812",
+            "http://192.168.1.5:47812",
+            "http://localhost:47812/api",
+            "http://user@localhost:47812",
+            "not a url",
+        ] {
+            assert_eq!(managed_server_target(true, url), None, "{url}");
+        }
+        assert_eq!(managed_server_target(false, "http://localhost:47812"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn supervisor_keeps_running_child_available_for_shutdown() {
+        let process = test_process();
+        let child = Command::new("/bin/sh")
+            .args(["-c", "exec sleep 30"])
+            .spawn()
+            .unwrap();
+        *process.child.lock().unwrap() = Some(RunningChild {
+            process: child,
+            started_at: Instant::now(),
+        });
+        process.owns_process.store(true, Ordering::SeqCst);
+
+        process.start_supervisor();
+        thread::sleep(Duration::from_millis(250));
+        assert!(process.has_child());
+
+        process.stop_supervisor();
+        let mut child = process.child.lock().unwrap().take().unwrap();
+        child.process.kill().unwrap();
+        child.process.wait().unwrap();
     }
 }

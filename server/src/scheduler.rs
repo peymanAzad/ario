@@ -44,6 +44,9 @@ pub async fn run(state: AppState) {
     // SIMPLIFICATION" note.
     if let Ok(queues) = state.db.list_queues() {
         for queue in &queues {
+            let Ok(_activity) = state.activity_guard().await else {
+                return;
+            };
             let occurrence = current_schedule_occurrence(&queue.scheduler.recurrence);
             let suppressed = state
                 .db
@@ -86,6 +89,7 @@ pub async fn run(state: AppState) {
 }
 
 async fn process_queue(state: &AppState, queue: &Queue) -> anyhow::Result<()> {
+    let _activity = state.activity_guard().await?;
     if !queue.scheduler.enabled {
         return Ok(());
     }

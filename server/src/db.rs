@@ -294,6 +294,21 @@ impl Database {
         )
     }
 
+    pub fn lifecycle_blocker_counts(&self) -> SqlResult<(u64, u64)> {
+        let conn = self.conn.lock().unwrap();
+        let active: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM downloads WHERE status = 'Active'",
+            [],
+            |row| row.get(0),
+        )?;
+        let scheduled: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM queues WHERE scheduler_enabled = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok((active as u64, scheduled as u64))
+    }
+
     pub fn list_startable_downloads(&self, queue_id: i64) -> SqlResult<Vec<Download>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -608,5 +623,38 @@ mod tests {
             )
             .unwrap();
         assert_eq!(suppression, None);
+    }
+
+    #[test]
+    fn lifecycle_counts_only_active_downloads_and_enabled_schedules() {
+        let db = Database::open(":memory:").unwrap();
+        assert_eq!(db.lifecycle_blocker_counts().unwrap(), (0, 0));
+
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO downloads
+                 (url, destination_path, source_type, category, status, queue_id,
+                  position_in_queue, finetune, created_at)
+                 VALUES ('https://example.test/file', '/tmp', 'Http', 'Other',
+                         'Pending', 1, 0, '{}', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                [],
+            )
+            .unwrap();
+        }
+        assert_eq!(db.lifecycle_blocker_counts().unwrap(), (0, 0));
+
+        db.update_download_status(1, &DownloadStatus::Active)
+            .unwrap();
+        assert_eq!(db.lifecycle_blocker_counts().unwrap(), (1, 0));
+
+        db.update_download_status(1, &DownloadStatus::Completed)
+            .unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute("UPDATE queues SET scheduler_enabled = 1 WHERE id = 1", [])
+                .unwrap();
+        }
+        assert_eq!(db.lifecycle_blocker_counts().unwrap(), (0, 1));
     }
 }

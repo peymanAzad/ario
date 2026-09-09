@@ -1,6 +1,7 @@
 use common::{
     download::{DownloadFilter, DownloadLiveStatus},
     finetune::FineTune,
+    lifecycle::ShutdownIfIdleResponse,
     queue::Queue,
 };
 use serde::Deserialize;
@@ -11,6 +12,8 @@ pub struct HealthResponse {
     #[allow(dead_code)]
     pub server: String,
     pub aria2_reachable: bool,
+    #[serde(default)]
+    pub tui_managed: bool,
 }
 
 fn client() -> reqwest::blocking::Client {
@@ -71,6 +74,14 @@ pub fn resume_queue(base: &str, queue_id: i64) -> anyhow::Result<()> {
 pub fn health(base: &str) -> anyhow::Result<HealthResponse> {
     let resp = client()
         .get(format!("{base}/health"))
+        .send()?
+        .error_for_status()?;
+    Ok(resp.json()?)
+}
+
+pub fn shutdown_if_idle(base: &str) -> anyhow::Result<ShutdownIfIdleResponse> {
+    let resp = client()
+        .post(format!("{base}/shutdown-if-idle"))
         .send()?
         .error_for_status()?;
     Ok(resp.json()?)
