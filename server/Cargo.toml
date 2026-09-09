@@ -2,6 +2,11 @@
 name = "server"
 version = "0.1.0"
 edition = "2024"
+autobins = false
+
+[[bin]]
+name = "ario_daemon"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }

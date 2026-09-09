@@ -10,6 +10,18 @@ use ratatui::{
 pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
 
+    let server_indicator = if app.server_reachable {
+        Span::styled(
+            " server: up ",
+            Style::default().fg(theme.selected_fg).bg(theme.status_ok),
+        )
+    } else {
+        Span::styled(
+            " server: down ",
+            Style::default().fg(theme.foreground).bg(theme.status_error),
+        )
+    };
+
     let aria2_indicator = if app.aria2_reachable {
         Span::styled(
             " aria2: up ",
@@ -29,6 +41,7 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         ),
+        server_indicator,
         aria2_indicator,
     ];
 

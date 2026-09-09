@@ -5,11 +5,15 @@ pub mod downloads_table;
 pub mod queue_list;
 pub mod queue_modal;
 
-use std::{sync::mpsc::Sender, thread};
+use std::{
+    sync::{Arc, mpsc::Sender},
+    thread,
+};
 
 use crate::app::clipboard_import_modal::ClipboardImportModal;
 use crate::app::download_edit_modal::DownloadEditModal;
 use crate::app::queue_modal::QueueModal;
+use crate::server_process::ServerProcess;
 use crate::theme::Theme;
 use crate::toast::{ToastLevel, ToastStack};
 use crate::{api, event::Event};
@@ -23,6 +27,7 @@ pub enum AppEvent {
     Refreshed {
         downloads: anyhow::Result<Vec<DownloadLiveStatus>>,
         queues: anyhow::Result<Vec<Queue>>,
+        server_reachable: bool,
         aria2_reachable: bool,
     },
     QueueDownloadsLoaded(anyhow::Result<Vec<DownloadLiveStatus>>),
@@ -82,6 +87,7 @@ pub struct App {
     pub selected_queue: usize,
     pub selected_category: usize,
     pub focus: Focus,
+    pub server_reachable: bool,
     pub aria2_reachable: bool,
     pub last_error: Option<String>,
     pub should_quit: bool,
@@ -90,12 +96,21 @@ pub struct App {
     pub queue_modal: Option<QueueModal>,
     pub download_modal: Option<DownloadEditModal>,
     pub toasts: ToastStack,
+    /// When true, TUI may spawn/supervise ario_daemon for a local URL.
+    manages_server: bool,
+    server_process: Option<Arc<ServerProcess>>,
     event_sender: Sender<Event>,
     refresh_in_flight: bool,
 }
 
 impl App {
-    pub fn new(api_base: String, theme: Theme, event_sender: Sender<Event>) -> Self {
+    pub fn new(
+        api_base: String,
+        theme: Theme,
+        event_sender: Sender<Event>,
+        manages_server: bool,
+        server_process: Option<Arc<ServerProcess>>,
+    ) -> Self {
         Self {
             api_base,
             downloads: Vec::new(),
@@ -104,6 +119,7 @@ impl App {
             selected_queue: 0,
             selected_category: 0,
             focus: Focus::Downloads,
+            server_reachable: false,
             aria2_reachable: false,
             last_error: None,
             should_quit: false,
@@ -112,6 +128,8 @@ impl App {
             queue_modal: None,
             download_modal: None,
             event_sender,
+            manages_server,
+            server_process,
             refresh_in_flight: false,
             toasts: ToastStack::new(),
         }
@@ -154,17 +172,39 @@ impl App {
         let api_base = self.api_base.clone();
         let filter = self.current_filter();
         let sender = self.event_sender.clone();
+        let manages_server = self.manages_server;
+        let server_process = self.server_process.clone();
 
         thread::spawn(move || {
+            let health = api::health(&api_base);
+            let server_reachable = health.is_ok();
+            let aria2_reachable = health.map(|h| h.aria2_reachable).unwrap_or(false);
+
+            if !server_reachable {
+                if let Some(process) = server_process.as_ref()
+                    && manages_server
+                    && !process.has_child()
+                {
+                    let _ = process.ensure_started();
+                }
+            }
+
             let downloads = api::list_downloads(&api_base, &filter);
             let queues = api::list_queues(&api_base);
-            let aria2_reachable = api::health(&api_base)
-                .map(|h| h.aria2_reachable)
-                .unwrap_or(false);
+            // Re-check health after a possible ensure_started so status catches up.
+            let (server_reachable, aria2_reachable) = if !server_reachable && manages_server {
+                match api::health(&api_base) {
+                    Ok(h) => (true, h.aria2_reachable),
+                    Err(_) => (false, false),
+                }
+            } else {
+                (server_reachable, aria2_reachable)
+            };
 
             let _ = sender.send(Event::App(AppEvent::Refreshed {
                 downloads,
                 queues,
+                server_reachable,
                 aria2_reachable,
             }));
         });
@@ -174,9 +214,14 @@ impl App {
         &mut self,
         downloads: anyhow::Result<Vec<DownloadLiveStatus>>,
         queues: anyhow::Result<Vec<Queue>>,
+        server_reachable: bool,
         aria2_reachable: bool,
     ) {
         self.refresh_in_flight = false;
+
+        if !self.manages_server && self.server_reachable && !server_reachable {
+            self.toasts.push("server is down", ToastLevel::Error);
+        }
 
         match downloads {
             Ok(downloads) => {
@@ -186,7 +231,9 @@ impl App {
                 } else {
                     self.selected_download = 0;
                 }
-                self.last_error = None;
+                if server_reachable {
+                    self.last_error = None;
+                }
             }
             Err(e) => {
                 self.last_error = Some(format!("can't reach server: {e}"));
@@ -196,6 +243,7 @@ impl App {
         if let Ok(queues) = queues {
             self.queues = queues;
         }
+        self.server_reachable = server_reachable;
         self.aria2_reachable = aria2_reachable;
     }
 

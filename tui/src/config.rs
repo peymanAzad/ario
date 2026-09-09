@@ -9,6 +9,11 @@ use std::path::PathBuf;
 pub struct TuiConfig {
     #[serde(default = "default_server_url")]
     pub server_url: String,
+    #[serde(default = "default_true")]
+    pub auto_start_server: bool,
+    /// Path to `ario_daemon`. Empty = sibling of this binary, then PATH.
+    #[serde(default)]
+    pub server_binary: String,
     #[serde(default = "default_theme")]
     pub theme: String,
     #[serde(default)]
@@ -36,17 +41,23 @@ fn default_theme() -> String {
     "default".to_string()
 }
 
+fn default_true() -> bool {
+    true
+}
+
 impl Default for TuiConfig {
     fn default() -> Self {
         Self {
             server_url: default_server_url(),
+            auto_start_server: true,
+            server_binary: String::new(),
             theme: default_theme(),
             custom_theme: CustomTheme::default(),
         }
     }
 }
 
-fn config_dir() -> anyhow::Result<PathBuf> {
+pub fn config_dir() -> anyhow::Result<PathBuf> {
     let dirs = ProjectDirs::from("", "", "ario")
         .ok_or_else(|| anyhow::anyhow!("could not determine home directory"))?;
     Ok(dirs.config_dir().to_path_buf())
