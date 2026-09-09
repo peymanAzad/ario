@@ -188,7 +188,7 @@ pub async fn pause_downloads(
     queue: &Queue,
     paused_by_scheduler: bool,
 ) -> anyhow::Result<()> {
-    let active = state.db.list_active_downloads_in_queue(queue.id)?;
+    let active = state.db.list_queue_controlled_active_downloads(queue.id)?;
     for download in active {
         if let Some(gid) = &download.aria2_gid {
             state.aria2.pause(gid).await?;

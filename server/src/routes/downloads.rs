@@ -158,6 +158,7 @@ async fn add_downloads(
             category,
             status: DownloadStatus::Pending,
             paused_by_scheduler: false,
+            manually_started: false,
             size: None,
             queue_id: queue.id,
             position_in_queue: next_position,
@@ -290,6 +291,7 @@ async fn pause_download(
         .db
         .update_download_status(id, &DownloadStatus::Paused)?;
     state.db.set_paused_by_scheduler(id, false)?;
+    state.db.set_manually_started(id, false)?;
 
     let updated = state
         .db
@@ -326,20 +328,34 @@ async fn resume_download(
         .get_download(id)?
         .ok_or_else(|| AppError::NotFound(format!("download {id}")))?;
 
-    match download.aria2_gid {
-        Some(gid) => {
-            state.aria2.unpause(&gid).await?;
-            state
-                .db
-                .update_download_status(id, &DownloadStatus::Active)?;
+    // Mark this before talking to aria2 so a concurrent scheduler tick cannot
+    // reclaim and pause the item after it becomes active.
+    state.db.set_manually_started(id, true)?;
+    state.db.set_paused_by_scheduler(id, false)?;
+
+    let start_result: Result<(), AppError> = async {
+        match download.aria2_gid {
+            Some(gid) => {
+                state.aria2.unpause(&gid).await?;
+                state
+                    .db
+                    .update_download_status(id, &DownloadStatus::Active)?;
+            }
+            None => {
+                let gid = start_in_aria2(&state, &download).await?;
+                state.db.update_download_gid(download.id, &gid)?;
+                state
+                    .db
+                    .update_download_status(download.id, &DownloadStatus::Active)?;
+            }
         }
-        None => {
-            let gid = start_in_aria2(&state, &download).await?;
-            state.db.update_download_gid(download.id, &gid)?;
-            state
-                .db
-                .update_download_status(download.id, &DownloadStatus::Active)?;
-        }
+        Ok(())
+    }
+    .await;
+
+    if let Err(error) = start_result {
+        state.db.set_manually_started(id, false)?;
+        return Err(error);
     }
 
     let updated = state

@@ -75,6 +75,7 @@ pub async fn run(state: AppState) {
                                 .db
                                 .update_download_status(download.id, &DownloadStatus::Completed);
                             let _ = state.db.set_completed_at_now(download.id);
+                            let _ = state.db.set_manually_started(download.id, false);
                             state.live_status.write().await.remove(&download.id);
                         }
                         "error" => {
@@ -84,12 +85,14 @@ pub async fn run(state: AppState) {
                             let _ = state
                                 .db
                                 .update_download_status(download.id, &DownloadStatus::Error(msg));
+                            let _ = state.db.set_manually_started(download.id, false);
                             state.live_status.write().await.remove(&download.id);
                         }
                         "removed" => {
                             let _ = state
                                 .db
                                 .update_download_status(download.id, &DownloadStatus::Removed);
+                            let _ = state.db.set_manually_started(download.id, false);
                             state.live_status.write().await.remove(&download.id);
                         }
                         "active" if download.status != DownloadStatus::Active => {
