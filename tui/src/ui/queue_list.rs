@@ -20,10 +20,18 @@ pub fn draw_queues_list(f: &mut Frame, app: &App, area: Rect) {
             queue.name.clone(),
             Style::default().fg(theme.foreground),
         )];
-        if queue.status == QueueStatus::Paused {
+        let (status_label, status_color) = match queue.status {
+            QueueStatus::Active => (" [active]", theme.status_ok),
+            QueueStatus::Paused => (" [paused]", theme.status_error),
+        };
+        spans.push(Span::styled(
+            status_label,
+            Style::default().fg(status_color),
+        ));
+        if queue.scheduler.enabled {
             spans.push(Span::styled(
-                " [paused]",
-                Style::default().fg(theme.status_error),
+                " [scheduled]",
+                Style::default().fg(theme.accent),
             ));
         }
         ListItem::new(Line::from(spans))
