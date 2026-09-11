@@ -12,7 +12,7 @@ pub fn draw_downloads_table(f: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
     let focused = app.focus == Focus::Downloads;
 
-    let header = Row::new(vec!["Name", "Status", "Progress", "Speed", "ETA"]).style(
+    let header = Row::new(vec!["Name", "Status", "Progress", "Size", "Speed", "ETA"]).style(
         Style::default()
             .fg(theme.accent)
             .add_modifier(Modifier::BOLD),
@@ -39,6 +39,12 @@ pub fn draw_downloads_table(f: &mut Frame, app: &App, area: Rect) {
                 Cell::from(name),
                 Cell::from(format_status(&d.download.status)),
                 Cell::from(progress),
+                Cell::from(
+                    d.download
+                        .size
+                        .map(format_bytes)
+                        .unwrap_or_else(|| "-".to_string()),
+                ),
                 Cell::from(format_speed(d.download_speed)),
                 Cell::from(
                     d.eta_seconds
@@ -50,11 +56,12 @@ pub fn draw_downloads_table(f: &mut Frame, app: &App, area: Rect) {
         .collect();
 
     let widths = [
-        Constraint::Percentage(40),
+        Constraint::Percentage(35),
         Constraint::Percentage(15),
-        Constraint::Percentage(15),
-        Constraint::Percentage(15),
-        Constraint::Percentage(15),
+        Constraint::Percentage(13),
+        Constraint::Percentage(12),
+        Constraint::Percentage(13),
+        Constraint::Percentage(12),
     ];
 
     let mut state = TableState::default();

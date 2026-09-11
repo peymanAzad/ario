@@ -162,3 +162,20 @@ fn field_style(theme: &crate::theme::Theme, active: bool) -> Style {
         Style::default().fg(theme.foreground)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::format_bytes;
+
+    #[test]
+    fn format_bytes_uses_human_readable_binary_units() {
+        assert_eq!(format_bytes(0), "0.0 B");
+        assert_eq!(format_bytes(512), "512.0 B");
+        assert_eq!(format_bytes(1023), "1023.0 B");
+        assert_eq!(format_bytes(1024), "1.0 KB");
+        assert_eq!(format_bytes(1536), "1.5 KB");
+        assert_eq!(format_bytes(1024 * 1024), "1.0 MB");
+        assert_eq!(format_bytes(1024 * 1024 * 1024), "1.0 GB");
+        assert_eq!(format_bytes(1024_u64.pow(4)), "1.0 TB");
+    }
+}
