@@ -285,6 +285,17 @@ impl Database {
         Ok(())
     }
 
+    pub fn delete_completed_downloads(&self, queue_id: Option<i64>) -> SqlResult<usize> {
+        let conn = self.conn.lock().unwrap();
+        match queue_id {
+            Some(queue_id) => conn.execute(
+                "DELETE FROM downloads WHERE status = 'Completed' AND queue_id = ?1",
+                params![queue_id],
+            ),
+            None => conn.execute("DELETE FROM downloads WHERE status = 'Completed'", []),
+        }
+    }
+
     pub fn count_active_downloads_in_queue(&self, queue_id: i64) -> SqlResult<i64> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
@@ -593,6 +604,24 @@ fn row_to_queue(row: &Row) -> SqlResult<Queue> {
 mod tests {
     use super::*;
 
+    fn insert_download_with_status(db: &Database, queue_id: i64, status: &str) -> i64 {
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO downloads
+             (url, destination_path, source_type, category, status, queue_id,
+              position_in_queue, finetune, created_at)
+             VALUES (?1, '/tmp', 'Http', 'Other', ?2, ?3, 0, '{}',
+                     strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+            params![
+                format!("https://example.test/{queue_id}/{status}"),
+                status,
+                queue_id
+            ],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
     #[test]
     fn queue_migrations_are_idempotent_and_backfill_paused_status() {
         let conn = Connection::open_in_memory().unwrap();
@@ -656,5 +685,57 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(db.lifecycle_blocker_counts().unwrap(), (0, 1));
+    }
+
+    #[test]
+    fn deletes_completed_downloads_across_all_queues_only() {
+        let db = Database::open(":memory:").unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO queues (id, name, created_at)
+                 VALUES (2, 'Second Queue', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                [],
+            )
+            .unwrap();
+        }
+
+        let completed_in_main = insert_download_with_status(&db, 1, "Completed");
+        let completed_in_second = insert_download_with_status(&db, 2, "Completed");
+        let pending = insert_download_with_status(&db, 1, "Pending");
+        let active = insert_download_with_status(&db, 1, "Active");
+        let paused = insert_download_with_status(&db, 2, "Paused");
+        let error = insert_download_with_status(&db, 2, "Error");
+
+        assert_eq!(db.delete_completed_downloads(None).unwrap(), 2);
+        assert!(db.get_download(completed_in_main).unwrap().is_none());
+        assert!(db.get_download(completed_in_second).unwrap().is_none());
+        for retained in [pending, active, paused, error] {
+            assert!(db.get_download(retained).unwrap().is_some());
+        }
+        assert_eq!(db.delete_completed_downloads(None).unwrap(), 0);
+    }
+
+    #[test]
+    fn deletes_completed_downloads_from_selected_queue_only() {
+        let db = Database::open(":memory:").unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO queues (id, name, created_at)
+                 VALUES (2, 'Second Queue', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                [],
+            )
+            .unwrap();
+        }
+
+        let completed_in_main = insert_download_with_status(&db, 1, "Completed");
+        let completed_in_second = insert_download_with_status(&db, 2, "Completed");
+        let pending_in_main = insert_download_with_status(&db, 1, "Pending");
+
+        assert_eq!(db.delete_completed_downloads(Some(1)).unwrap(), 1);
+        assert!(db.get_download(completed_in_main).unwrap().is_none());
+        assert!(db.get_download(completed_in_second).unwrap().is_some());
+        assert!(db.get_download(pending_in_main).unwrap().is_some());
     }
 }

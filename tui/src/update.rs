@@ -57,6 +57,11 @@ pub fn update(app: &mut App, key_event: KeyEvent) {
         _ => {}
     }
 
+    if is_remove_completed_key(app.focus, key_event.code) {
+        app.remove_completed_downloads();
+        return;
+    }
+
     match app.focus {
         Focus::Queues => match key_event.code {
             KeyCode::Down | KeyCode::Char('j') => app.select_next_queue(),
@@ -82,6 +87,10 @@ pub fn update(app: &mut App, key_event: KeyEvent) {
             _ => {}
         },
     }
+}
+
+fn is_remove_completed_key(focus: Focus, key_code: KeyCode) -> bool {
+    focus == Focus::Queues && key_code == KeyCode::Char('x')
 }
 
 fn handle_clipboard_modal_key(app: &mut App, key_event: KeyEvent) {
@@ -166,5 +175,24 @@ fn handle_download_modal_key(app: &mut App, key_event: KeyEvent) {
         KeyCode::Left | KeyCode::Char('h') => app.download_modal_adjust_left(),
         KeyCode::Right | KeyCode::Char('l') => app.download_modal_adjust_right(),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remove_completed_key_is_scoped_to_queue_pane() {
+        assert!(is_remove_completed_key(Focus::Queues, KeyCode::Char('x')));
+        assert!(!is_remove_completed_key(
+            Focus::Categories,
+            KeyCode::Char('x')
+        ));
+        assert!(!is_remove_completed_key(
+            Focus::Downloads,
+            KeyCode::Char('x')
+        ));
+        assert!(!is_remove_completed_key(Focus::Queues, KeyCode::Char('X')));
     }
 }

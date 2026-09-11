@@ -111,6 +111,15 @@ pub fn delete_download(base: &str, id: i64) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn delete_completed_downloads(base: &str, queue_id: Option<i64>) -> anyhow::Result<()> {
+    let mut request = client().delete(format!("{base}/downloads/completed"));
+    if let Some(queue_id) = queue_id {
+        request = request.query(&[("queue_id", queue_id)]);
+    }
+    request.send()?.error_for_status()?;
+    Ok(())
+}
+
 pub fn create_queue(
     base: &str,
     request: &common::queue::CreateQueueRequest,

@@ -133,6 +133,12 @@ impl Aria2Client {
         Ok(())
     }
 
+    pub async fn remove_download_result(&self, gid: &str) -> Result<(), Aria2Error> {
+        self.call("aria2.removeDownloadResult", vec![json!(gid)])
+            .await?;
+        Ok(())
+    }
+
     pub async fn get_version(&self) -> Result<(), Aria2Error> {
         self.call("aria2.getVersion", vec![]).await?;
         Ok(())
