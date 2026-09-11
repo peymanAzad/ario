@@ -28,11 +28,9 @@ impl App {
             })
             .collect();
 
-        let queue_cursor = self
-            .queues
-            .iter()
-            .position(|q| q.name == "Main Queue")
-            .unwrap_or(0);
+        let main_queue_cursor = self.queues.iter().position(|q| q.name == "Main Queue");
+        let queue_cursor =
+            clipboard_queue_cursor(self.selected_queue, self.queues.len(), main_queue_cursor);
 
         self.modal = Some(ClipboardImportModal {
             tab: ModalTab::Urls,
@@ -190,5 +188,44 @@ impl App {
 
     pub fn save_modal_for_later(&mut self) {
         self.submit_modal(false);
+    }
+}
+
+fn clipboard_queue_cursor(
+    selected_queue: usize,
+    queue_count: usize,
+    main_queue_cursor: Option<usize>,
+) -> usize {
+    selected_queue
+        .checked_sub(1)
+        .filter(|&queue_cursor| queue_cursor < queue_count)
+        .or(main_queue_cursor)
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clipboard_queue_cursor;
+
+    #[test]
+    fn defaults_to_the_current_queue() {
+        assert_eq!(clipboard_queue_cursor(3, 4, Some(0)), 2);
+    }
+
+    #[test]
+    fn all_queues_selection_defaults_to_main_queue() {
+        assert_eq!(clipboard_queue_cursor(0, 4, Some(2)), 2);
+    }
+
+    #[test]
+    fn missing_main_queue_defaults_to_the_first_queue() {
+        assert_eq!(clipboard_queue_cursor(0, 4, None), 0);
+    }
+
+    #[test]
+    fn empty_and_stale_queue_selections_are_safe() {
+        assert_eq!(clipboard_queue_cursor(0, 0, None), 0);
+        assert_eq!(clipboard_queue_cursor(5, 2, Some(1)), 1);
+        assert_eq!(clipboard_queue_cursor(5, 2, None), 0);
     }
 }
