@@ -1,4 +1,4 @@
-use std::thread;
+use std::{path::PathBuf, thread};
 
 use common::{enums::DownloadStatus, finetune::FineTune};
 
@@ -54,11 +54,29 @@ impl App {
     /// Spawns the OS's native "open this file" command in a background
     /// thread — fire-and-forget, same as every other action in this app.
     fn open_download_file(&mut self, destination_path: String, filename: Option<String>) {
-        let path = match filename {
-            Some(name) => format!("{}/{}", destination_path.trim_end_matches('/'), name),
-            None => destination_path,
-        };
+        let path = filename
+            .map(|name| PathBuf::from(&destination_path).join(name))
+            .unwrap_or_else(|| PathBuf::from(destination_path));
 
+        Self::open_path(path);
+    }
+
+    pub fn open_selected_download_folder(&mut self) {
+        if self.modal.is_some() || self.queue_modal.is_some() || self.download_modal.is_some() {
+            return;
+        }
+        let Some(live) = self.current_download() else {
+            return;
+        };
+        if live.download.status != DownloadStatus::Completed {
+            return;
+        }
+
+        Self::open_path(PathBuf::from(live.download.destination_path.clone()));
+    }
+
+    /// Spawns the OS's native "open this path" command in a background thread.
+    fn open_path(path: PathBuf) {
         thread::spawn(move || {
             #[cfg(target_os = "linux")]
             {
@@ -71,7 +89,8 @@ impl App {
             #[cfg(target_os = "windows")]
             {
                 let _ = std::process::Command::new("cmd")
-                    .args(["/C", "start", "", &path])
+                    .args(["/C", "start", ""])
+                    .arg(&path)
                     .spawn();
             }
         });

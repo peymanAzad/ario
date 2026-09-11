@@ -81,6 +81,7 @@ pub fn update(app: &mut App, key_event: KeyEvent) {
             KeyCode::Down | KeyCode::Char('j') => app.select_next_download(),
             KeyCode::Up | KeyCode::Char('k') => app.select_prev_download(),
             KeyCode::Enter => app.activate_selected_download(),
+            KeyCode::Char('f') => app.open_selected_download_folder(),
             KeyCode::Char('p') => app.pause_selected(),
             KeyCode::Char('r') => app.resume_selected(),
             KeyCode::Char('d') => app.delete_selected(),

@@ -5,7 +5,7 @@ use crate::app::{App, Focus};
 pub fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let help = match app.focus {
         Focus::Downloads => {
-            "1/2/3 or Tab: switch pane   j/k ↑/↓: navigate   Enter: open/edit   r/p: resume/pause   d: delete   v: import clipboard   q: quit"
+            "1/2/3 or Tab: switch pane   j/k ↑/↓: navigate   Enter: open/edit   f: open folder   r/p: resume/pause   d: delete   v: import clipboard   q: quit"
         }
         Focus::Queues => {
             if app.selected_queue == 0 {
