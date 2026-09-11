@@ -95,7 +95,7 @@ async fn process_queue(state: &AppState, queue: &Queue) -> anyhow::Result<()> {
     }
 
     let occurrence = current_schedule_occurrence(&queue.scheduler.recurrence);
-    match schedule_decision(&state.db, queue.id, occurrence.as_deref())? {
+    match schedule_decision(&state.db, queue.id, &queue.status, occurrence.as_deref())? {
         ScheduleDecision::Start => start_eligible_downloads(state, queue).await,
         ScheduleDecision::StayPaused => pause_downloads(state, queue, false).await,
         ScheduleDecision::CloseWindow => pause_scheduled_downloads(state, queue).await,
@@ -109,14 +109,21 @@ enum ScheduleDecision {
     CloseWindow,
 }
 
-/// Resolves and advances the persisted per-occurrence suppression state. A
-/// stale key is cleared as soon as a different occurrence opens (or the
-/// current window closes), so it cannot leak into a later scheduled day.
+/// Resolves the queue's manual-run override, then advances the persisted
+/// per-occurrence suppression state. A manually resumed queue stays active
+/// until the user pauses it, regardless of its configured schedule. Otherwise,
+/// a stale suppression key is cleared as soon as a different occurrence opens
+/// (or the current window closes), so it cannot leak into a later scheduled day.
 fn schedule_decision(
     db: &crate::db::Database,
     queue_id: i64,
+    queue_status: &QueueStatus,
     occurrence: Option<&str>,
 ) -> anyhow::Result<ScheduleDecision> {
+    if *queue_status == QueueStatus::Active {
+        return Ok(ScheduleDecision::Start);
+    }
+
     let suppressed = db.get_queue_scheduler_suppression(queue_id)?;
     match occurrence {
         Some(current) if suppressed.as_deref() == Some(current) => Ok(ScheduleDecision::StayPaused),
@@ -320,18 +327,55 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            schedule_decision(&db, queue_id, Some(monday)).unwrap(),
+            schedule_decision(&db, queue_id, &QueueStatus::Paused, Some(monday)).unwrap(),
             ScheduleDecision::StayPaused
         );
         assert_eq!(
-            schedule_decision(&db, queue_id, Some(monday)).unwrap(),
+            schedule_decision(&db, queue_id, &QueueStatus::Paused, Some(monday)).unwrap(),
             ScheduleDecision::StayPaused
         );
 
         assert_eq!(
-            schedule_decision(&db, queue_id, Some(tuesday)).unwrap(),
+            schedule_decision(&db, queue_id, &QueueStatus::Paused, Some(tuesday)).unwrap(),
             ScheduleDecision::Start
         );
         assert_eq!(db.get_queue_scheduler_suppression(queue_id).unwrap(), None);
+    }
+
+    #[test]
+    fn manually_started_queue_keeps_running_outside_its_schedule() {
+        let db = crate::db::Database::open(":memory:").unwrap();
+
+        assert_eq!(
+            schedule_decision(&db, 1, &QueueStatus::Active, None).unwrap(),
+            ScheduleDecision::Start
+        );
+        assert_eq!(
+            schedule_decision(&db, 1, &QueueStatus::Active, None).unwrap(),
+            ScheduleDecision::Start
+        );
+    }
+
+    #[test]
+    fn manually_started_queue_keeps_running_inside_its_schedule() {
+        let db = crate::db::Database::open(":memory:").unwrap();
+        let occurrence = "weekly:2026-09-07:09:00:00";
+        db.set_queue_scheduler_suppression(1, Some(occurrence))
+            .unwrap();
+
+        assert_eq!(
+            schedule_decision(&db, 1, &QueueStatus::Active, Some(occurrence)).unwrap(),
+            ScheduleDecision::Start
+        );
+    }
+
+    #[test]
+    fn manually_paused_queue_returns_to_closed_window_control() {
+        let db = crate::db::Database::open(":memory:").unwrap();
+
+        assert_eq!(
+            schedule_decision(&db, 1, &QueueStatus::Paused, None).unwrap(),
+            ScheduleDecision::CloseWindow
+        );
     }
 }
