@@ -3,7 +3,7 @@ use crate::{error::AppError, live_status::LiveStats};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    routing::get,
+    routing::{delete, get},
 };
 use chrono::Utc;
 use common::{
@@ -17,6 +17,7 @@ use common::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/downloads", get(list_downloads).post(add_downloads))
+        .route("/downloads/completed", delete(delete_completed_downloads))
         .route("/downloads/{id}", get(get_download).delete(delete_download))
         .route(
             "/downloads/{id}/finetune",
@@ -229,6 +230,38 @@ async fn delete_download(
     }
 
     state.db.delete_download(id)?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+#[derive(serde::Deserialize)]
+struct DeleteCompletedQuery {
+    queue_id: Option<i64>,
+}
+
+async fn delete_completed_downloads(
+    State(state): State<AppState>,
+    Query(query): Query<DeleteCompletedQuery>,
+) -> Result<axum::http::StatusCode, AppError> {
+    let _activity = state.activity_guard().await?;
+    let filter = DownloadFilter {
+        queue_id: query.queue_id,
+        status: Some(DownloadStatus::Completed),
+        ..DownloadFilter::default()
+    };
+    let completed = state.db.list_downloads(&filter)?;
+
+    for download in &completed {
+        if let Some(gid) = &download.aria2_gid {
+            let _ = state.aria2.remove_download_result(gid).await;
+        }
+    }
+
+    state.db.delete_completed_downloads(query.queue_id)?;
+    let mut live_status = state.live_status.write().await;
+    for download in completed {
+        live_status.remove(&download.id);
+    }
+
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 

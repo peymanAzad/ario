@@ -45,4 +45,25 @@ impl App {
             });
         }
     }
+
+    pub fn remove_completed_downloads(&mut self) {
+        let queue_id = if self.selected_queue == 0 {
+            None
+        } else {
+            self.current_queue().map(|queue| queue.id)
+        };
+
+        // A stale queue selection cannot safely be interpreted as "All".
+        if self.selected_queue != 0 && queue_id.is_none() {
+            return;
+        }
+
+        let api_base = self.api_base.clone();
+        let sender = self.event_sender.clone();
+        thread::spawn(move || {
+            if let Err(e) = api::delete_completed_downloads(&api_base, queue_id) {
+                let _ = sender.send(Event::App(AppEvent::ActionFailed(e.to_string())));
+            }
+        });
+    }
 }

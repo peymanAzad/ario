@@ -9,9 +9,9 @@ pub fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         }
         Focus::Queues => {
             if app.selected_queue == 0 {
-                "1/2/3 or Tab: switch pane   j/k ↑/↓: navigate   n: new queue   Enter: edit queue   v: import clipboard   q: quit"
+                "1/2/3 or Tab: switch pane   j/k ↑/↓: navigate   x: remove completed   n: new queue   Enter: edit queue   v: import clipboard   q: quit"
             } else {
-                "1/2/3 or Tab: switch pane   j/k ↑/↓: navigate   r/p: resume/pause   n: new queue   Enter: edit queue   v: import clipboard   q: quit"
+                "1/2/3 or Tab: switch pane   j/k ↑/↓: navigate   x: remove completed   r/p: resume/pause   n: new queue   Enter: edit queue   v: import clipboard   q: quit"
             }
         }
         Focus::Categories => {
