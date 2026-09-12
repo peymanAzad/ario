@@ -25,7 +25,10 @@ impl App {
             let sender = self.event_sender.clone();
             thread::spawn(move || {
                 if let Err(e) = api::resume_queue(&api_base, id) {
-                    let _ = sender.send(Event::App(AppEvent::ActionFailed(e.to_string())));
+                    let _ = sender.send(Event::App(AppEvent::Toast {
+                        message: e.to_string(),
+                        level: ToastLevel::Error,
+                    }));
                 }
             });
         }
@@ -40,7 +43,10 @@ impl App {
             let sender = self.event_sender.clone();
             thread::spawn(move || {
                 if let Err(e) = api::pause_queue(&api_base, id) {
-                    let _ = sender.send(Event::App(AppEvent::ActionFailed(e.to_string())));
+                    let _ = sender.send(Event::App(AppEvent::Toast {
+                        message: e.to_string(),
+                        level: ToastLevel::Error,
+                    }));
                 }
             });
         }
@@ -62,7 +68,10 @@ impl App {
         let sender = self.event_sender.clone();
         thread::spawn(move || {
             if let Err(e) = api::delete_completed_downloads(&api_base, queue_id) {
-                let _ = sender.send(Event::App(AppEvent::ActionFailed(e.to_string())));
+                let _ = sender.send(Event::App(AppEvent::Toast {
+                    message: e.to_string(),
+                    level: ToastLevel::Error,
+                }));
             }
         });
     }

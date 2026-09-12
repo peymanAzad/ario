@@ -16,7 +16,7 @@ impl App {
         }
         let urls = crate::clipboard::scan_clipboard_for_urls();
         if urls.is_empty() {
-            eprintln!("clipboard is empty");
+            self.toasts.push("clipboard is empty", ToastLevel::Info);
             return;
         }
 
@@ -175,7 +175,10 @@ impl App {
         let sender = self.event_sender.clone();
         thread::spawn(move || {
             if let Err(e) = api::add_downloads(&api_base, &request) {
-                let _ = sender.send(Event::App(AppEvent::ActionFailed(e.to_string())));
+                let _ = sender.send(Event::App(AppEvent::Toast {
+                    message: e.to_string(),
+                    level: ToastLevel::Error,
+                }));
             }
         });
 

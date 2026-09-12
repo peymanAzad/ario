@@ -3,8 +3,6 @@ use std::time::{Duration, Instant};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToastLevel {
     Error,
-    // Info/Success aren't used yet, but the type is shaped to support them
-    // later (e.g. "Queue created") without further changes.
     Info,
     Success,
 }

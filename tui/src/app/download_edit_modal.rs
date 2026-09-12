@@ -4,7 +4,7 @@ use common::{enums::DownloadStatus, finetune::FineTune};
 
 use crate::{
     api,
-    app::{App, AppEvent, adjust_finetune_field},
+    app::{App, AppEvent, ToastLevel, adjust_finetune_field},
     event::Event,
 };
 
@@ -157,7 +157,10 @@ impl App {
                     Ok(())
                 });
             if let Err(e) = result {
-                let _ = sender.send(Event::App(AppEvent::ActionFailed(e.to_string())));
+                let _ = sender.send(Event::App(AppEvent::Toast {
+                    message: e.to_string(),
+                    level: ToastLevel::Error,
+                }));
             }
         });
         self.refresh();

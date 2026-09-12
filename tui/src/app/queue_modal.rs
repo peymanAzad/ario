@@ -543,7 +543,10 @@ impl App {
                 let sender = self.event_sender.clone();
                 thread::spawn(move || {
                     if let Err(e) = api::create_queue(&api_base, &request) {
-                        let _ = sender.send(Event::App(AppEvent::ActionFailed(e.to_string())));
+                        let _ = sender.send(Event::App(AppEvent::Toast {
+                            message: e.to_string(),
+                            level: ToastLevel::Error,
+                        }));
                     }
                 });
             }
@@ -562,12 +565,18 @@ impl App {
                 let sender = self.event_sender.clone();
                 thread::spawn(move || {
                     if let Err(e) = api::update_queue(&api_base, queue_id, &request) {
-                        let _ = sender.send(Event::App(AppEvent::ActionFailed(e.to_string())));
+                        let _ = sender.send(Event::App(AppEvent::Toast {
+                            message: e.to_string(),
+                            level: ToastLevel::Error,
+                        }));
                         return;
                     }
                     if !ordered_ids.is_empty() {
                         if let Err(e) = api::reorder_queue(&api_base, queue_id, &ordered_ids) {
-                            let _ = sender.send(Event::App(AppEvent::ActionFailed(e.to_string())));
+                            let _ = sender.send(Event::App(AppEvent::Toast {
+                                message: e.to_string(),
+                                level: ToastLevel::Error,
+                            }));
                         }
                     }
                 });
