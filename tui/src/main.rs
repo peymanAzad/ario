@@ -42,6 +42,8 @@ fn main() -> anyhow::Result<()> {
     let api_base = managed_target
         .map(|target| target.api_base())
         .unwrap_or_else(|| tui_config.server_url.clone());
+
+    let events = EventHandler::new(TICK_RATE_MS);
     let server_process = if let Some(target) = managed_target {
         let log_path = config::config_dir()?.join("server.log");
         let process = Arc::new(ServerProcess::new(ServerProcessConfig {
@@ -50,16 +52,23 @@ fn main() -> anyhow::Result<()> {
             target,
             log_path,
         }));
-        if let Err(e) = process.ensure_started() {
-            eprintln!("failed to start ario_daemon: {e}");
+        match process.ensure_started() {
+            Ok(()) if process.owns_process() => {
+                eprintln!("ario_daemon started (managed)");
+            }
+            Ok(()) => {
+                eprintln!("ario_daemon already running");
+            }
+            Err(e) => {
+                eprintln!("failed to start ario_daemon: {e}");
+            }
         }
-        process.start_supervisor();
+        process.start_supervisor(events.sender());
         Some(process)
     } else {
         None
     };
 
-    let events = EventHandler::new(TICK_RATE_MS);
     let mut app = App::new(api_base, resolved_theme, events.sender(), managed);
 
     let backend = CrosstermBackend::new(std::io::stderr());
@@ -87,7 +96,9 @@ fn main() -> anyhow::Result<()> {
                 Event::App(AppEvent::QueueDownloadsLoaded(result)) => {
                     app.apply_queue_downloads_loaded(result)
                 }
-                Event::App(AppEvent::ActionFailed(msg)) => app.apply_action_failed(msg),
+                Event::App(AppEvent::Toast { message, level }) => {
+                    app.apply_toast(message, level)
+                }
             }
         }
         Ok(())

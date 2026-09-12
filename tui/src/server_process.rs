@@ -4,11 +4,15 @@ use std::net::{IpAddr, TcpListener};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::api;
+use crate::app::AppEvent;
+use crate::event::Event;
+use crate::toast::ToastLevel;
 
 const DEFAULT_PORT: u16 = 47812;
 const HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -144,16 +148,23 @@ impl ServerProcess {
         self.spawn_child()
     }
 
-    pub fn start_supervisor(self: &Arc<Self>) {
+    pub fn start_supervisor(self: &Arc<Self>, event_sender: Sender<Event>) {
         let mut slot = self.supervisor.lock().expect("supervisor lock poisoned");
         if slot.is_none() {
             self.stop.store(false, Ordering::SeqCst);
             let process = Arc::clone(self);
-            *slot = Some(thread::spawn(move || process.supervise()));
+            *slot = Some(thread::spawn(move || process.supervise(event_sender)));
         }
     }
 
-    fn supervise(&self) {
+    fn notify(event_sender: &Sender<Event>, message: impl Into<String>) {
+        let _ = event_sender.send(Event::App(AppEvent::Toast {
+            message: message.into(),
+            level: ToastLevel::Error,
+        }));
+    }
+
+    fn supervise(&self, event_sender: Sender<Event>) {
         let mut consecutive_fast_exits = 0u32;
         let mut next_spawn = Instant::now();
 
@@ -164,13 +175,16 @@ impl ServerProcess {
                     Some(running) => match running.process.try_wait() {
                         Ok(Some(status)) => {
                             let runtime = running.started_at.elapsed();
-                            eprintln!("ario_daemon exited: {status}");
+                            Self::notify(&event_sender, format!("ario_daemon exited: {status}"));
                             *child = None;
                             Some(runtime)
                         }
                         Ok(None) => None,
                         Err(e) => {
-                            eprintln!("ario_daemon try_wait() failed: {e}");
+                            Self::notify(
+                                &event_sender,
+                                format!("ario_daemon try_wait() failed: {e}"),
+                            );
                             *child = None;
                             Some(Duration::ZERO)
                         }
@@ -186,9 +200,12 @@ impl ServerProcess {
                     0
                 };
                 if consecutive_fast_exits >= MAX_FAST_EXITS {
-                    eprintln!(
-                        "ario_daemon crash-looping — giving up on respawning. Check {}",
-                        self.config.log_path.display()
+                    Self::notify(
+                        &event_sender,
+                        format!(
+                            "ario_daemon crash-looping — giving up on respawning. Check {}",
+                            self.config.log_path.display()
+                        ),
                     );
                     return;
                 }
@@ -211,7 +228,10 @@ impl ServerProcess {
                                 });
                         }
                         Err(e) => {
-                            eprintln!("failed to respawn ario_daemon: {e}");
+                            Self::notify(
+                                &event_sender,
+                                format!("failed to respawn ario_daemon: {e}"),
+                            );
                             next_spawn = Instant::now() + RESPAWN_BACKOFF;
                         }
                     }
@@ -427,7 +447,8 @@ mod tests {
         });
         process.owns_process.store(true, Ordering::SeqCst);
 
-        process.start_supervisor();
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        process.start_supervisor(sender);
         thread::sleep(Duration::from_millis(250));
         assert!(process.has_child());
 

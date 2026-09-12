@@ -11,7 +11,8 @@ use crate::app::clipboard_import_modal::ClipboardImportModal;
 use crate::app::download_edit_modal::DownloadEditModal;
 use crate::app::queue_modal::QueueModal;
 use crate::theme::Theme;
-use crate::toast::{ToastLevel, ToastStack};
+use crate::toast::ToastStack;
+pub use crate::toast::ToastLevel;
 use crate::{api, event::Event};
 use common::download::{AddDownloadInput, AddDownloadsRequest, DownloadFilter, DownloadLiveStatus};
 use common::enums::{AllocStrategy, FileCategory, StreamPieceSelector};
@@ -27,7 +28,10 @@ pub enum AppEvent {
         aria2_reachable: bool,
     },
     QueueDownloadsLoaded(anyhow::Result<Vec<DownloadLiveStatus>>),
-    ActionFailed(String),
+    Toast {
+        message: String,
+        level: ToastLevel,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -230,8 +234,8 @@ impl App {
         self.aria2_reachable = aria2_reachable;
     }
 
-    pub fn apply_action_failed(&mut self, message: String) {
-        self.toasts.push(message, ToastLevel::Error);
+    pub fn apply_toast(&mut self, message: String, level: ToastLevel) {
+        self.toasts.push(message, level);
     }
 }
 
