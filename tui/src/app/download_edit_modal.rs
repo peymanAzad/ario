@@ -1,4 +1,8 @@
-use std::{path::PathBuf, thread};
+use std::{
+    path::PathBuf,
+    process::{Command, Stdio},
+    thread,
+};
 
 use common::{enums::DownloadStatus, finetune::FineTune};
 
@@ -15,6 +19,13 @@ pub struct DownloadEditModal {
     pub queue_cursor: usize,
     pub original_queue_id: i64,
     pub error: Option<String>,
+}
+
+fn silence_command_stdio(command: &mut Command) -> &mut Command {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
 }
 
 impl App {
@@ -80,18 +91,21 @@ impl App {
         thread::spawn(move || {
             #[cfg(target_os = "linux")]
             {
-                let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
+                let mut command = Command::new("xdg-open");
+                command.arg(&path);
+                let _ = silence_command_stdio(&mut command).spawn();
             }
             #[cfg(target_os = "macos")]
             {
-                let _ = std::process::Command::new("open").arg(&path).spawn();
+                let mut command = Command::new("open");
+                command.arg(&path);
+                let _ = silence_command_stdio(&mut command).spawn();
             }
             #[cfg(target_os = "windows")]
             {
-                let _ = std::process::Command::new("cmd")
-                    .args(["/C", "start", ""])
-                    .arg(&path)
-                    .spawn();
+                let mut command = Command::new("cmd");
+                command.args(["/C", "start", ""]).arg(&path);
+                let _ = silence_command_stdio(&mut command).spawn();
             }
         });
     }
@@ -164,5 +178,37 @@ impl App {
             }
         });
         self.refresh();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::silence_command_stdio;
+    use std::process::Command;
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn external_command_stdio_is_silenced() {
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "printf stdout; printf stderr >&2"]);
+            command
+        };
+
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd");
+            command.args(["/C", "echo stdout & echo stderr 1>&2"]);
+            command
+        };
+
+        let output = silence_command_stdio(&mut command)
+            .output()
+            .expect("test command should run");
+
+        assert!(output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(output.stderr.is_empty());
     }
 }
