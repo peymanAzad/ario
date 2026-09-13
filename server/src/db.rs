@@ -404,6 +404,15 @@ impl Database {
         )?;
         Ok(())
     }
+
+    pub fn clear_completed_at(&self, id: i64) -> SqlResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE downloads SET completed_at = NULL WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(())
+    }
 }
 
 fn run_migrations(conn: &Connection) -> SqlResult<()> {
@@ -737,5 +746,16 @@ mod tests {
         assert!(db.get_download(completed_in_main).unwrap().is_none());
         assert!(db.get_download(completed_in_second).unwrap().is_some());
         assert!(db.get_download(pending_in_main).unwrap().is_some());
+    }
+
+    #[test]
+    fn clear_completed_at_nulls_the_timestamp() {
+        let db = Database::open(":memory:").unwrap();
+        let id = insert_download_with_status(&db, 1, "Completed");
+        db.set_completed_at_now(id).unwrap();
+        assert!(db.get_download(id).unwrap().unwrap().completed_at.is_some());
+
+        db.clear_completed_at(id).unwrap();
+        assert!(db.get_download(id).unwrap().unwrap().completed_at.is_none());
     }
 }
