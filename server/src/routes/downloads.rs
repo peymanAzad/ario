@@ -1,3 +1,4 @@
+use crate::aria2::Aria2AddMode;
 use crate::state::AppState;
 use crate::{error::AppError, live_status::LiveStats};
 use axum::{
@@ -185,7 +186,12 @@ async fn add_downloads(
                 (None, _) => {
                     state
                         .aria2
-                        .add_uri(&download.url, &download.finetune, &destination_path)
+                        .add_uri(
+                            &download.url,
+                            &download.finetune,
+                            &destination_path,
+                            Aria2AddMode::Fresh,
+                        )
                         .await
                 }
             };
@@ -338,12 +344,15 @@ async fn pause_download(
     Ok(Json(merge_live(&state, updated).await))
 }
 
-async fn start_in_aria2(state: &AppState, download: &Download) -> Result<String, AppError> {
+async fn start_in_aria2(
+    state: &AppState,
+    download: &Download,
+    mode: Aria2AddMode,
+) -> Result<String, AppError> {
     match download.source_type {
-        // NOTE: a "Save For Later" torrent can't be started this way for now
         SourceType::Torrent => Err(AppError::BadRequest(
-            "torrents currently can only be started immediately (\"Start Now\"), not \
-             resumed after being saved."
+            "torrent files cannot be resumed, retried, or restarted because the .torrent \
+             data is not stored; they can only be started immediately (\"Start Now\")."
                 .into(),
         )),
         SourceType::Http | SourceType::Magnet => Ok(state
@@ -352,9 +361,32 @@ async fn start_in_aria2(state: &AppState, download: &Download) -> Result<String,
                 &download.url,
                 &download.finetune,
                 &download.destination_path,
+                mode,
             )
             .await?),
     }
+}
+
+async fn drop_old_aria2_gid(state: &AppState, gid: &str) {
+    let _ = state.aria2.remove(gid).await;
+    let _ = state.aria2.remove_download_result(gid).await;
+}
+
+async fn readd_in_aria2(
+    state: &AppState,
+    download: &Download,
+    mode: Aria2AddMode,
+) -> Result<(), AppError> {
+    if let Some(gid) = &download.aria2_gid {
+        drop_old_aria2_gid(state, gid).await;
+    }
+    let gid = start_in_aria2(state, download, mode).await?;
+    state.db.update_download_gid(download.id, &gid)?;
+    state
+        .db
+        .update_download_status(download.id, &DownloadStatus::Active)?;
+    state.live_status.write().await.remove(&download.id);
+    Ok(())
 }
 
 async fn resume_download(
@@ -373,20 +405,29 @@ async fn resume_download(
     state.db.set_paused_by_scheduler(id, false)?;
 
     let start_result: Result<(), AppError> = async {
-        match download.aria2_gid {
-            Some(gid) => {
-                state.aria2.unpause(&gid).await?;
-                state
-                    .db
-                    .update_download_status(id, &DownloadStatus::Active)?;
+        match &download.status {
+            DownloadStatus::Error(_) | DownloadStatus::Removed => {
+                readd_in_aria2(&state, &download, Aria2AddMode::Retry).await?;
             }
-            None => {
-                let gid = start_in_aria2(&state, &download).await?;
-                state.db.update_download_gid(download.id, &gid)?;
-                state
-                    .db
-                    .update_download_status(download.id, &DownloadStatus::Active)?;
+            DownloadStatus::Completed => {
+                readd_in_aria2(&state, &download, Aria2AddMode::Restart).await?;
+                state.db.clear_completed_at(id)?;
             }
+            _ => match download.aria2_gid {
+                Some(gid) => {
+                    state.aria2.unpause(&gid).await?;
+                    state
+                        .db
+                        .update_download_status(id, &DownloadStatus::Active)?;
+                }
+                None => {
+                    let gid = start_in_aria2(&state, &download, Aria2AddMode::Fresh).await?;
+                    state.db.update_download_gid(download.id, &gid)?;
+                    state
+                        .db
+                        .update_download_status(download.id, &DownloadStatus::Active)?;
+                }
+            },
         }
         Ok(())
     }

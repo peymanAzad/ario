@@ -11,11 +11,11 @@ use crate::app::clipboard_import_modal::ClipboardImportModal;
 use crate::app::download_edit_modal::DownloadEditModal;
 use crate::app::queue_modal::QueueModal;
 use crate::theme::Theme;
-use crate::toast::ToastStack;
 pub use crate::toast::ToastLevel;
+use crate::toast::ToastStack;
 use crate::{api, event::Event};
 use common::download::{AddDownloadInput, AddDownloadsRequest, DownloadFilter, DownloadLiveStatus};
-use common::enums::{AllocStrategy, FileCategory, StreamPieceSelector};
+use common::enums::{AllocStrategy, DownloadStatus, FileCategory, StreamPieceSelector};
 use common::finetune::FineTune;
 use common::queue::Queue;
 

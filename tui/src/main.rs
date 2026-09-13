@@ -96,9 +96,7 @@ fn main() -> anyhow::Result<()> {
                 Event::App(AppEvent::QueueDownloadsLoaded(result)) => {
                     app.apply_queue_downloads_loaded(result)
                 }
-                Event::App(AppEvent::Toast { message, level }) => {
-                    app.apply_toast(message, level)
-                }
+                Event::App(AppEvent::Toast { message, level }) => app.apply_toast(message, level),
             }
         }
         Ok(())

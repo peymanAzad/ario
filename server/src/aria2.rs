@@ -30,6 +30,18 @@ impl From<reqwest::Error> for Aria2Error {
     }
 }
 
+/// Extra aria2 options applied when adding a URI.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Aria2AddMode {
+    /// First start / scheduler start — no continue or overwrite flags.
+    #[default]
+    Fresh,
+    /// Retry a failed download; reuse any partial file on disk.
+    Retry,
+    /// Restart a completed download from scratch, overwriting the existing file.
+    Restart,
+}
+
 pub struct Aria2Client {
     http: reqwest::Client,
     rpc_url: String,
@@ -88,8 +100,9 @@ impl Aria2Client {
         url: &str,
         finetune: &FineTune,
         destination_path: &str,
+        mode: Aria2AddMode,
     ) -> Result<String, Aria2Error> {
-        let options = finetune_to_options(finetune, destination_path);
+        let options = finetune_to_options(finetune, destination_path, mode);
         let result = self
             .call("aria2.addUri", vec![json!([url]), options])
             .await?;
@@ -105,7 +118,7 @@ impl Aria2Client {
         finetune: &FineTune,
         destination_path: &str,
     ) -> Result<String, Aria2Error> {
-        let options = finetune_to_options(finetune, destination_path);
+        let options = finetune_to_options(finetune, destination_path, Aria2AddMode::Fresh);
         let result = self
             .call(
                 "aria2.addTorrent",
@@ -166,9 +179,19 @@ impl Aria2Client {
     }
 }
 
-fn finetune_to_options(f: &FineTune, destination_path: &str) -> Value {
+fn finetune_to_options(f: &FineTune, destination_path: &str, mode: Aria2AddMode) -> Value {
     let mut opts = serde_json::Map::new();
     opts.insert("dir".into(), json!(destination_path));
+
+    match mode {
+        Aria2AddMode::Fresh => {}
+        Aria2AddMode::Retry => {
+            opts.insert("continue".into(), json!("true"));
+        }
+        Aria2AddMode::Restart => {
+            opts.insert("allow-overwrite".into(), json!("true"));
+        }
+    }
 
     if let Some(split) = f.connections_per_download {
         opts.insert("split".into(), json!(split.to_string()));
@@ -221,4 +244,30 @@ pub struct Aria2Status {
 #[derive(Debug, Deserialize)]
 pub struct Aria2File {
     pub path: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Aria2AddMode, finetune_to_options};
+    use common::finetune::FineTune;
+
+    #[test]
+    fn add_mode_sets_continue_or_overwrite() {
+        let finetune = FineTune::default();
+
+        let fresh = finetune_to_options(&finetune, "/tmp", Aria2AddMode::Fresh);
+        assert_eq!(fresh.get("continue"), None);
+        assert_eq!(fresh.get("allow-overwrite"), None);
+
+        let retry = finetune_to_options(&finetune, "/tmp", Aria2AddMode::Retry);
+        assert_eq!(retry.get("continue").and_then(|v| v.as_str()), Some("true"));
+        assert_eq!(retry.get("allow-overwrite"), None);
+
+        let restart = finetune_to_options(&finetune, "/tmp", Aria2AddMode::Restart);
+        assert_eq!(
+            restart.get("allow-overwrite").and_then(|v| v.as_str()),
+            Some("true")
+        );
+        assert_eq!(restart.get("continue"), None);
+    }
 }

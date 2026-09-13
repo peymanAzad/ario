@@ -16,18 +16,23 @@ impl App {
     }
 
     pub fn pause_selected(&mut self) {
-        if let Some(id) = self.current_download().map(|d| d.download.id) {
-            let api_base = self.api_base.clone();
-            let sender = self.event_sender.clone();
-            thread::spawn(move || {
-                if let Err(e) = api::pause_download(&api_base, id) {
-                    let _ = sender.send(Event::App(AppEvent::Toast {
-                        message: e.to_string(),
-                        level: ToastLevel::Error,
-                    }));
-                }
-            });
+        let Some(download) = self.current_download() else {
+            return;
+        };
+        if download.download.status != DownloadStatus::Active {
+            return;
         }
+        let id = download.download.id;
+        let api_base = self.api_base.clone();
+        let sender = self.event_sender.clone();
+        thread::spawn(move || {
+            if let Err(e) = api::pause_download(&api_base, id) {
+                let _ = sender.send(Event::App(AppEvent::Toast {
+                    message: e.to_string(),
+                    level: ToastLevel::Error,
+                }));
+            }
+        });
     }
 
     pub fn resume_selected(&mut self) {

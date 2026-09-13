@@ -28,6 +28,7 @@
 //! is closed. Worth revisiting with a dedicated "catch-up in progress" flag
 //! if this proves annoying in practice.
 
+use crate::aria2::Aria2AddMode;
 use crate::state::AppState;
 use chrono::{Datelike, Local, NaiveDate, NaiveTime, Utc, Weekday};
 use common::{
@@ -172,6 +173,7 @@ pub async fn start_eligible_downloads(state: &AppState, queue: &Queue) -> anyhow
                     &download.url,
                     &download.finetune,
                     &download.destination_path,
+                    Aria2AddMode::Fresh,
                 )
                 .await
             {
