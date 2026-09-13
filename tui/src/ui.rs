@@ -1,5 +1,6 @@
 mod category_list;
 mod clipboard_import_modal;
+mod confirmation_modal;
 mod download_edit_modal;
 mod downloads_table;
 mod footer;
@@ -12,9 +13,9 @@ use crate::{
     app::App,
     ui::{
         category_list::draw_categories_list, clipboard_import_modal::draw_clipboard_import_modal,
-        download_edit_modal::draw_download_modal, downloads_table::draw_downloads_table,
-        footer::draw_footer, queue_list::draw_queues_list, queue_modal::draw_queue_modal,
-        status_bar::draw_status_bar, toast_popup::draw_toasts,
+        confirmation_modal::draw_confirmation_modal, download_edit_modal::draw_download_modal,
+        downloads_table::draw_downloads_table, footer::draw_footer, queue_list::draw_queues_list,
+        queue_modal::draw_queue_modal, status_bar::draw_status_bar, toast_popup::draw_toasts,
     },
 };
 use common::enums::{DownloadStatus, FileCategory};
@@ -48,7 +49,9 @@ pub fn render(app: &mut App, f: &mut Frame) {
     draw_downloads_table(f, app, body_layout[1]);
     draw_footer(f, app, main_layout[2]);
 
-    if let Some(modal) = &app.queue_modal {
+    if let Some(modal) = &app.confirmation_modal {
+        draw_confirmation_modal(f, app, modal);
+    } else if let Some(modal) = &app.queue_modal {
         draw_queue_modal(f, app, modal);
     } else if let Some(modal) = &app.download_modal {
         draw_download_modal(f, app, modal);

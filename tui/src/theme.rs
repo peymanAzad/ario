@@ -9,6 +9,7 @@ pub struct Theme {
     pub selected_fg: Color,
     pub status_ok: Color,
     pub status_error: Color,
+    pub status_warning: Color,
     pub text_muted: Color,
     pub accent: Color,
 }
@@ -23,6 +24,7 @@ impl Theme {
             selected_fg: Color::Black,
             status_ok: Color::Green,
             status_error: Color::Red,
+            status_warning: Color::Yellow,
             text_muted: Color::DarkGray,
             accent: Color::Magenta,
         }
@@ -49,6 +51,7 @@ impl Theme {
             selected_fg: rgb(c.base.rgb),
             status_ok: rgb(c.green.rgb),
             status_error: rgb(c.red.rgb),
+            status_warning: rgb(c.yellow.rgb),
             text_muted: rgb(c.subtext0.rgb),
             accent: rgb(c.mauve.rgb),
         }
@@ -81,6 +84,9 @@ impl Theme {
         if let Some(c) = parse_hex(&overrides.status_error) {
             self.status_error = c;
         }
+        if let Some(c) = parse_hex(&overrides.status_warning) {
+            self.status_warning = c;
+        }
         if let Some(c) = parse_hex(&overrides.text_muted) {
             self.text_muted = c;
         }
@@ -109,7 +115,7 @@ fn parse_hex(value: &Option<String>) -> Option<Color> {
 /// set but doesn't parse as valid hex — intended to be printed (via
 /// `eprintln!`) in `main` *before* entering the alternate screen.
 pub fn validate(overrides: &crate::config::CustomTheme) -> Vec<String> {
-    let fields: [(&str, &Option<String>); 9] = [
+    let fields: [(&str, &Option<String>); 10] = [
         ("foreground", &overrides.foreground),
         ("border", &overrides.border),
         ("border_focused", &overrides.border_focused),
@@ -117,6 +123,7 @@ pub fn validate(overrides: &crate::config::CustomTheme) -> Vec<String> {
         ("selected_fg", &overrides.selected_fg),
         ("status_ok", &overrides.status_ok),
         ("status_error", &overrides.status_error),
+        ("status_warning", &overrides.status_warning),
         ("text_muted", &overrides.text_muted),
         ("accent", &overrides.accent),
     ];

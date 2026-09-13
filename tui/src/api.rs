@@ -111,6 +111,18 @@ pub fn delete_download(base: &str, id: i64) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn delete_download_files(
+    base: &str,
+    id: i64,
+) -> anyhow::Result<common::download::DeleteDownloadFilesResult> {
+    let response = client()
+        .delete(format!("{base}/downloads/{id}"))
+        .query(&[("delete_files", true)])
+        .send()?
+        .error_for_status()?;
+    Ok(response.json()?)
+}
+
 pub fn delete_completed_downloads(base: &str, queue_id: Option<i64>) -> anyhow::Result<()> {
     let mut request = client().delete(format!("{base}/downloads/completed"));
     if let Some(queue_id) = queue_id {

@@ -1,5 +1,6 @@
 pub mod category_list;
 pub mod clipboard_import_modal;
+pub mod confirmation_modal;
 pub mod download_edit_modal;
 pub mod downloads_table;
 pub mod queue_list;
@@ -8,6 +9,7 @@ pub mod queue_modal;
 use std::{sync::mpsc::Sender, thread};
 
 use crate::app::clipboard_import_modal::ClipboardImportModal;
+use crate::app::confirmation_modal::ConfirmationModal;
 use crate::app::download_edit_modal::DownloadEditModal;
 use crate::app::queue_modal::QueueModal;
 use crate::theme::Theme;
@@ -32,6 +34,7 @@ pub enum AppEvent {
         message: String,
         level: ToastLevel,
     },
+    DownloadFilesDeleted(anyhow::Result<common::download::DeleteDownloadFilesResult>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,6 +42,11 @@ pub enum Focus {
     Queues,
     Categories,
     Downloads,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PendingConfirmationAction {
+    DeleteDownloadFiles { download_id: i64 },
 }
 
 impl Focus {
@@ -95,11 +103,13 @@ pub struct App {
     pub modal: Option<ClipboardImportModal>,
     pub queue_modal: Option<QueueModal>,
     pub download_modal: Option<DownloadEditModal>,
+    pub confirmation_modal: Option<ConfirmationModal>,
     pub toasts: ToastStack,
     /// When true, TUI may spawn/supervise ario_daemon for a local URL.
     manages_server: bool,
     event_sender: Sender<Event>,
     refresh_in_flight: bool,
+    pending_confirmation_action: Option<PendingConfirmationAction>,
 }
 
 impl App {
@@ -125,9 +135,11 @@ impl App {
             modal: None,
             queue_modal: None,
             download_modal: None,
+            confirmation_modal: None,
             event_sender,
             manages_server,
             refresh_in_flight: false,
+            pending_confirmation_action: None,
             toasts: ToastStack::new(),
         }
     }
@@ -237,6 +249,36 @@ impl App {
     pub fn apply_toast(&mut self, message: String, level: ToastLevel) {
         self.toasts.push(message, level);
     }
+
+    pub fn apply_download_files_deleted(
+        &mut self,
+        result: anyhow::Result<common::download::DeleteDownloadFilesResult>,
+    ) {
+        match result {
+            Ok(result) if result.missing_payloads > 0 || !result.metadata_complete => {
+                let mut message = if result.missing_payloads > 0 {
+                    format!(
+                        "download removed; {} file(s) were already missing",
+                        result.missing_payloads
+                    )
+                } else {
+                    "download and known files removed".to_string()
+                };
+                if !result.metadata_complete {
+                    message.push_str(
+                        "; legacy file metadata was incomplete, so untracked files may remain",
+                    );
+                }
+                self.toasts.push(message, ToastLevel::Warning);
+            }
+            Ok(result) => self.toasts.push(
+                format!("download removed with {} file(s)", result.removed_payloads),
+                ToastLevel::Success,
+            ),
+            Err(error) => self.toasts.push(error.to_string(), ToastLevel::Error),
+        }
+        self.refresh();
+    }
 }
 
 fn adjust_finetune_field(f: &mut FineTune, cursor: usize, forward: bool) {
@@ -293,4 +335,48 @@ fn cycle<T: PartialEq + Clone>(
         (idx + len - 1) % len
     };
     order[new_idx].clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use common::download::DeleteDownloadFilesResult;
+    use std::sync::mpsc;
+
+    fn app() -> App {
+        let (sender, _receiver) = mpsc::channel();
+        App::new(
+            "http://127.0.0.1:1".into(),
+            Theme::default_dark(),
+            sender,
+            false,
+        )
+    }
+
+    #[test]
+    fn missing_file_result_becomes_a_warning_toast() {
+        let mut app = app();
+        app.apply_download_files_deleted(Ok(DeleteDownloadFilesResult {
+            removed_payloads: 0,
+            missing_payloads: 1,
+            metadata_complete: true,
+        }));
+
+        let toast = app.toasts.iter().last().unwrap();
+        assert_eq!(toast.level, ToastLevel::Warning);
+        assert!(toast.message.contains("already missing"));
+    }
+
+    #[test]
+    fn fully_removed_result_becomes_a_success_toast() {
+        let mut app = app();
+        app.apply_download_files_deleted(Ok(DeleteDownloadFilesResult {
+            removed_payloads: 2,
+            missing_payloads: 0,
+            metadata_complete: true,
+        }));
+
+        let toast = app.toasts.iter().last().unwrap();
+        assert_eq!(toast.level, ToastLevel::Success);
+    }
 }

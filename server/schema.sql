@@ -71,3 +71,15 @@ CREATE INDEX IF NOT EXISTS idx_downloads_status         ON downloads(status);
 CREATE INDEX IF NOT EXISTS idx_downloads_category       ON downloads(category);
 CREATE INDEX IF NOT EXISTS idx_downloads_created_at     ON downloads(created_at);
 CREATE INDEX IF NOT EXISTS idx_downloads_queue_position ON downloads(queue_id, position_in_queue);
+
+-- Paths reported by aria2 are retained so completed and multi-file downloads
+-- can still be removed after aria2 forgets the result.
+CREATE TABLE IF NOT EXISTS download_artifacts (
+    download_id INTEGER NOT NULL REFERENCES downloads(id) ON DELETE CASCADE,
+    path        TEXT NOT NULL,
+    kind        TEXT NOT NULL, -- 'Payload' | 'Control'
+    PRIMARY KEY (download_id, path, kind)
+);
+
+CREATE INDEX IF NOT EXISTS idx_download_artifacts_download_id
+    ON download_artifacts(download_id);

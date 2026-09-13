@@ -29,6 +29,7 @@ pub struct CustomTheme {
     pub selected_fg: Option<String>,
     pub status_ok: Option<String>,
     pub status_error: Option<String>,
+    pub status_warning: Option<String>,
     pub text_muted: Option<String>,
     pub accent: Option<String>,
 }

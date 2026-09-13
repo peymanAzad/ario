@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::{PendingConfirmationAction, confirmation_modal::ConfirmationModal};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DownloadAction {
@@ -113,6 +114,45 @@ impl App {
             });
         }
     }
+
+    pub fn request_delete_selected_files(&mut self) {
+        if self.confirmation_modal.is_some()
+            || self.modal.is_some()
+            || self.queue_modal.is_some()
+            || self.download_modal.is_some()
+        {
+            return;
+        }
+        let Some(download) = self.current_download() else {
+            return;
+        };
+        let id = download.download.id;
+        let name = download
+            .download
+            .filename
+            .clone()
+            .unwrap_or_else(|| download.download.url.clone());
+        self.open_confirmation(
+            ConfirmationModal::new(
+                "Remove download and files?",
+                format!(
+                    "Remove \"{name}\", all downloaded data, and its aria2 control data from disk? This cannot be undone."
+                ),
+                "Remove",
+                "Cancel",
+            ),
+            PendingConfirmationAction::DeleteDownloadFiles { download_id: id },
+        );
+    }
+
+    pub fn delete_download_files(&mut self, download_id: i64) {
+        let api_base = self.api_base.clone();
+        let sender = self.event_sender.clone();
+        thread::spawn(move || {
+            let result = api::delete_download_files(&api_base, download_id);
+            let _ = sender.send(Event::App(AppEvent::DownloadFilesDeleted(result)));
+        });
+    }
 }
 
 #[cfg(test)]
@@ -209,5 +249,31 @@ mod tests {
         let (mut app, receiver) = app_with_status(DownloadStatus::Active);
         app.resume_selected();
         assert!(receiver.recv_timeout(Duration::from_millis(50)).is_err());
+    }
+
+    #[test]
+    fn destructive_delete_requires_confirmation() {
+        let (mut app, receiver) = app_with_status(DownloadStatus::Completed);
+        app.request_delete_selected_files();
+        let modal = app.confirmation_modal.as_ref().unwrap();
+        assert!(modal.title.contains("Remove"));
+        assert!(modal.message.contains("cannot be undone"));
+        assert!(receiver.recv_timeout(Duration::from_millis(50)).is_err());
+
+        app.cancel_confirmation();
+        assert!(app.confirmation_modal.is_none());
+    }
+
+    #[test]
+    fn destructive_delete_without_a_selection_is_a_no_op() {
+        let (sender, _receiver) = mpsc::channel();
+        let mut app = App::new(
+            "http://127.0.0.1:1".into(),
+            Theme::default_dark(),
+            sender,
+            false,
+        );
+        app.request_delete_selected_files();
+        assert!(app.confirmation_modal.is_none());
     }
 }

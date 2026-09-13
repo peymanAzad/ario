@@ -5,6 +5,7 @@ pub enum ToastLevel {
     Error,
     Info,
     Success,
+    Warning,
 }
 
 pub struct Toast {
