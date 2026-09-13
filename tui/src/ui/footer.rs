@@ -7,7 +7,7 @@ pub fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         Focus::Downloads => {
             let rp = downloads_rp_hint(app.current_download_action());
             format!(
-                "1/2/3 or Tab: switch pane   j/k ↑/↓: navigate   Enter: open/edit   f: open folder{rp}   d: delete   v: import clipboard   q: quit"
+                "1/2/3 or Tab: switch pane   j/k ↑/↓: navigate   Enter: open/edit   f: open folder{rp}   d: delete   D: delete + files   v: import clipboard   q: quit"
             )
         }
         Focus::Queues => {

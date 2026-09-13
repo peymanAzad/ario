@@ -3,6 +3,11 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::app::{App, Focus, ModalTab, queue_modal::QueueModalTab};
 
 pub fn update(app: &mut App, key_event: KeyEvent) {
+    if app.confirmation_modal.is_some() {
+        handle_confirmation_key(app, key_event);
+        return;
+    }
+
     if key_event.modifiers == KeyModifiers::CONTROL
         && matches!(key_event.code, KeyCode::Char('c') | KeyCode::Char('C'))
     {
@@ -61,6 +66,10 @@ pub fn update(app: &mut App, key_event: KeyEvent) {
         app.remove_completed_downloads();
         return;
     }
+    if is_delete_files_key(app.focus, key_event.code) {
+        app.request_delete_selected_files();
+        return;
+    }
 
     match app.focus {
         Focus::Queues => match key_event.code {
@@ -90,8 +99,24 @@ pub fn update(app: &mut App, key_event: KeyEvent) {
     }
 }
 
+fn handle_confirmation_key(app: &mut App, key_event: KeyEvent) {
+    match key_event.code {
+        KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => app.confirm_confirmation(),
+        KeyCode::Esc
+        | KeyCode::Char('n')
+        | KeyCode::Char('N')
+        | KeyCode::Char('c')
+        | KeyCode::Char('C') => app.cancel_confirmation(),
+        _ => {}
+    }
+}
+
 fn is_remove_completed_key(focus: Focus, key_code: KeyCode) -> bool {
     focus == Focus::Queues && key_code == KeyCode::Char('x')
+}
+
+fn is_delete_files_key(focus: Focus, key_code: KeyCode) -> bool {
+    focus == Focus::Downloads && key_code == KeyCode::Char('D')
 }
 
 fn handle_clipboard_modal_key(app: &mut App, key_event: KeyEvent) {
@@ -182,6 +207,11 @@ fn handle_download_modal_key(app: &mut App, key_event: KeyEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        app::{PendingConfirmationAction, confirmation_modal::ConfirmationModal},
+        theme::Theme,
+    };
+    use std::sync::mpsc;
 
     #[test]
     fn remove_completed_key_is_scoped_to_queue_pane() {
@@ -195,5 +225,35 @@ mod tests {
             KeyCode::Char('x')
         ));
         assert!(!is_remove_completed_key(Focus::Queues, KeyCode::Char('X')));
+    }
+
+    #[test]
+    fn destructive_delete_key_is_shifted_and_scoped_to_downloads() {
+        assert!(is_delete_files_key(Focus::Downloads, KeyCode::Char('D')));
+        assert!(!is_delete_files_key(Focus::Downloads, KeyCode::Char('d')));
+        assert!(!is_delete_files_key(Focus::Queues, KeyCode::Char('D')));
+        assert!(!is_delete_files_key(Focus::Categories, KeyCode::Char('D')));
+    }
+
+    #[test]
+    fn confirmation_modal_consumes_cancel_before_global_quit() {
+        let (sender, _receiver) = mpsc::channel();
+        let mut app = App::new(
+            "http://127.0.0.1:1".into(),
+            Theme::default_dark(),
+            sender,
+            false,
+        );
+        app.open_confirmation(
+            ConfirmationModal::new("Confirm", "Message", "Yes", "No"),
+            PendingConfirmationAction::DeleteDownloadFiles { download_id: 1 },
+        );
+
+        update(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
+        );
+        assert!(app.confirmation_modal.is_none());
+        assert!(!app.should_quit);
     }
 }

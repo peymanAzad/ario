@@ -37,6 +37,7 @@ pub fn draw_toasts(f: &mut Frame, app: &App) {
             crate::toast::ToastLevel::Error => (theme.status_error, "Error"),
             crate::toast::ToastLevel::Success => (theme.status_ok, "Success"),
             crate::toast::ToastLevel::Info => (theme.accent, "Info"),
+            crate::toast::ToastLevel::Warning => (theme.status_warning, "Warning"),
         };
 
         let block = Block::default()

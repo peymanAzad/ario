@@ -4,6 +4,7 @@ use common::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::path::PathBuf;
 
 #[derive(Debug)]
 pub enum Aria2Error {
@@ -170,7 +171,9 @@ impl Aria2Client {
             "completedLength",
             "downloadSpeed",
             "errorMessage",
-            "files"
+            "files",
+            "dir",
+            "bittorrent"
         ]);
         let result = self
             .call("aria2.tellStatus", vec![json!(gid), keys])
@@ -239,6 +242,9 @@ pub struct Aria2Status {
     pub error_message: Option<String>,
     #[serde(default)]
     pub files: Vec<Aria2File>,
+    #[serde(default)]
+    pub dir: String,
+    pub bittorrent: Option<Aria2BitTorrent>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -246,9 +252,52 @@ pub struct Aria2File {
     pub path: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct Aria2BitTorrent {
+    pub info: Option<Aria2BitTorrentInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Aria2BitTorrentInfo {
+    pub name: String,
+}
+
+impl Aria2Status {
+    pub fn artifact_paths(&self) -> (Vec<String>, Vec<String>) {
+        let payloads: Vec<String> = self
+            .files
+            .iter()
+            .filter(|file| !file.path.is_empty())
+            .map(|file| file.path.clone())
+            .collect();
+
+        let controls = self
+            .bittorrent
+            .as_ref()
+            .and_then(|torrent| torrent.info.as_ref())
+            .filter(|info| !info.name.is_empty() && !self.dir.is_empty())
+            .map(|info| {
+                vec![
+                    PathBuf::from(&self.dir)
+                        .join(format!("{}.aria2", info.name))
+                        .to_string_lossy()
+                        .into_owned(),
+                ]
+            })
+            .unwrap_or_else(|| {
+                payloads
+                    .iter()
+                    .map(|path| format!("{path}.aria2"))
+                    .collect()
+            });
+
+        (payloads, controls)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Aria2AddMode, finetune_to_options};
+    use super::{Aria2AddMode, Aria2Status, finetune_to_options};
     use common::finetune::FineTune;
 
     #[test]
@@ -269,5 +318,24 @@ mod tests {
             Some("true")
         );
         assert_eq!(restart.get("continue"), None);
+    }
+
+    #[test]
+    fn parses_multi_file_artifacts_and_top_level_control_file() {
+        let status: Aria2Status = serde_json::from_value(serde_json::json!({
+            "gid": "gid",
+            "status": "active",
+            "totalLength": "2",
+            "completedLength": "1",
+            "downloadSpeed": "1",
+            "files": [{"path": "/downloads/set/a"}, {"path": "/downloads/set/b"}],
+            "dir": "/downloads",
+            "bittorrent": {"info": {"name": "set"}}
+        }))
+        .unwrap();
+
+        let (payloads, controls) = status.artifact_paths();
+        assert_eq!(payloads, vec!["/downloads/set/a", "/downloads/set/b"]);
+        assert_eq!(controls, vec!["/downloads/set.aria2"]);
     }
 }

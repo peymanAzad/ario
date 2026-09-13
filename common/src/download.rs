@@ -70,3 +70,13 @@ pub struct DownloadFilter {
     #[serde(default)]
     pub sort_desc: bool,
 }
+
+/// Result of removing a download together with its on-disk artifacts.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct DeleteDownloadFilesResult {
+    pub removed_payloads: usize,
+    pub missing_payloads: usize,
+    /// False when the server had to rely on legacy filename metadata rather
+    /// than a complete artifact list reported by aria2.
+    pub metadata_complete: bool,
+}

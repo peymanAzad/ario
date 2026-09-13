@@ -1,3 +1,4 @@
+use crate::db::{DownloadArtifact, DownloadArtifactKind};
 use crate::state::AppState;
 use common::{download::DownloadFilter, enums::DownloadStatus, enums::FileCategory};
 use std::time::Duration;
@@ -31,6 +32,28 @@ pub async fn run(state: AppState) {
 
             match state.aria2.tell_status(&gid).await {
                 Ok(status) => {
+                    let (payloads, controls) = status.artifact_paths();
+                    if !payloads.is_empty() {
+                        let artifacts: Vec<DownloadArtifact> = payloads
+                            .into_iter()
+                            .map(|path| DownloadArtifact {
+                                path,
+                                kind: DownloadArtifactKind::Payload,
+                            })
+                            .chain(controls.into_iter().map(|path| DownloadArtifact {
+                                path,
+                                kind: DownloadArtifactKind::Control,
+                            }))
+                            .collect();
+                        if let Err(error) =
+                            state.db.replace_download_artifacts(download.id, &artifacts)
+                        {
+                            eprintln!(
+                                "poller: failed to store artifacts for download {}: {error}",
+                                download.id
+                            );
+                        }
+                    }
                     let completed_length: u64 = status.completed_length.parse().unwrap_or(0);
                     let total_length: u64 = status.total_length.parse().unwrap_or(0);
                     let download_speed: u64 = status.download_speed.parse().unwrap_or(0);

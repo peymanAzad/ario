@@ -1,19 +1,23 @@
 use crate::aria2::Aria2AddMode;
+use crate::db::{DownloadArtifact, DownloadArtifactKind};
 use crate::state::AppState;
 use crate::{error::AppError, live_status::LiveStats};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
+    response::{IntoResponse, Response},
     routing::{delete, get},
 };
 use chrono::Utc;
 use common::{
     download::{
-        AddDownloadInput, AddDownloadsRequest, Download, DownloadFilter, DownloadLiveStatus,
+        AddDownloadInput, AddDownloadsRequest, DeleteDownloadFilesResult, Download, DownloadFilter,
+        DownloadLiveStatus,
     },
     enums::{DownloadStatus, FileCategory, QueueStatus, SourceType},
     finetune::FineTune,
 };
+use std::{collections::HashSet, fs, io::ErrorKind, path::PathBuf};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -221,22 +225,163 @@ async fn add_downloads(
     Ok(Json(created))
 }
 
+#[derive(Default, serde::Deserialize)]
+struct DeleteDownloadQuery {
+    #[serde(default)]
+    delete_files: bool,
+}
+
 async fn delete_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> Result<axum::http::StatusCode, AppError> {
+    Query(query): Query<DeleteDownloadQuery>,
+) -> Result<Response, AppError> {
     let _activity = state.activity_guard().await?;
     let download = state
         .db
         .get_download(id)?
         .ok_or_else(|| AppError::NotFound(format!("download {id}")))?;
 
+    if query.delete_files {
+        return delete_download_with_files(&state, download)
+            .await
+            .map(|result| Json(result).into_response());
+    }
+
     if let Some(gid) = &download.aria2_gid {
         let _ = state.aria2.remove(gid).await;
     }
 
     state.db.delete_download(id)?;
-    Ok(axum::http::StatusCode::NO_CONTENT)
+    state.live_status.write().await.remove(&id);
+    Ok(axum::http::StatusCode::NO_CONTENT.into_response())
+}
+
+async fn delete_download_with_files(
+    state: &AppState,
+    download: Download,
+) -> Result<DeleteDownloadFilesResult, AppError> {
+    let mut artifacts = state.db.list_download_artifacts(download.id)?;
+    let mut metadata_complete = artifacts
+        .iter()
+        .any(|artifact| artifact.kind == DownloadArtifactKind::Payload);
+
+    if let Some(gid) = &download.aria2_gid
+        && let Ok(status) = state.aria2.tell_status(gid).await
+    {
+        let (payloads, controls) = status.artifact_paths();
+        if !payloads.is_empty() {
+            metadata_complete = true;
+            artifacts.extend(payloads.into_iter().map(|path| DownloadArtifact {
+                path,
+                kind: DownloadArtifactKind::Payload,
+            }));
+            artifacts.extend(controls.into_iter().map(|path| DownloadArtifact {
+                path,
+                kind: DownloadArtifactKind::Control,
+            }));
+        }
+    }
+
+    if !metadata_complete
+        && (download.aria2_gid.is_some() || matches!(download.status, DownloadStatus::Completed))
+        && let Some(filename) = &download.filename
+    {
+        let path = PathBuf::from(&download.destination_path).join(filename);
+        artifacts.push(DownloadArtifact {
+            path: path.to_string_lossy().into_owned(),
+            kind: DownloadArtifactKind::Payload,
+        });
+        artifacts.push(DownloadArtifact {
+            path: format!("{}.aria2", path.to_string_lossy()),
+            kind: DownloadArtifactKind::Control,
+        });
+        // HTTP(S) downloads have one payload, so the resolved legacy
+        // filename is a complete fallback. Torrent and magnet rows may
+        // represent many payloads and remain explicitly incomplete.
+        if download.source_type == SourceType::Http {
+            metadata_complete = true;
+        }
+    }
+
+    let was_running = matches!(
+        download.status,
+        DownloadStatus::Pending | DownloadStatus::Active | DownloadStatus::Paused
+    );
+    // Reserve the row before stopping aria2 so the scheduler cannot start a
+    // pending/paused item while destructive deletion is in progress.
+    state
+        .db
+        .update_download_status(download.id, &DownloadStatus::Removed)?;
+    if let Some(gid) = &download.aria2_gid {
+        if was_running && let Err(error) = state.aria2.remove(gid).await {
+            state
+                .db
+                .update_download_status(download.id, &download.status)?;
+            return Err(error.into());
+        }
+        let _ = state.aria2.remove_download_result(gid).await;
+    }
+
+    let result = remove_download_artifacts(&artifacts, metadata_complete)?;
+    state.db.delete_download(download.id)?;
+    state.live_status.write().await.remove(&download.id);
+    Ok(result)
+}
+
+fn remove_download_artifacts(
+    artifacts: &[DownloadArtifact],
+    metadata_complete: bool,
+) -> Result<DeleteDownloadFilesResult, AppError> {
+    let mut payloads = HashSet::new();
+    let mut controls = HashSet::new();
+    for artifact in artifacts {
+        match artifact.kind {
+            DownloadArtifactKind::Payload => {
+                payloads.insert(PathBuf::from(&artifact.path));
+            }
+            DownloadArtifactKind::Control => {
+                controls.insert(PathBuf::from(&artifact.path));
+            }
+        }
+    }
+
+    let mut removed_payloads = 0;
+    let mut missing_payloads = 0;
+    if payloads.is_empty() {
+        missing_payloads = 1;
+    }
+    for path in payloads {
+        match fs::remove_file(&path) {
+            Ok(()) => removed_payloads += 1,
+            Err(error) if error.kind() == ErrorKind::NotFound => missing_payloads += 1,
+            Err(error) => {
+                return Err(AppError::Internal(format!(
+                    "failed to remove {}: {error}",
+                    path.display()
+                )));
+            }
+        }
+    }
+
+    for path in controls {
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(AppError::Internal(format!(
+                    "failed to remove aria2 control file {}: {error}",
+                    path.display()
+                )));
+            }
+        }
+    }
+
+    Ok(DeleteDownloadFilesResult {
+        removed_payloads,
+        missing_payloads,
+        metadata_complete,
+    })
 }
 
 #[derive(serde::Deserialize)]
@@ -458,4 +603,183 @@ async fn reorder_queue(
     let _activity = state.activity_guard().await?;
     state.db.reorder_queue(queue_id, &req.ordered_ids)?;
     Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod delete_files_tests {
+    use super::*;
+    use crate::{aria2::Aria2Client, config::ServerConfig, db::Database};
+    use common::finetune::FineTune;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("ario-{name}-{}-{nonce}", std::process::id()));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn state() -> AppState {
+        AppState::new(
+            Database::open(":memory:").unwrap(),
+            Aria2Client::new("http://127.0.0.1:1/jsonrpc", None),
+            ServerConfig::default(),
+            false,
+        )
+    }
+
+    fn insert_download(
+        state: &AppState,
+        destination_path: &std::path::Path,
+        filename: &str,
+        status: DownloadStatus,
+    ) -> Download {
+        let mut download = Download {
+            id: 0,
+            aria2_gid: None,
+            url: format!("https://example.test/{filename}"),
+            filename: Some(filename.into()),
+            destination_path: destination_path.to_string_lossy().into_owned(),
+            source_type: SourceType::Http,
+            category: FileCategory::Other,
+            status,
+            paused_by_scheduler: false,
+            manually_started: false,
+            size: None,
+            queue_id: 1,
+            position_in_queue: 0,
+            finetune: FineTune::default(),
+            created_at: Utc::now(),
+            started_at: None,
+            completed_at: None,
+        };
+        download.id = state.db.insert_download(&download).unwrap();
+        download
+    }
+
+    #[test]
+    fn removes_multiple_payloads_and_control_files() {
+        let dir = temp_dir("remove-artifacts");
+        let first = dir.join("first.bin");
+        let second = dir.join("second.bin");
+        let control = dir.join("set.aria2");
+        fs::write(&first, b"first").unwrap();
+        fs::write(&second, b"second").unwrap();
+        fs::write(&control, b"control").unwrap();
+        let artifacts = vec![
+            DownloadArtifact {
+                path: first.to_string_lossy().into_owned(),
+                kind: DownloadArtifactKind::Payload,
+            },
+            DownloadArtifact {
+                path: second.to_string_lossy().into_owned(),
+                kind: DownloadArtifactKind::Payload,
+            },
+            DownloadArtifact {
+                path: control.to_string_lossy().into_owned(),
+                kind: DownloadArtifactKind::Control,
+            },
+        ];
+
+        let result = remove_download_artifacts(&artifacts, true).unwrap();
+        assert_eq!(result.removed_payloads, 2);
+        assert_eq!(result.missing_payloads, 0);
+        assert!(result.metadata_complete);
+        assert!(!first.exists());
+        assert!(!second.exists());
+        assert!(!control.exists());
+        assert!(dir.is_dir());
+        fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn missing_payloads_are_non_fatal_and_missing_controls_are_ignored() {
+        let dir = temp_dir("missing-artifacts");
+        let artifacts = vec![
+            DownloadArtifact {
+                path: dir.join("missing.bin").to_string_lossy().into_owned(),
+                kind: DownloadArtifactKind::Payload,
+            },
+            DownloadArtifact {
+                path: dir.join("missing.bin.aria2").to_string_lossy().into_owned(),
+                kind: DownloadArtifactKind::Control,
+            },
+        ];
+
+        let result = remove_download_artifacts(&artifacts, false).unwrap();
+        assert_eq!(result.removed_payloads, 0);
+        assert_eq!(result.missing_payloads, 1);
+        assert!(!result.metadata_complete);
+        fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn non_missing_filesystem_errors_abort_deletion() {
+        let dir = temp_dir("artifact-error");
+        let artifacts = vec![DownloadArtifact {
+            path: dir.to_string_lossy().into_owned(),
+            kind: DownloadArtifactKind::Payload,
+        }];
+
+        assert!(remove_download_artifacts(&artifacts, true).is_err());
+        assert!(dir.is_dir());
+        fs::remove_dir(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn missing_legacy_file_removes_database_record_with_warning_result() {
+        let dir = temp_dir("missing-legacy");
+        let state = state();
+        let mut download = insert_download(&state, &dir, "missing.bin", DownloadStatus::Completed);
+        download.source_type = SourceType::Magnet;
+
+        let result = delete_download_with_files(&state, download.clone())
+            .await
+            .unwrap();
+        assert_eq!(result.missing_payloads, 1);
+        assert!(!result.metadata_complete);
+        assert!(state.db.get_download(download.id).unwrap().is_none());
+        fs::remove_dir(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn filesystem_error_retains_database_record_as_removed() {
+        let dir = temp_dir("retained-record");
+        let state = state();
+        fs::create_dir(dir.join("not-a-file")).unwrap();
+        let download = insert_download(&state, &dir, "not-a-file", DownloadStatus::Completed);
+
+        assert!(
+            delete_download_with_files(&state, download.clone())
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            state.db.get_download(download.id).unwrap().unwrap().status,
+            DownloadStatus::Removed
+        );
+        fs::remove_dir(dir.join("not-a-file")).unwrap();
+        fs::remove_dir(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn never_started_download_does_not_delete_an_unallocated_name_collision() {
+        let dir = temp_dir("unallocated");
+        let coincidental_file = dir.join("same-name.bin");
+        fs::write(&coincidental_file, b"unrelated").unwrap();
+        let state = state();
+        let download = insert_download(&state, &dir, "same-name.bin", DownloadStatus::Pending);
+
+        let result = delete_download_with_files(&state, download.clone())
+            .await
+            .unwrap();
+        assert_eq!(result.missing_payloads, 1);
+        assert!(coincidental_file.exists());
+        assert!(state.db.get_download(download.id).unwrap().is_none());
+        fs::remove_file(&coincidental_file).unwrap();
+        fs::remove_dir(&dir).unwrap();
+    }
 }

@@ -9,6 +9,18 @@ use common::{
 use rusqlite::{Connection, OptionalExtension, Result as SqlResult, Row, params};
 use std::sync::Mutex;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DownloadArtifactKind {
+    Payload,
+    Control,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DownloadArtifact {
+    pub path: String,
+    pub kind: DownloadArtifactKind,
+}
+
 const SCHEMA: &str = include_str!("../schema.sql");
 
 pub struct Database {
@@ -283,6 +295,51 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM downloads WHERE id = ?1", params![id])?;
         Ok(())
+    }
+
+    pub fn replace_download_artifacts(
+        &self,
+        download_id: i64,
+        artifacts: &[DownloadArtifact],
+    ) -> SqlResult<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM download_artifacts WHERE download_id = ?1",
+            params![download_id],
+        )?;
+        for artifact in artifacts {
+            let kind = match artifact.kind {
+                DownloadArtifactKind::Payload => "Payload",
+                DownloadArtifactKind::Control => "Control",
+            };
+            tx.execute(
+                "INSERT OR IGNORE INTO download_artifacts (download_id, path, kind)
+                 VALUES (?1, ?2, ?3)",
+                params![download_id, artifact.path, kind],
+            )?;
+        }
+        tx.commit()
+    }
+
+    pub fn list_download_artifacts(&self, download_id: i64) -> SqlResult<Vec<DownloadArtifact>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT path, kind FROM download_artifacts
+             WHERE download_id = ?1 ORDER BY kind, path",
+        )?;
+        let rows = stmt.query_map(params![download_id], |row| {
+            let kind: String = row.get(1)?;
+            Ok(DownloadArtifact {
+                path: row.get(0)?,
+                kind: if kind == "Control" {
+                    DownloadArtifactKind::Control
+                } else {
+                    DownloadArtifactKind::Payload
+                },
+            })
+        })?;
+        rows.collect()
     }
 
     pub fn delete_completed_downloads(&self, queue_id: Option<i64>) -> SqlResult<usize> {
@@ -757,5 +814,29 @@ mod tests {
 
         db.clear_completed_at(id).unwrap();
         assert!(db.get_download(id).unwrap().unwrap().completed_at.is_none());
+    }
+
+    #[test]
+    fn artifact_snapshots_deduplicate_replace_and_cascade() {
+        let db = Database::open(":memory:").unwrap();
+        let id = insert_download_with_status(&db, 1, "Active");
+        let payload = DownloadArtifact {
+            path: "/tmp/file.bin".into(),
+            kind: DownloadArtifactKind::Payload,
+        };
+        db.replace_download_artifacts(id, &[payload.clone(), payload.clone()])
+            .unwrap();
+        assert_eq!(db.list_download_artifacts(id).unwrap(), vec![payload]);
+
+        let control = DownloadArtifact {
+            path: "/tmp/file.bin.aria2".into(),
+            kind: DownloadArtifactKind::Control,
+        };
+        db.replace_download_artifacts(id, std::slice::from_ref(&control))
+            .unwrap();
+        assert_eq!(db.list_download_artifacts(id).unwrap(), vec![control]);
+
+        db.delete_download(id).unwrap();
+        assert!(db.list_download_artifacts(id).unwrap().is_empty());
     }
 }
