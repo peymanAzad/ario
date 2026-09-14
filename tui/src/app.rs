@@ -35,6 +35,11 @@ pub enum AppEvent {
         level: ToastLevel,
     },
     DownloadFilesDeleted(anyhow::Result<common::download::DeleteDownloadFilesResult>),
+    QueueDeleteResolved {
+        queue_id: i64,
+        queue_name: String,
+        result: anyhow::Result<api::DeleteQueueOutcome>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,6 +52,7 @@ pub enum Focus {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PendingConfirmationAction {
     DeleteDownloadFiles { download_id: i64 },
+    DeleteQueue { queue_id: i64 },
 }
 
 impl Focus {

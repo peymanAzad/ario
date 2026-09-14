@@ -13,6 +13,8 @@ pub fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         Focus::Queues => {
             if app.selected_queue == 0 {
                 "1/2/3 or Tab: switch pane   j/k ↑/↓: navigate   x: remove completed   n: new queue   Enter: edit queue   v: import clipboard   q: quit".to_string()
+            } else if app.can_delete_selected_queue() {
+                "1/2/3 or Tab: switch pane   j/k ↑/↓: navigate   x: remove completed   r/p: resume/pause   d: delete   n: new queue   Enter: edit queue   v: import clipboard   q: quit".to_string()
             } else {
                 "1/2/3 or Tab: switch pane   j/k ↑/↓: navigate   x: remove completed   r/p: resume/pause   n: new queue   Enter: edit queue   v: import clipboard   q: quit".to_string()
             }

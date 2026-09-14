@@ -114,6 +114,17 @@ impl Database {
         Ok(())
     }
 
+    pub fn delete_queue_if_empty(&self, id: i64) -> SqlResult<bool> {
+        let conn = self.conn.lock().unwrap();
+        let deleted = conn.execute(
+            "DELETE FROM queues
+             WHERE id = ?1
+               AND NOT EXISTS (SELECT 1 FROM downloads WHERE queue_id = ?1)",
+            params![id],
+        )?;
+        Ok(deleted == 1)
+    }
+
     pub fn insert_download(&self, d: &Download) -> SqlResult<i64> {
         let conn = self.conn.lock().unwrap();
         let finetune_json = serde_json::to_string(&d.finetune).unwrap();
