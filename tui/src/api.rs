@@ -7,6 +7,12 @@ use common::{
 use serde::Deserialize;
 use std::time::Duration;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeleteQueueOutcome {
+    Deleted,
+    NeedsConfirmation,
+}
+
 #[derive(Deserialize)]
 pub struct HealthResponse {
     #[allow(dead_code)]
@@ -69,6 +75,24 @@ pub fn resume_queue(base: &str, queue_id: i64) -> anyhow::Result<()> {
         .send()?
         .error_for_status()?;
     Ok(())
+}
+
+pub fn delete_queue(
+    base: &str,
+    queue_id: i64,
+    delete_downloads: bool,
+) -> anyhow::Result<DeleteQueueOutcome> {
+    let response = client()
+        .delete(format!("{base}/queues/{queue_id}"))
+        .query(&[("delete_downloads", delete_downloads)])
+        .send()?;
+
+    if response.status() == reqwest::StatusCode::CONFLICT && !delete_downloads {
+        return Ok(DeleteQueueOutcome::NeedsConfirmation);
+    }
+
+    response.error_for_status()?;
+    Ok(DeleteQueueOutcome::Deleted)
 }
 
 pub fn health(base: &str) -> anyhow::Result<HealthResponse> {

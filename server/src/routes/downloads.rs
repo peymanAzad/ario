@@ -254,13 +254,24 @@ async fn delete_download(
             .map(|result| Json(result).into_response());
     }
 
+    delete_download_record(&state, download).await?;
+    Ok(axum::http::StatusCode::NO_CONTENT.into_response())
+}
+
+/// Remove a download from aria2 and application state while retaining every
+/// downloaded file. This is the shared implementation of the TUI's lowercase
+/// `d` action and confirmed queue deletion.
+pub(crate) async fn delete_download_record(
+    state: &AppState,
+    download: Download,
+) -> Result<(), AppError> {
     if let Some(gid) = &download.aria2_gid {
         let _ = state.aria2.remove(gid).await;
     }
 
-    state.db.delete_download(id)?;
-    state.live_status.write().await.remove(&id);
-    Ok(axum::http::StatusCode::NO_CONTENT.into_response())
+    state.db.delete_download(download.id)?;
+    state.live_status.write().await.remove(&download.id);
+    Ok(())
 }
 
 async fn delete_download_with_files(

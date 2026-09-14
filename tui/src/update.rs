@@ -70,6 +70,10 @@ pub fn update(app: &mut App, key_event: KeyEvent) {
         app.request_delete_selected_files();
         return;
     }
+    if is_delete_queue_key(app.focus, key_event.code) {
+        app.request_delete_selected_queue();
+        return;
+    }
 
     match app.focus {
         Focus::Queues => match key_event.code {
@@ -117,6 +121,10 @@ fn is_remove_completed_key(focus: Focus, key_code: KeyCode) -> bool {
 
 fn is_delete_files_key(focus: Focus, key_code: KeyCode) -> bool {
     focus == Focus::Downloads && key_code == KeyCode::Char('D')
+}
+
+fn is_delete_queue_key(focus: Focus, key_code: KeyCode) -> bool {
+    focus == Focus::Queues && key_code == KeyCode::Char('d')
 }
 
 fn handle_clipboard_modal_key(app: &mut App, key_event: KeyEvent) {
@@ -233,6 +241,14 @@ mod tests {
         assert!(!is_delete_files_key(Focus::Downloads, KeyCode::Char('d')));
         assert!(!is_delete_files_key(Focus::Queues, KeyCode::Char('D')));
         assert!(!is_delete_files_key(Focus::Categories, KeyCode::Char('D')));
+    }
+
+    #[test]
+    fn queue_delete_key_is_lowercase_and_scoped_to_queues() {
+        assert!(is_delete_queue_key(Focus::Queues, KeyCode::Char('d')));
+        assert!(!is_delete_queue_key(Focus::Downloads, KeyCode::Char('d')));
+        assert!(!is_delete_queue_key(Focus::Categories, KeyCode::Char('d')));
+        assert!(!is_delete_queue_key(Focus::Queues, KeyCode::Char('D')));
     }
 
     #[test]

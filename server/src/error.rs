@@ -12,6 +12,7 @@ pub enum AppError {
     NotFound(String),
     Database(rusqlite::Error),
     BadRequest(String),
+    Conflict(String),
     Unavailable(String),
     Aria2(Aria2Error),
     Internal(String),
@@ -23,6 +24,7 @@ impl std::fmt::Display for AppError {
             AppError::NotFound(msg) => write!(f, "not found: {msg}"),
             AppError::Database(e) => write!(f, "database error: {e}"),
             AppError::BadRequest(msg) => write!(f, "bad request: {msg}"),
+            AppError::Conflict(msg) => write!(f, "conflict: {msg}"),
             AppError::Unavailable(msg) => write!(f, "service unavailable: {msg}"),
             AppError::Aria2(e) => write!(f, "aria2 error: {e}"),
             AppError::Internal(msg) => write!(f, "internal error: {msg}"),
@@ -58,6 +60,7 @@ impl IntoResponse for AppError {
         let (status, message) = match &self {
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            AppError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
             AppError::Unavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg.clone()),
             AppError::Database(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
             AppError::Aria2(e) => (StatusCode::BAD_GATEWAY, e.to_string()),

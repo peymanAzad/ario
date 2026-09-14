@@ -46,6 +46,9 @@ impl App {
             Some(PendingConfirmationAction::DeleteDownloadFiles { download_id }) => {
                 self.delete_download_files(download_id)
             }
+            Some(PendingConfirmationAction::DeleteQueue { queue_id }) => {
+                self.confirm_delete_queue(queue_id)
+            }
             None => {}
         }
     }

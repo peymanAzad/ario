@@ -100,6 +100,11 @@ fn main() -> anyhow::Result<()> {
                 Event::App(AppEvent::DownloadFilesDeleted(result)) => {
                     app.apply_download_files_deleted(result)
                 }
+                Event::App(AppEvent::QueueDeleteResolved {
+                    queue_id,
+                    queue_name,
+                    result,
+                }) => app.apply_queue_delete_result(queue_id, queue_name, result),
             }
         }
         Ok(())
