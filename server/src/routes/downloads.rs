@@ -14,7 +14,7 @@ use common::{
         AddDownloadInput, AddDownloadsRequest, DeleteDownloadFilesResult, Download, DownloadFilter,
         DownloadLiveStatus,
     },
-    enums::{DownloadStatus, FileCategory, QueueStatus, SourceType},
+    enums::{DownloadStatus, FileCategory, SourceType},
     finetune::FineTune,
 };
 use std::{collections::HashSet, fs, io::ErrorKind, path::PathBuf};
@@ -179,7 +179,12 @@ async fn add_downloads(
         let id = state.db.insert_download(&download)?;
         download.id = id;
 
-        if req.start_immediately && queue.status == QueueStatus::Active {
+        // Match /resume: start even if the queue is Paused, and mark as
+        // manually started so a concurrent scheduler tick cannot reclaim it.
+        if req.start_immediately {
+            state.db.set_manually_started(id, true)?;
+            state.db.set_paused_by_scheduler(id, false)?;
+
             let aria2_result = match (&torrent_b64, download.source_type) {
                 (Some(b64), _) => {
                     state
@@ -208,6 +213,7 @@ async fn add_downloads(
                         .update_download_status(id, &DownloadStatus::Active)?;
                 }
                 Err(e) => {
+                    state.db.set_manually_started(id, false)?;
                     state
                         .db
                         .update_download_status(id, &DownloadStatus::Error(e.to_string()))?;
