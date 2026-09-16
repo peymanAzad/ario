@@ -16,6 +16,9 @@ pub struct TuiConfig {
     pub server_binary: String,
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// Optional rendering mode: "nerd", "unicode", or "ascii".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph_mode: Option<String>,
     #[serde(default)]
     pub custom_theme: CustomTheme,
 }
@@ -53,8 +56,56 @@ impl Default for TuiConfig {
             auto_start_server: true,
             server_binary: String::new(),
             theme: default_theme(),
+            glyph_mode: None,
             custom_theme: CustomTheme::default(),
         }
+    }
+}
+
+pub fn resolve_glyph_mode(
+    cli: Option<crate::icons::GlyphMode>,
+    configured: Option<&str>,
+    lc_all: Option<&str>,
+    lc_ctype: Option<&str>,
+    lang: Option<&str>,
+) -> (crate::icons::GlyphMode, Option<String>) {
+    if let Some(mode) = cli {
+        return (mode, None);
+    }
+
+    if let Some(value) = configured {
+        match value.parse() {
+            Ok(mode) => return (mode, None),
+            Err(_) => {
+                let fallback = locale_glyph_mode(lc_all, lc_ctype, lang);
+                return (
+                    fallback,
+                    Some(format!(
+                        "tui.toml: glyph_mode = {value:?} is invalid (expected \"nerd\", \"unicode\", or \"ascii\") — using {fallback:?}"
+                    )),
+                );
+            }
+        }
+    }
+
+    (locale_glyph_mode(lc_all, lc_ctype, lang), None)
+}
+
+fn locale_glyph_mode(
+    lc_all: Option<&str>,
+    lc_ctype: Option<&str>,
+    lang: Option<&str>,
+) -> crate::icons::GlyphMode {
+    let locale = [lc_all, lc_ctype, lang]
+        .into_iter()
+        .flatten()
+        .find(|value| !value.is_empty())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if locale.contains("utf-8") || locale.contains("utf8") {
+        crate::icons::GlyphMode::Unicode
+    } else {
+        crate::icons::GlyphMode::Ascii
     }
 }
 
@@ -88,4 +139,48 @@ pub fn save(config: &TuiConfig) -> anyhow::Result<()> {
     let text = toml::to_string_pretty(config)?;
     std::fs::write(config_file_path()?, text)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::icons::GlyphMode;
+
+    #[test]
+    fn glyph_resolution_obeys_precedence() {
+        assert_eq!(
+            resolve_glyph_mode(
+                Some(GlyphMode::Ascii),
+                Some("nerd"),
+                None,
+                None,
+                Some("en_US.UTF-8")
+            )
+            .0,
+            GlyphMode::Ascii
+        );
+        assert_eq!(
+            resolve_glyph_mode(None, Some("nerd"), None, None, Some("C")).0,
+            GlyphMode::NerdFont
+        );
+    }
+
+    #[test]
+    fn locale_default_distinguishes_utf8() {
+        assert_eq!(
+            resolve_glyph_mode(None, None, None, None, Some("en_US.UTF-8")).0,
+            GlyphMode::Unicode
+        );
+        assert_eq!(
+            resolve_glyph_mode(None, None, Some("C"), None, Some("en_US.UTF-8")).0,
+            GlyphMode::Ascii
+        );
+    }
+
+    #[test]
+    fn invalid_config_warns_and_falls_back() {
+        let (mode, warning) = resolve_glyph_mode(None, Some("emoji"), None, None, Some("C.UTF-8"));
+        assert_eq!(mode, GlyphMode::Unicode);
+        assert!(warning.unwrap().contains("glyph_mode"));
+    }
 }

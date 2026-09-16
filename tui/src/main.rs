@@ -3,6 +3,7 @@ mod app;
 mod clipboard;
 mod config;
 mod event;
+mod icons;
 mod server_process;
 mod theme;
 mod toast;
@@ -28,6 +29,20 @@ const TICK_RATE_MS: u64 = 500;
 
 fn main() -> anyhow::Result<()> {
     let tui_config = config::load_or_create()?;
+    let cli_glyph_mode = icons::parse_glyph_args(std::env::args().skip(1))?;
+    let lc_all = std::env::var("LC_ALL").ok();
+    let lc_ctype = std::env::var("LC_CTYPE").ok();
+    let lang = std::env::var("LANG").ok();
+    let (glyph_mode, glyph_warning) = config::resolve_glyph_mode(
+        cli_glyph_mode,
+        tui_config.glyph_mode.as_deref(),
+        lc_all.as_deref(),
+        lc_ctype.as_deref(),
+        lang.as_deref(),
+    );
+    if let Some(warning) = glyph_warning {
+        eprintln!("{warning}");
+    }
 
     for warning in theme::validate(&tui_config.custom_theme) {
         eprintln!("{warning}");
@@ -69,7 +84,13 @@ fn main() -> anyhow::Result<()> {
         None
     };
 
-    let mut app = App::new(api_base, resolved_theme, events.sender(), managed);
+    let mut app = App::new(
+        api_base,
+        resolved_theme,
+        icons::IconSet::new(glyph_mode),
+        events.sender(),
+        managed,
+    );
 
     let backend = CrosstermBackend::new(std::io::stderr());
     let terminal = Terminal::new(backend)?;

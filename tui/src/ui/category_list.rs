@@ -12,8 +12,17 @@ pub fn draw_categories_list(f: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
     let focused = app.focus == Focus::Categories;
 
-    let mut items: Vec<String> = ALL_CATEGORIES.iter().map(category_label).collect();
-    items.insert(0, "All".to_string());
+    let mut items: Vec<String> = ALL_CATEGORIES
+        .iter()
+        .map(|category| {
+            format!(
+                "{} {}",
+                app.icons.category(category),
+                category_label(category)
+            )
+        })
+        .collect();
+    items.insert(0, format!("{} All", app.icons.all()));
 
     let mut state = ListState::default();
     state.select(Some(app.selected_category));

@@ -18,7 +18,7 @@ use crate::{
         queue_modal::draw_queue_modal, status_bar::draw_status_bar, toast_popup::draw_toasts,
     },
 };
-use common::enums::{DownloadStatus, FileCategory};
+use common::enums::FileCategory;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -40,7 +40,7 @@ pub fn render(app: &mut App, f: &mut Frame) {
         .split(main_layout[1]);
     let left_layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(5), Constraint::Length(8)])
+        .constraints([Constraint::Min(5), Constraint::Length(9)])
         .split(body_layout[0]);
 
     draw_status_bar(f, app, main_layout[0]);
@@ -113,17 +113,6 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(vertical[1])[1]
 }
 
-fn format_status(status: &DownloadStatus) -> String {
-    match status {
-        DownloadStatus::Pending => "Pending".to_string(),
-        DownloadStatus::Active => "Active".to_string(),
-        DownloadStatus::Paused => "Paused".to_string(),
-        DownloadStatus::Completed => "Completed".to_string(),
-        DownloadStatus::Error(msg) => format!("Error: {msg}"),
-        DownloadStatus::Removed => "Removed".to_string(),
-    }
-}
-
 fn format_speed(bytes_per_sec: u64) -> String {
     if bytes_per_sec == 0 {
         return "-".to_string();
@@ -168,7 +157,22 @@ fn field_style(theme: &crate::theme::Theme, active: bool) -> Style {
 
 #[cfg(test)]
 mod tests {
-    use super::format_bytes;
+    use super::{format_bytes, render};
+    use crate::{
+        app::App,
+        icons::{GlyphMode, IconSet},
+        theme::Theme,
+    };
+    use chrono::Utc;
+    use common::{
+        download::{Download, DownloadLiveStatus},
+        enums::{DownloadStatus, FileCategory, QueueStatus, Recurrence, SourceType},
+        finetune::FineTune,
+        queue::{Queue, QueueSettings},
+        scheduler::Scheduler,
+    };
+    use ratatui::{Terminal, backend::TestBackend};
+    use std::sync::mpsc;
 
     #[test]
     fn format_bytes_uses_human_readable_binary_units() {
@@ -180,5 +184,116 @@ mod tests {
         assert_eq!(format_bytes(1024 * 1024), "1.0 MB");
         assert_eq!(format_bytes(1024 * 1024 * 1024), "1.0 GB");
         assert_eq!(format_bytes(1024_u64.pow(4)), "1.0 TB");
+    }
+
+    fn rendered_app(mode: GlyphMode) -> (String, usize) {
+        let (sender, _receiver) = mpsc::channel();
+        let icons = IconSet::new(mode);
+        let mut app = App::new(
+            "http://127.0.0.1:1".into(),
+            Theme::default_dark(),
+            icons,
+            sender,
+            false,
+        );
+        app.downloads.push(DownloadLiveStatus {
+            download: Download {
+                id: 1,
+                aria2_gid: None,
+                url: "https://example.test/tool".into(),
+                filename: Some("tool.bin".into()),
+                destination_path: "/tmp".into(),
+                source_type: SourceType::Http,
+                category: FileCategory::Program,
+                status: DownloadStatus::Error("checksum mismatch".into()),
+                paused_by_scheduler: false,
+                manually_started: false,
+                size: Some(100),
+                queue_id: 1,
+                position_in_queue: 0,
+                finetune: FineTune::default(),
+                created_at: Utc::now(),
+                started_at: None,
+                completed_at: None,
+            },
+            completed_length: 50,
+            download_speed: 0,
+            eta_seconds: None,
+        });
+        app.queues.push(Queue {
+            id: 1,
+            name: "Main Queue".into(),
+            position: 0,
+            settings: QueueSettings {
+                max_concurrent_downloads: 1,
+                max_retries: 3,
+                default_finetune: FineTune::default(),
+            },
+            scheduler: Scheduler {
+                enabled: true,
+                recurrence: Recurrence::Once {
+                    start: Utc::now(),
+                    end: Utc::now(),
+                },
+                run_missed_on_startup: false,
+            },
+            created_at: Utc::now(),
+            status: QueueStatus::Paused,
+        });
+
+        let width = 120;
+        let backend = TestBackend::new(width, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(&mut app, frame)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let output = buffer
+            .content()
+            .chunks(width as usize)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let status_column = output
+            .lines()
+            .find(|line| line.contains("tool.bin"))
+            .and_then(|line| {
+                line.find(icons.download_status(&DownloadStatus::Error(String::new())))
+                    .map(|byte_index| line[..byte_index].chars().count())
+            })
+            .unwrap();
+        (output, status_column)
+    }
+
+    #[test]
+    fn widgets_render_semantic_icons_in_every_mode_with_stable_columns() {
+        let mut status_columns = Vec::new();
+        for mode in [GlyphMode::NerdFont, GlyphMode::Unicode, GlyphMode::Ascii] {
+            let icons = IconSet::new(mode);
+            let (output, status_column) = rendered_app(mode);
+            status_columns.push(status_column);
+
+            assert!(output.contains(&format!("{} All", icons.all())));
+            assert!(output.contains(&format!(
+                "{} Program",
+                icons.category(&FileCategory::Program)
+            )));
+            assert!(output.contains(&format!(
+                "{} tool.bin",
+                icons.category(&FileCategory::Program)
+            )));
+            assert!(output.contains(&format!(
+                "Main Queue {} {}",
+                icons.queue_status(&QueueStatus::Paused),
+                icons.scheduler()
+            )));
+            assert!(output.contains("Download: checksum mismatch"));
+            assert!(!output.contains("[paused]"));
+            assert!(!output.contains("[scheduled]"));
+            assert!(!output.contains("Error: checksum mismatch"));
+        }
+        assert!(
+            status_columns
+                .windows(2)
+                .all(|columns| columns[0] == columns[1])
+        );
     }
 }

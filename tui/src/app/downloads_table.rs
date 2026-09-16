@@ -171,6 +171,7 @@ mod tests {
         let mut app = App::new(
             "http://127.0.0.1:1".into(),
             Theme::default_dark(),
+            crate::icons::IconSet::new(crate::icons::GlyphMode::Unicode),
             sender,
             false,
         );
@@ -270,6 +271,7 @@ mod tests {
         let mut app = App::new(
             "http://127.0.0.1:1".into(),
             Theme::default_dark(),
+            crate::icons::IconSet::new(crate::icons::GlyphMode::Unicode),
             sender,
             false,
         );

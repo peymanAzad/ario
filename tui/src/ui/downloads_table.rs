@@ -27,6 +27,7 @@ pub fn draw_downloads_table(f: &mut Frame, app: &App, area: Rect) {
                 .filename
                 .clone()
                 .unwrap_or_else(|| d.download.url.clone());
+            let name = format!("{} {name}", app.icons.category(&d.download.category));
 
             let progress = match d.download.size {
                 Some(total) if total > 0 => {
@@ -37,7 +38,9 @@ pub fn draw_downloads_table(f: &mut Frame, app: &App, area: Rect) {
 
             Row::new(vec![
                 Cell::from(name),
-                Cell::from(format_status(&d.download.status)),
+                Cell::from(app.icons.download_status(&d.download.status)).style(
+                    Style::default().fg(app.icons.download_status_color(&d.download.status, theme)),
+                ),
                 Cell::from(progress),
                 Cell::from(
                     d.download
@@ -56,8 +59,8 @@ pub fn draw_downloads_table(f: &mut Frame, app: &App, area: Rect) {
         .collect();
 
     let widths = [
-        Constraint::Percentage(35),
-        Constraint::Percentage(15),
+        Constraint::Percentage(42),
+        Constraint::Length(8),
         Constraint::Percentage(13),
         Constraint::Percentage(12),
         Constraint::Percentage(13),
