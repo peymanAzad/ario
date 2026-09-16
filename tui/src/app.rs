@@ -12,6 +12,7 @@ use crate::app::clipboard_import_modal::ClipboardImportModal;
 use crate::app::confirmation_modal::ConfirmationModal;
 use crate::app::download_edit_modal::DownloadEditModal;
 use crate::app::queue_modal::QueueModal;
+use crate::icons::IconSet;
 use crate::theme::Theme;
 pub use crate::toast::ToastLevel;
 use crate::toast::ToastStack;
@@ -73,11 +74,12 @@ impl Focus {
     }
 }
 
-pub const ALL_CATEGORIES: [FileCategory; 5] = [
+pub const ALL_CATEGORIES: [FileCategory; 6] = [
     FileCategory::Video,
     FileCategory::Music,
     FileCategory::Document,
     FileCategory::Archive,
+    FileCategory::Program,
     FileCategory::Other,
 ];
 
@@ -106,6 +108,7 @@ pub struct App {
     pub last_error: Option<String>,
     pub should_quit: bool,
     pub theme: Theme,
+    pub icons: IconSet,
     pub modal: Option<ClipboardImportModal>,
     pub queue_modal: Option<QueueModal>,
     pub download_modal: Option<DownloadEditModal>,
@@ -122,6 +125,7 @@ impl App {
     pub fn new(
         api_base: String,
         theme: Theme,
+        icons: IconSet,
         event_sender: Sender<Event>,
         manages_server: bool,
     ) -> Self {
@@ -138,6 +142,7 @@ impl App {
             last_error: None,
             should_quit: false,
             theme,
+            icons,
             modal: None,
             queue_modal: None,
             download_modal: None,
@@ -354,6 +359,7 @@ mod tests {
         App::new(
             "http://127.0.0.1:1".into(),
             Theme::default_dark(),
+            crate::icons::IconSet::new(crate::icons::GlyphMode::Unicode),
             sender,
             false,
         )

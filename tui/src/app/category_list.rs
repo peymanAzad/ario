@@ -12,3 +12,32 @@ impl App {
         self.refresh();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        icons::{GlyphMode, IconSet},
+        theme::Theme,
+    };
+    use std::sync::mpsc;
+
+    #[test]
+    fn program_category_is_available_as_a_filter() {
+        let (sender, _receiver) = mpsc::channel();
+        let mut app = App::new(
+            "http://127.0.0.1:1".into(),
+            Theme::default_dark(),
+            IconSet::new(GlyphMode::Unicode),
+            sender,
+            false,
+        );
+        app.selected_category = ALL_CATEGORIES
+            .iter()
+            .position(|category| *category == FileCategory::Program)
+            .unwrap()
+            + 1;
+
+        assert_eq!(app.current_filter().category, Some(FileCategory::Program));
+    }
+}

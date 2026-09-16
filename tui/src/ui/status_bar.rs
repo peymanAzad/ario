@@ -1,4 +1,5 @@
 use crate::app::{ALL_CATEGORIES, App};
+use common::enums::DownloadStatus;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -55,6 +56,17 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     if let Some(err) = &app.last_error {
         spans.push(Span::styled(
             format!("  {err}"),
+            Style::default().fg(theme.status_error),
+        ));
+    }
+
+    if let Some(DownloadStatus::Error(message)) = app
+        .downloads
+        .get(app.selected_download)
+        .map(|download| &download.download.status)
+    {
+        spans.push(Span::styled(
+            format!("  Download: {message}"),
             Style::default().fg(theme.status_error),
         ));
     }
