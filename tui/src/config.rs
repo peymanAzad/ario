@@ -17,6 +17,7 @@ pub struct TuiConfig {
     #[serde(default = "default_theme")]
     pub theme: String,
     /// Optional rendering mode: "nerd", "unicode", or "ascii".
+    /// Unset means Nerd Font on UTF-8 locales, ASCII otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glyph_mode: Option<String>,
     #[serde(default)]
@@ -103,7 +104,7 @@ fn locale_glyph_mode(
         .unwrap_or_default()
         .to_ascii_lowercase();
     if locale.contains("utf-8") || locale.contains("utf8") {
-        crate::icons::GlyphMode::Unicode
+        crate::icons::GlyphMode::NerdFont
     } else {
         crate::icons::GlyphMode::Ascii
     }
@@ -169,7 +170,7 @@ mod tests {
     fn locale_default_distinguishes_utf8() {
         assert_eq!(
             resolve_glyph_mode(None, None, None, None, Some("en_US.UTF-8")).0,
-            GlyphMode::Unicode
+            GlyphMode::NerdFont
         );
         assert_eq!(
             resolve_glyph_mode(None, None, Some("C"), None, Some("en_US.UTF-8")).0,
@@ -180,7 +181,7 @@ mod tests {
     #[test]
     fn invalid_config_warns_and_falls_back() {
         let (mode, warning) = resolve_glyph_mode(None, Some("emoji"), None, None, Some("C.UTF-8"));
-        assert_eq!(mode, GlyphMode::Unicode);
+        assert_eq!(mode, GlyphMode::NerdFont);
         assert!(warning.unwrap().contains("glyph_mode"));
     }
 }
