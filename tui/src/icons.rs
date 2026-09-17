@@ -50,8 +50,8 @@ impl IconSet {
             (GlyphMode::NerdFont, FileCategory::Video) => "\u{f03d}",
             (GlyphMode::NerdFont, FileCategory::Music) => "\u{f001}",
             (GlyphMode::NerdFont, FileCategory::Document) => "\u{f15c}",
-            (GlyphMode::NerdFont, FileCategory::Archive) => "\u{f187}",
-            (GlyphMode::NerdFont, FileCategory::Program) => "\u{f121}",
+            (GlyphMode::NerdFont, FileCategory::Archive) => "\u{f06eb}",
+            (GlyphMode::NerdFont, FileCategory::Program) => "\u{f0614}",
             (GlyphMode::NerdFont, FileCategory::Other) => "\u{f15b}",
             (GlyphMode::Unicode, FileCategory::Video) => "▶",
             (GlyphMode::Unicode, FileCategory::Music) => "♪",
@@ -71,7 +71,7 @@ impl IconSet {
     pub fn download_status(self, status: &DownloadStatus) -> &'static str {
         match (self.mode, status) {
             (GlyphMode::NerdFont, DownloadStatus::Pending) => "\u{f017}",
-            (GlyphMode::NerdFont, DownloadStatus::Active) => "\u{f019}",
+            (GlyphMode::NerdFont, DownloadStatus::Active) => "\u{f04b}",
             (GlyphMode::NerdFont, DownloadStatus::Paused) => "\u{f04c}",
             (GlyphMode::NerdFont, DownloadStatus::Completed) => "\u{f00c}",
             (GlyphMode::NerdFont, DownloadStatus::Error(_)) => "\u{f00d}",
@@ -83,7 +83,7 @@ impl IconSet {
             (GlyphMode::Unicode, DownloadStatus::Error(_)) => "✕",
             (GlyphMode::Unicode, DownloadStatus::Removed) => "⊘",
             (GlyphMode::Ascii, DownloadStatus::Pending) => ".",
-            (GlyphMode::Ascii, DownloadStatus::Active) => "v",
+            (GlyphMode::Ascii, DownloadStatus::Active) => ">",
             (GlyphMode::Ascii, DownloadStatus::Paused) => "|",
             (GlyphMode::Ascii, DownloadStatus::Completed) => "+",
             (GlyphMode::Ascii, DownloadStatus::Error(_)) => "!",
@@ -120,7 +120,7 @@ impl IconSet {
 
     pub const fn scheduler(self) -> &'static str {
         match self.mode {
-            GlyphMode::NerdFont => "\u{f073}",
+            GlyphMode::NerdFont => "\u{f13ab}",
             GlyphMode::Unicode => "◷",
             GlyphMode::Ascii => "@",
         }
