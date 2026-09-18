@@ -15,6 +15,11 @@ pub fn update(app: &mut App, key_event: KeyEvent) {
         return;
     }
 
+    if app.help_modal.is_some() {
+        handle_help_modal_key(app, key_event);
+        return;
+    }
+
     if app.queue_modal.is_some() {
         handle_queue_modal_key(app, key_event);
         return;
@@ -31,6 +36,10 @@ pub fn update(app: &mut App, key_event: KeyEvent) {
     }
 
     match key_event.code {
+        KeyCode::Char('?') => {
+            app.open_help_modal();
+            return;
+        }
         KeyCode::Esc | KeyCode::Char('q') => {
             app.quit();
             return;
@@ -100,6 +109,55 @@ pub fn update(app: &mut App, key_event: KeyEvent) {
             KeyCode::Char('d') => app.delete_selected(),
             _ => {}
         },
+    }
+}
+
+fn handle_help_modal_key(app: &mut App, key_event: KeyEvent) {
+    let modal = app.help_modal.as_mut().expect("help is open");
+    if modal.editing_search {
+        match key_event.code {
+            KeyCode::Esc => {
+                modal.query.clear();
+                modal.scroll = 0;
+                modal.editing_search = false;
+                return;
+            }
+            KeyCode::Enter => {
+                modal.editing_search = false;
+                return;
+            }
+            KeyCode::Backspace => {
+                use unicode_segmentation::UnicodeSegmentation;
+                if let Some((index, _)) = modal.query.grapheme_indices(true).next_back() {
+                    modal.query.truncate(index);
+                }
+                modal.scroll = 0;
+                return;
+            }
+            KeyCode::Char(c) => {
+                if !c.is_control()
+                    && !key_event
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                {
+                    modal.query.push(c);
+                    modal.scroll = 0;
+                }
+                return;
+            }
+            _ => {}
+        }
+    }
+    match key_event.code {
+        KeyCode::Char('/') => modal.editing_search = true,
+        KeyCode::Down | KeyCode::Char('j') => modal.scroll_down(1),
+        KeyCode::Up | KeyCode::Char('k') => modal.scroll_up(1),
+        KeyCode::PageDown => modal.scroll_down(modal.viewport_height),
+        KeyCode::PageUp => modal.scroll_up(modal.viewport_height),
+        KeyCode::Home => modal.scroll = 0,
+        KeyCode::End => modal.scroll = modal.max_scroll(),
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => app.help_modal = None,
+        _ => {}
     }
 }
 
@@ -220,6 +278,177 @@ mod tests {
         theme::Theme,
     };
     use std::sync::mpsc;
+
+    fn test_app() -> App {
+        let (sender, _receiver) = mpsc::channel();
+        App::new(
+            "http://127.0.0.1:1".into(),
+            Theme::default_dark(),
+            crate::icons::IconSet::new(crate::icons::GlyphMode::Unicode),
+            sender,
+            false,
+        )
+    }
+
+    fn press(app: &mut App, code: KeyCode) {
+        update(app, KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn help_opens_from_every_pane_and_consumes_main_screen_actions() {
+        for focus in [Focus::Queues, Focus::Categories, Focus::Downloads] {
+            for close in [KeyCode::Esc, KeyCode::Char('q'), KeyCode::Char('?')] {
+                let mut app = test_app();
+                app.focus = focus;
+                // Terminals can report '?' with Shift set.
+                update(
+                    &mut app,
+                    KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT),
+                );
+                assert!(app.help_modal.is_some());
+                for code in [
+                    KeyCode::Char('1'),
+                    KeyCode::Tab,
+                    KeyCode::Char('n'),
+                    KeyCode::Char('v'),
+                    KeyCode::Char('d'),
+                    KeyCode::Char('D'),
+                    KeyCode::Enter,
+                    KeyCode::Char('j'),
+                ] {
+                    press(&mut app, code);
+                }
+                assert_eq!(app.focus, focus);
+                assert_eq!(app.selected_queue, 0);
+                assert_eq!(app.selected_category, 0);
+                assert!(app.queue_modal.is_none());
+                assert!(app.confirmation_modal.is_none());
+                assert!(app.modal.is_none());
+                assert!(app.toasts.is_empty());
+                press(&mut app, close);
+                assert!(app.help_modal.is_none());
+                assert!(!app.should_quit);
+            }
+        }
+    }
+
+    #[test]
+    fn existing_modals_block_help_and_text_editing_keeps_question_mark() {
+        use crate::app::{
+            clipboard_import_modal::ClipboardImportModal, download_edit_modal::DownloadEditModal,
+        };
+        let mut app = test_app();
+        app.open_create_queue_modal();
+        press(&mut app, KeyCode::Char('?'));
+        app.open_help_modal();
+        assert!(app.help_modal.is_none());
+        press(&mut app, KeyCode::Enter);
+        let before = app.queue_modal.as_ref().unwrap().text_buffer.clone();
+        press(&mut app, KeyCode::Char('?'));
+        assert_eq!(
+            app.queue_modal.as_ref().unwrap().text_buffer,
+            format!("{before}?")
+        );
+        assert!(app.help_modal.is_none());
+        app.cancel_queue_modal();
+
+        app.modal = Some(ClipboardImportModal {
+            tab: ModalTab::Urls,
+            entries: vec![],
+            url_cursor: 0,
+            queue_cursor: 0,
+            finetune: Default::default(),
+            finetune_cursor: 0,
+        });
+        press(&mut app, KeyCode::Char('?'));
+        app.open_help_modal();
+        assert!(app.help_modal.is_none());
+        app.cancel_modal();
+
+        app.download_modal = Some(DownloadEditModal {
+            download_id: 1,
+            finetune: Default::default(),
+            cursor: 0,
+            queue_cursor: 0,
+            original_queue_id: 1,
+            error: None,
+        });
+        press(&mut app, KeyCode::Char('?'));
+        app.open_help_modal();
+        assert!(app.help_modal.is_none());
+        app.cancel_download_modal();
+
+        app.open_confirmation(
+            ConfirmationModal::new("Confirm", "Message", "Yes", "No"),
+            PendingConfirmationAction::DeleteDownloadFiles { download_id: 1 },
+        );
+        press(&mut app, KeyCode::Char('?'));
+        app.open_help_modal();
+        assert!(app.help_modal.is_none());
+        assert!(app.confirmation_modal.is_some());
+    }
+
+    #[test]
+    fn help_search_accepts_shortcut_characters_and_clears_or_keeps_filter() {
+        let mut app = test_app();
+        app.open_help_modal();
+        app.help_modal.as_mut().unwrap().set_dimensions(100, 10);
+        press(&mut app, KeyCode::End);
+        press(&mut app, KeyCode::Char('/'));
+        for c in "q?j/ké".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        let modal = app.help_modal.as_ref().unwrap();
+        assert_eq!(modal.query, "q?j/ké");
+        assert_eq!(modal.scroll, 0);
+        assert!(modal.editing_search);
+        press(&mut app, KeyCode::Backspace);
+        assert_eq!(app.help_modal.as_ref().unwrap().query, "q?j/k");
+        press(&mut app, KeyCode::Enter);
+        assert!(!app.help_modal.as_ref().unwrap().editing_search);
+        assert_eq!(app.help_modal.as_ref().unwrap().query, "q?j/k");
+        press(&mut app, KeyCode::Char('/'));
+        press(&mut app, KeyCode::Esc);
+        let modal = app.help_modal.as_ref().unwrap();
+        assert!(!modal.editing_search);
+        assert!(modal.query.is_empty());
+        assert!(!app.should_quit);
+        press(&mut app, KeyCode::Char('/'));
+        press(&mut app, KeyCode::Char('x'));
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Esc);
+        app.open_help_modal();
+        let modal = app.help_modal.as_ref().unwrap();
+        assert!(modal.query.is_empty());
+        assert_eq!(modal.scroll, 0);
+        assert!(!modal.editing_search);
+    }
+
+    #[test]
+    fn help_navigation_uses_viewport_and_ctrl_c_still_quits() {
+        let mut app = test_app();
+        app.open_help_modal();
+        app.help_modal.as_mut().unwrap().set_dimensions(50, 10);
+        for (code, expected) in [
+            (KeyCode::PageDown, 10),
+            (KeyCode::Char('j'), 11),
+            (KeyCode::Up, 10),
+            (KeyCode::End, 40),
+            (KeyCode::Down, 40),
+            (KeyCode::PageUp, 30),
+            (KeyCode::Home, 0),
+            (KeyCode::Char('k'), 0),
+        ] {
+            press(&mut app, code);
+            assert_eq!(app.help_modal.as_ref().unwrap().scroll, expected);
+        }
+        press(&mut app, KeyCode::Char('/'));
+        update(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+        );
+        assert!(app.should_quit);
+    }
 
     #[test]
     fn remove_completed_key_is_scoped_to_queue_pane() {

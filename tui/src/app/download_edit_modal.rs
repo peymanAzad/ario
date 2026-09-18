@@ -30,7 +30,7 @@ fn silence_command_stdio(command: &mut Command) -> &mut Command {
 
 impl App {
     pub fn activate_selected_download(&mut self) {
-        if self.modal.is_some() || self.queue_modal.is_some() || self.download_modal.is_some() {
+        if self.has_open_modal() {
             return;
         }
         let Some(live) = self.current_download() else {
@@ -73,7 +73,7 @@ impl App {
     }
 
     pub fn open_selected_download_folder(&mut self) {
-        if self.modal.is_some() || self.queue_modal.is_some() || self.download_modal.is_some() {
+        if self.has_open_modal() {
             return;
         }
         let Some(live) = self.current_download() else {
