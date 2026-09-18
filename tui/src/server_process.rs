@@ -20,7 +20,8 @@ const HEALTH_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 const FAST_EXIT_THRESHOLD: Duration = Duration::from_secs(3);
 const MAX_FAST_EXITS: u32 = 5;
 const RESPAWN_BACKOFF: Duration = Duration::from_secs(2);
-const SHUTDOWN_WAIT: Duration = Duration::from_secs(5);
+const SPAWN_ERROR_NOTICE_INTERVAL: Duration = Duration::from_secs(10);
+const SHUTDOWN_WAIT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ManagedServerTarget {
@@ -75,38 +76,6 @@ impl ServerProcess {
         self.owns_process.load(Ordering::SeqCst)
     }
 
-    pub fn ensure_started(&self) -> anyhow::Result<()> {
-        if api::health(&self.config.api_base).is_ok() {
-            return Ok(());
-        }
-
-        let _spawn_guard = self.spawn_lock.lock().expect("server spawn lock poisoned");
-        if api::health(&self.config.api_base).is_ok() {
-            return Ok(());
-        }
-        if self.has_child() {
-            if wait_until_healthy(&self.config.api_base) {
-                return Ok(());
-            }
-            anyhow::bail!("ario_daemon is running but is not healthy");
-        }
-
-        let child = self.spawn_child_checked()?;
-        self.owns_process.store(true, Ordering::SeqCst);
-        *self.child.lock().expect("server child lock poisoned") = Some(RunningChild {
-            process: child,
-            started_at: Instant::now(),
-        });
-
-        if !wait_until_healthy(&self.config.api_base) {
-            anyhow::bail!(
-                "ario_daemon started but did not become healthy within {:?}",
-                HEALTH_WAIT_TIMEOUT
-            );
-        }
-        Ok(())
-    }
-
     fn spawn_child(&self) -> std::io::Result<Child> {
         let log_out = std::fs::OpenOptions::new()
             .create(true)
@@ -157,6 +126,10 @@ impl ServerProcess {
         }
     }
 
+    fn lifecycle(event_sender: &Sender<Event>, state: crate::app::LifecycleState) {
+        let _ = event_sender.send(Event::App(AppEvent::Lifecycle(state)));
+    }
+
     fn notify(event_sender: &Sender<Event>, message: impl Into<String>) {
         let _ = event_sender.send(Event::App(AppEvent::Toast {
             message: message.into(),
@@ -165,59 +138,108 @@ impl ServerProcess {
     }
 
     fn supervise(&self, event_sender: Sender<Event>) {
+        use crate::app::LifecycleState;
         let mut consecutive_fast_exits = 0u32;
         let mut next_spawn = Instant::now();
+        let mut readiness_deadline: Option<Instant> = None;
+        let mut readiness_reported = false;
+        let mut connected = false;
+        let mut last_spawn_error: Option<Instant> = None;
+        Self::lifecycle(&event_sender, LifecycleState::Starting);
 
         while !self.stop.load(Ordering::SeqCst) {
             let exited = {
-                let mut child = self.child.lock().expect("server child lock poisoned");
-                match child.as_mut() {
+                let mut slot = self.child.lock().expect("server child lock poisoned");
+                match slot.as_mut() {
                     Some(running) => match running.process.try_wait() {
                         Ok(Some(status)) => {
                             let runtime = running.started_at.elapsed();
-                            Self::notify(&event_sender, format!("ario_daemon exited: {status}"));
-                            *child = None;
-                            Some(runtime)
+                            *slot = None;
+                            Some((
+                                runtime,
+                                format!(
+                                    "ario_daemon exited: {status}. Check {}",
+                                    self.config.log_path.display()
+                                ),
+                            ))
                         }
                         Ok(None) => None,
                         Err(e) => {
-                            Self::notify(
-                                &event_sender,
-                                format!("ario_daemon try_wait() failed: {e}"),
-                            );
-                            *child = None;
-                            Some(Duration::ZERO)
+                            *slot = None;
+                            Some((
+                                Duration::ZERO,
+                                format!(
+                                    "ario_daemon try_wait() failed: {e}. Check {}",
+                                    self.config.log_path.display()
+                                ),
+                            ))
                         }
                     },
                     None => None,
                 }
             };
-
-            if let Some(runtime) = exited {
+            if let Some((runtime, message)) = exited {
+                Self::notify(&event_sender, message.clone());
+                connected = false;
+                readiness_deadline = None;
                 consecutive_fast_exits = if runtime < FAST_EXIT_THRESHOLD {
                     consecutive_fast_exits + 1
                 } else {
                     0
                 };
                 if consecutive_fast_exits >= MAX_FAST_EXITS {
-                    Self::notify(
+                    Self::lifecycle(
                         &event_sender,
-                        format!(
-                            "ario_daemon crash-looping — giving up on respawning. Check {}",
+                        LifecycleState::Failed(format!(
+                            "ario_daemon crash-looping. Check {}",
                             self.config.log_path.display()
-                        ),
+                        )),
                     );
                     return;
                 }
-                next_spawn = Instant::now();
+                Self::lifecycle(&event_sender, LifecycleState::Retrying);
+                next_spawn = Instant::now() + RESPAWN_BACKOFF;
             }
 
-            if !self.has_child()
-                && Instant::now() >= next_spawn
-                && api::health(&self.config.api_base).is_err()
-            {
+            // Health is checked even with an owned child so slow readiness can recover
+            // after the first five-second diagnostic.
+            let healthy = api::health(&self.config.api_base).is_ok();
+            if self.stop.load(Ordering::SeqCst) {
+                return;
+            }
+            if healthy {
+                if !connected {
+                    Self::lifecycle(&event_sender, LifecycleState::Connected);
+                }
+                connected = true;
+                readiness_deadline = None;
+                readiness_reported = false;
+            } else {
+                if connected {
+                    connected = false;
+                    Self::lifecycle(&event_sender, LifecycleState::Retrying);
+                }
+                if let Some(deadline) = readiness_deadline {
+                    if Instant::now() >= deadline && !readiness_reported {
+                        let message = format!(
+                            "ario_daemon did not become healthy within five seconds. Check {}",
+                            self.config.log_path.display()
+                        );
+                        Self::lifecycle(&event_sender, LifecycleState::Failed(message.clone()));
+                        Self::notify(&event_sender, message);
+                        readiness_reported = true;
+                    }
+                }
+            }
+
+            if !healthy && !self.has_child() && Instant::now() >= next_spawn {
                 let _spawn_guard = self.spawn_lock.lock().expect("server spawn lock poisoned");
-                if !self.has_child() && !self.stop.load(Ordering::SeqCst) {
+                if self.stop.load(Ordering::SeqCst) {
+                    return;
+                }
+                if !self.has_child() {
+                    // The port may belong to a daemon whose health endpoint is still
+                    // coming up; the check prevents a duplicate owned process.
                     match self.spawn_child_checked() {
                         Ok(process) => {
                             self.owns_process.store(true, Ordering::SeqCst);
@@ -226,18 +248,30 @@ impl ServerProcess {
                                     process,
                                     started_at: Instant::now(),
                                 });
+                            readiness_deadline = Some(Instant::now() + HEALTH_WAIT_TIMEOUT);
+                            readiness_reported = false;
+                            Self::lifecycle(&event_sender, LifecycleState::Starting);
                         }
                         Err(e) => {
-                            Self::notify(
-                                &event_sender,
-                                format!("failed to respawn ario_daemon: {e}"),
-                            );
-                            next_spawn = Instant::now() + RESPAWN_BACKOFF;
+                            let now = Instant::now();
+                            if last_spawn_error.is_none_or(|last| {
+                                now.duration_since(last) >= SPAWN_ERROR_NOTICE_INTERVAL
+                            }) {
+                                Self::notify(
+                                    &event_sender,
+                                    format!(
+                                        "failed to start ario_daemon: {e}. Check {}",
+                                        self.config.log_path.display()
+                                    ),
+                                );
+                                last_spawn_error = Some(now);
+                            }
+                            Self::lifecycle(&event_sender, LifecycleState::Retrying);
+                            next_spawn = now + RESPAWN_BACKOFF;
                         }
                     }
                 }
             }
-
             thread::sleep(HEALTH_POLL_INTERVAL);
         }
     }
@@ -251,6 +285,33 @@ impl ServerProcess {
             .take()
         {
             let _ = handle.join();
+        }
+    }
+
+    pub fn wait_for_startup(&self, api_base: &str) {
+        if !self.owns_process() || !self.has_child() {
+            return;
+        }
+        let deadline = Instant::now() + HEALTH_WAIT_TIMEOUT;
+        while Instant::now() < deadline {
+            if api::health(api_base).is_ok() {
+                return;
+            }
+            let mut child = self.child.lock().expect("server child lock poisoned");
+            match child.as_mut().map(|running| running.process.try_wait()) {
+                Some(Ok(Some(_))) => {
+                    *child = None;
+                    return;
+                }
+                Some(Err(e)) => {
+                    eprintln!("ario_daemon wait failed during startup: {e}");
+                    return;
+                }
+                None => return,
+                Some(Ok(None)) => {}
+            }
+            drop(child);
+            thread::sleep(HEALTH_POLL_INTERVAL);
         }
     }
 
@@ -287,8 +348,10 @@ impl ServerProcess {
                     return;
                 }
                 Ok(None) => thread::sleep(Duration::from_millis(50)),
-                Err(_) => {
+                Err(e) => {
+                    eprintln!("ario_daemon wait failed: {e}; killing it");
                     let _ = child.process.kill();
+                    let _ = child.process.wait();
                     return;
                 }
             }
@@ -354,20 +417,79 @@ fn daemon_binary_name() -> &'static str {
     }
 }
 
-fn wait_until_healthy(api_base: &str) -> bool {
-    let deadline = Instant::now() + HEALTH_WAIT_TIMEOUT;
-    while Instant::now() < deadline {
-        if api::health(api_base).is_ok() {
-            return true;
-        }
-        thread::sleep(HEALTH_POLL_INTERVAL);
-    }
-    false
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::LifecycleState;
+    use std::sync::atomic::AtomicU64;
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    #[cfg(unix)]
+    fn isolated_process(binary: &str, api_base: String) -> Arc<ServerProcess> {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let log_path = std::env::temp_dir().join(format!(
+            "ario-tui-test-{}-{}.log",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        Arc::new(ServerProcess::new(ServerProcessConfig {
+            binary_path: binary.into(),
+            api_base,
+            target: ManagedServerTarget {
+                host: "127.0.0.1".parse().unwrap(),
+                port,
+            },
+            log_path,
+        }))
+    }
+
+    #[cfg(unix)]
+    fn fake_health(ready: Arc<AtomicBool>) -> (String, Arc<AtomicBool>, JoinHandle<()>) {
+        use std::io::{Read, Write};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopping = stop.clone();
+        let handle = thread::spawn(move || {
+            while !stopping.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut buffer = [0u8; 1024];
+                        let _ = stream.read(&mut buffer);
+                        let body = r#"{"server":"ok","aria2_reachable":true,"tui_managed":true}"#;
+                        let status = if ready.load(Ordering::SeqCst) {
+                            "200 OK"
+                        } else {
+                            "503 Service Unavailable"
+                        };
+                        let response = format!(
+                            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = stream.write_all(response.as_bytes());
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10))
+                    }
+                    Err(_) => return,
+                }
+            }
+        });
+        (base, stop, handle)
+    }
+
+    #[cfg(unix)]
+    fn clean_child(process: &ServerProcess) {
+        process.stop_supervisor();
+        if let Some(mut child) = process.child.lock().unwrap().take() {
+            let _ = child.process.kill();
+            let _ = child.process.wait();
+        }
+    }
 
     #[cfg(unix)]
     fn test_process() -> Arc<ServerProcess> {
@@ -456,5 +578,173 @@ mod tests {
         let mut child = process.child.lock().unwrap().take().unwrap();
         child.process.kill().unwrap();
         child.process.wait().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn immediate_exit_reports_status_and_retries_after_backoff() {
+        let process = isolated_process("/bin/false", "http://127.0.0.1:1".into());
+        let (sender, receiver) = std::sync::mpsc::channel();
+        process.start_supervisor(sender);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut saw_exit = false;
+        while Instant::now() < deadline {
+            if let Ok(Event::App(AppEvent::Toast { message, .. })) =
+                receiver.recv_timeout(Duration::from_millis(100))
+            {
+                if message.contains("exited: exit status: 1") && message.contains(".log") {
+                    saw_exit = true;
+                    break;
+                }
+            }
+        }
+        assert!(saw_exit);
+        thread::sleep(Duration::from_millis(500));
+        assert!(!process.has_child());
+        clean_child(&process);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_spawn_recovers_after_backoff() {
+        let mut process = isolated_process("/bin/false", "http://127.0.0.1:1".into());
+        let script = process.config.log_path.with_extension("sh");
+        Arc::get_mut(&mut process).unwrap().config.binary_path =
+            script.to_string_lossy().into_owned();
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        process.start_supervisor(sender);
+        thread::sleep(Duration::from_millis(300));
+        assert!(!process.has_child());
+        std::fs::write(&script, "#!/bin/sh\nexec sleep 30\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        thread::sleep(Duration::from_secs(3));
+        assert!(process.has_child());
+        clean_child(&process);
+        std::fs::remove_file(script).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn slow_readiness_recovers_after_timeout_without_duplicate() {
+        let ready = Arc::new(AtomicBool::new(false));
+        let (api_base, stop, health_thread) = fake_health(ready.clone());
+        let script = std::env::temp_dir().join(format!(
+            "ario-slow-daemon-{}-{}.sh",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&script, "#!/bin/sh\nexec sleep 30\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let process = isolated_process(&script.to_string_lossy(), api_base);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        process.start_supervisor(sender);
+        let deadline = Instant::now() + Duration::from_secs(7);
+        let mut saw_timeout = false;
+        while Instant::now() < deadline {
+            if let Ok(Event::App(AppEvent::Lifecycle(LifecycleState::Failed(message)))) =
+                receiver.recv_timeout(Duration::from_millis(100))
+            {
+                if message.contains("five seconds") {
+                    saw_timeout = true;
+                    break;
+                }
+            }
+        }
+        assert!(saw_timeout);
+        let pid = process.child.lock().unwrap().as_ref().unwrap().process.id();
+        ready.store(true, Ordering::SeqCst);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut connected = false;
+        while Instant::now() < deadline {
+            if let Ok(Event::App(AppEvent::Lifecycle(LifecycleState::Connected))) =
+                receiver.recv_timeout(Duration::from_millis(100))
+            {
+                connected = true;
+                break;
+            }
+        }
+        assert!(connected);
+        assert_eq!(
+            process.child.lock().unwrap().as_ref().unwrap().process.id(),
+            pid
+        );
+        clean_child(&process);
+        stop.store(true, Ordering::SeqCst);
+        health_thread.join().unwrap();
+        std::fs::remove_file(script).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn attaches_to_existing_daemon_and_quit_stops_worker() {
+        let ready = Arc::new(AtomicBool::new(true));
+        let (api_base, stop, health_thread) = fake_health(ready);
+        let process = isolated_process("/bin/false", api_base);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        process.start_supervisor(sender);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut connected = false;
+        while Instant::now() < deadline {
+            if let Ok(Event::App(AppEvent::Lifecycle(LifecycleState::Connected))) =
+                receiver.recv_timeout(Duration::from_millis(100))
+            {
+                connected = true;
+                break;
+            }
+        }
+        assert!(connected);
+        assert!(!process.owns_process());
+        assert!(!process.has_child());
+        process.stop_supervisor();
+        stop.store(true, Ordering::SeqCst);
+        health_thread.join().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn five_fast_exits_stop_daemon_retries() {
+        let process = isolated_process("/bin/false", "http://127.0.0.1:1".into());
+        let (sender, receiver) = std::sync::mpsc::channel();
+        process.start_supervisor(sender);
+        let deadline = Instant::now() + Duration::from_secs(11);
+        let mut gave_up = false;
+        while Instant::now() < deadline {
+            if let Ok(Event::App(AppEvent::Lifecycle(LifecycleState::Failed(message)))) =
+                receiver.recv_timeout(Duration::from_millis(100))
+            {
+                if message.contains("crash-looping") {
+                    gave_up = true;
+                    break;
+                }
+            }
+        }
+        assert!(gave_up);
+        assert!(!process.has_child());
+        process.stop_supervisor();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn quitting_during_startup_prevents_later_respawn() {
+        let process = isolated_process("/bin/sh", "http://127.0.0.1:1".into());
+        let child = Command::new("/bin/sh")
+            .args(["-c", "exec sleep 30"])
+            .spawn()
+            .unwrap();
+        *process.child.lock().unwrap() = Some(RunningChild {
+            process: child,
+            started_at: Instant::now(),
+        });
+        process.owns_process.store(true, Ordering::SeqCst);
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        process.start_supervisor(sender);
+        thread::sleep(Duration::from_millis(150));
+        process.stop_supervisor();
+        clean_child(&process);
+        thread::sleep(Duration::from_millis(2200));
+        assert!(!process.has_child());
+        assert!(process.supervisor.lock().unwrap().is_none());
     }
 }

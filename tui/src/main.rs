@@ -58,7 +58,6 @@ fn main() -> anyhow::Result<()> {
         .map(|target| target.api_base())
         .unwrap_or_else(|| tui_config.server_url.clone());
 
-    let events = EventHandler::new(TICK_RATE_MS);
     let server_process = if let Some(target) = managed_target {
         let log_path = config::config_dir()?.join("server.log");
         let process = Arc::new(ServerProcess::new(ServerProcessConfig {
@@ -67,23 +66,14 @@ fn main() -> anyhow::Result<()> {
             target,
             log_path,
         }));
-        match process.ensure_started() {
-            Ok(()) if process.owns_process() => {
-                eprintln!("ario_daemon started (managed)");
-            }
-            Ok(()) => {
-                eprintln!("ario_daemon already running");
-            }
-            Err(e) => {
-                eprintln!("failed to start ario_daemon: {e}");
-            }
-        }
-        process.start_supervisor(events.sender());
         Some(process)
     } else {
         None
     };
 
+    let backend = CrosstermBackend::new(std::io::stderr());
+    let terminal = Terminal::new(backend)?;
+    let events = EventHandler::new(TICK_RATE_MS);
     let mut app = App::new(
         api_base,
         resolved_theme,
@@ -92,8 +82,6 @@ fn main() -> anyhow::Result<()> {
         managed,
     );
 
-    let backend = CrosstermBackend::new(std::io::stderr());
-    let terminal = Terminal::new(backend)?;
     let mut tui = Tui::new(terminal, events);
     if let Err(error) = tui.enter() {
         finish_server_process(server_process.as_ref(), &app.api_base);
@@ -101,6 +89,10 @@ fn main() -> anyhow::Result<()> {
     }
 
     let run_result = (|| -> anyhow::Result<()> {
+        tui.draw(&mut app)?;
+        if let Some(process) = &server_process {
+            process.start_supervisor(tui.events.sender());
+        }
         while !app.should_quit {
             tui.draw(&mut app)?;
             match tui.events.next()? {
@@ -113,7 +105,15 @@ fn main() -> anyhow::Result<()> {
                     queues,
                     server_reachable,
                     aria2_reachable,
-                }) => app.apply_refresh(downloads, queues, server_reachable, aria2_reachable),
+                    lifecycle_revision,
+                }) => app.apply_refresh(
+                    downloads,
+                    queues,
+                    server_reachable,
+                    aria2_reachable,
+                    lifecycle_revision,
+                ),
+                Event::App(AppEvent::Lifecycle(state)) => app.apply_lifecycle(state),
                 Event::App(AppEvent::QueueDownloadsLoaded(result)) => {
                     app.apply_queue_downloads_loaded(result)
                 }
@@ -144,6 +144,7 @@ fn finish_server_process(process: Option<&Arc<ServerProcess>>, api_base: &str) {
 
     // Prevent a graceful daemon exit from racing with the respawner.
     process.stop_supervisor();
+    process.wait_for_startup(api_base);
     match api::health(api_base) {
         Ok(health) if health.tui_managed => match api::shutdown_if_idle(api_base) {
             Ok(result) => match result.outcome {
