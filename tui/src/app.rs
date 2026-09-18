@@ -25,11 +25,13 @@ use common::queue::Queue;
 
 #[derive(Debug)]
 pub enum AppEvent {
+    Lifecycle(LifecycleState),
     Refreshed {
         downloads: anyhow::Result<Vec<DownloadLiveStatus>>,
         queues: anyhow::Result<Vec<Queue>>,
         server_reachable: bool,
         aria2_reachable: bool,
+        lifecycle_revision: u64,
     },
     QueueDownloadsLoaded(anyhow::Result<Vec<DownloadLiveStatus>>),
     Toast {
@@ -42,6 +44,14 @@ pub enum AppEvent {
         queue_name: String,
         result: anyhow::Result<api::DeleteQueueOutcome>,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LifecycleState {
+    Starting,
+    Retrying,
+    Connected,
+    Failed(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,6 +116,7 @@ pub struct App {
     pub focus: Focus,
     pub server_reachable: bool,
     pub aria2_reachable: bool,
+    pub lifecycle: LifecycleState,
     pub last_error: Option<String>,
     pub should_quit: bool,
     pub theme: Theme,
@@ -120,6 +131,7 @@ pub struct App {
     manages_server: bool,
     event_sender: Sender<Event>,
     refresh_in_flight: bool,
+    lifecycle_revision: u64,
     pending_confirmation_action: Option<PendingConfirmationAction>,
 }
 
@@ -141,6 +153,7 @@ impl App {
             focus: Focus::Downloads,
             server_reachable: false,
             aria2_reachable: false,
+            lifecycle: LifecycleState::Starting,
             last_error: None,
             should_quit: false,
             theme,
@@ -153,6 +166,7 @@ impl App {
             event_sender,
             manages_server,
             refresh_in_flight: false,
+            lifecycle_revision: 0,
             pending_confirmation_action: None,
             toasts: ToastStack::new(),
         }
@@ -164,6 +178,10 @@ impl App {
             || self.download_modal.is_some()
             || self.confirmation_modal.is_some()
             || self.help_modal.is_some()
+    }
+
+    pub fn manages_server(&self) -> bool {
+        self.manages_server
     }
 
     pub fn quit(&mut self) {
@@ -204,6 +222,7 @@ impl App {
         let filter = self.current_filter();
         let sender = self.event_sender.clone();
         let manages_server = self.manages_server;
+        let lifecycle_revision = self.lifecycle_revision;
 
         thread::spawn(move || {
             let health = api::health(&api_base);
@@ -227,6 +246,7 @@ impl App {
                 queues,
                 server_reachable,
                 aria2_reachable,
+                lifecycle_revision,
             }));
         });
     }
@@ -237,8 +257,15 @@ impl App {
         queues: anyhow::Result<Vec<Queue>>,
         server_reachable: bool,
         aria2_reachable: bool,
+        lifecycle_revision: u64,
     ) {
         self.refresh_in_flight = false;
+
+        // A failed request started before a newer worker event cannot undo it.
+        if self.manages_server && !server_reachable && lifecycle_revision != self.lifecycle_revision
+        {
+            return;
+        }
 
         if !self.manages_server && self.server_reachable && !server_reachable {
             self.toasts.push("server is down", ToastLevel::Error);
@@ -256,9 +283,10 @@ impl App {
                     self.last_error = None;
                 }
             }
-            Err(e) => {
+            Err(e) if !self.manages_server => {
                 self.last_error = Some(format!("can't reach server: {e}"));
             }
+            Err(_) => {}
         }
 
         if let Ok(queues) = queues {
@@ -266,6 +294,29 @@ impl App {
         }
         self.server_reachable = server_reachable;
         self.aria2_reachable = aria2_reachable;
+        if server_reachable {
+            self.apply_lifecycle(LifecycleState::Connected);
+        }
+    }
+
+    pub fn apply_lifecycle(&mut self, state: LifecycleState) {
+        self.lifecycle_revision += 1;
+        if matches!(
+            state,
+            LifecycleState::Starting | LifecycleState::Retrying | LifecycleState::Connected
+        ) {
+            self.last_error = None;
+        }
+        if let LifecycleState::Failed(ref message) = state {
+            self.last_error = Some(message.clone());
+        }
+        if matches!(state, LifecycleState::Connected) {
+            self.server_reachable = true;
+        } else {
+            self.server_reachable = false;
+            self.aria2_reachable = false;
+        }
+        self.lifecycle = state;
     }
 
     pub fn apply_toast(&mut self, message: String, level: ToastLevel) {
@@ -401,5 +452,47 @@ mod tests {
 
         let toast = app.toasts.iter().last().unwrap();
         assert_eq!(toast.level, ToastLevel::Success);
+    }
+
+    #[test]
+    fn lifecycle_progress_and_stale_failed_refresh() {
+        let mut app = app();
+        app.manages_server = true;
+        assert_eq!(app.lifecycle, LifecycleState::Starting);
+        app.apply_refresh(
+            Err(anyhow::anyhow!("offline")),
+            Err(anyhow::anyhow!("offline")),
+            false,
+            false,
+            0,
+        );
+        assert!(app.last_error.is_none());
+        app.apply_lifecycle(LifecycleState::Retrying);
+        app.apply_lifecycle(LifecycleState::Connected);
+        let revision = app.lifecycle_revision;
+        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, revision);
+        assert!(app.server_reachable);
+        app.apply_refresh(
+            Err(anyhow::anyhow!("old")),
+            Err(anyhow::anyhow!("old")),
+            false,
+            false,
+            0,
+        );
+        assert!(app.server_reachable);
+        assert!(app.last_error.is_none());
+        app.apply_lifecycle(LifecycleState::Failed("daemon exited".into()));
+        assert_eq!(app.last_error.as_deref(), Some("daemon exited"));
+        app.apply_refresh(
+            Err(anyhow::anyhow!("offline")),
+            Err(anyhow::anyhow!("offline")),
+            false,
+            false,
+            app.lifecycle_revision,
+        );
+        assert_eq!(app.last_error.as_deref(), Some("daemon exited"));
+        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, app.lifecycle_revision);
+        assert_eq!(app.lifecycle, LifecycleState::Connected);
+        assert!(app.last_error.is_none());
     }
 }

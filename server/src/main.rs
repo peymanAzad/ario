@@ -43,7 +43,7 @@ async fn main() -> anyhow::Result<()> {
 
     let aria2_process = Arc::new(Aria2Process::new(aria2_config));
     aria2_process.start().await?;
-    tokio::spawn(Arc::clone(&aria2_process).supervise());
+    let supervisor = tokio::spawn(Arc::clone(&aria2_process).supervise());
 
     let state = AppState::new(database, aria2_client, server_config, launch.tui_managed);
     tokio::spawn(scheduler::run(state.clone()));
@@ -73,6 +73,9 @@ async fn main() -> anyhow::Result<()> {
             shutdown_signal(shutdown_notify).await;
             println!("shutting down: stopping aria2c...");
             shutdown_process.shutdown(&shutdown_state.aria2).await;
+            if let Err(e) = supervisor.await {
+                eprintln!("aria2c supervisor failed: {e}");
+            }
         })
         .await?;
 
