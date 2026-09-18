@@ -4,6 +4,7 @@ mod confirmation_modal;
 mod download_edit_modal;
 mod downloads_table;
 mod footer;
+mod help_modal;
 mod queue_list;
 mod queue_modal;
 mod status_bar;
@@ -47,7 +48,6 @@ pub fn render(app: &mut App, f: &mut Frame) {
     draw_queues_list(f, app, left_layout[0]);
     draw_categories_list(f, app, left_layout[1]);
     draw_downloads_table(f, app, body_layout[1]);
-    draw_footer(f, app, main_layout[2]);
 
     if let Some(modal) = &app.confirmation_modal {
         draw_confirmation_modal(f, app, modal);
@@ -60,6 +60,10 @@ pub fn render(app: &mut App, f: &mut Frame) {
     }
 
     draw_toasts(f, app);
+    if let Some(modal) = &mut app.help_modal {
+        help_modal::draw_help_modal(f, modal, &app.theme, main_layout[1]);
+    }
+    draw_footer(f, app, main_layout[2]);
 }
 
 fn border_style(theme: &crate::theme::Theme, focused: bool) -> Style {

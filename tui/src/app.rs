@@ -3,6 +3,7 @@ pub mod clipboard_import_modal;
 pub mod confirmation_modal;
 pub mod download_edit_modal;
 pub mod downloads_table;
+pub mod help_modal;
 pub mod queue_list;
 pub mod queue_modal;
 
@@ -113,6 +114,7 @@ pub struct App {
     pub queue_modal: Option<QueueModal>,
     pub download_modal: Option<DownloadEditModal>,
     pub confirmation_modal: Option<ConfirmationModal>,
+    pub help_modal: Option<help_modal::HelpModal>,
     pub toasts: ToastStack,
     /// When true, TUI may spawn/supervise ario_daemon for a local URL.
     manages_server: bool,
@@ -147,12 +149,21 @@ impl App {
             queue_modal: None,
             download_modal: None,
             confirmation_modal: None,
+            help_modal: None,
             event_sender,
             manages_server,
             refresh_in_flight: false,
             pending_confirmation_action: None,
             toasts: ToastStack::new(),
         }
+    }
+
+    pub fn has_open_modal(&self) -> bool {
+        self.modal.is_some()
+            || self.queue_modal.is_some()
+            || self.download_modal.is_some()
+            || self.confirmation_modal.is_some()
+            || self.help_modal.is_some()
     }
 
     pub fn quit(&mut self) {

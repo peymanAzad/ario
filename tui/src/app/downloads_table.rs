@@ -116,11 +116,7 @@ impl App {
     }
 
     pub fn request_delete_selected_files(&mut self) {
-        if self.confirmation_modal.is_some()
-            || self.modal.is_some()
-            || self.queue_modal.is_some()
-            || self.download_modal.is_some()
-        {
+        if self.has_open_modal() {
             return;
         }
         let Some(download) = self.current_download() else {

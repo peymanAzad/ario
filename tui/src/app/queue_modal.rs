@@ -121,7 +121,7 @@ pub struct QueueModal {
 
 impl App {
     pub fn open_create_queue_modal(&mut self) {
-        if self.modal.is_some() || self.queue_modal.is_some() || self.download_modal.is_some() {
+        if self.has_open_modal() {
             return;
         }
 
@@ -152,7 +152,7 @@ impl App {
     }
 
     pub fn open_edit_queue_modal(&mut self) {
-        if self.modal.is_some() || self.queue_modal.is_some() || self.download_modal.is_some() {
+        if self.has_open_modal() {
             return;
         }
         if self.selected_queue == 0 {

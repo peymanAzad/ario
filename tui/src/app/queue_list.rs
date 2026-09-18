@@ -25,12 +25,7 @@ impl App {
     }
 
     pub fn request_delete_selected_queue(&mut self) {
-        if !self.can_delete_selected_queue()
-            || self.confirmation_modal.is_some()
-            || self.modal.is_some()
-            || self.queue_modal.is_some()
-            || self.download_modal.is_some()
-        {
+        if !self.can_delete_selected_queue() || self.has_open_modal() {
             return;
         }
 
@@ -72,12 +67,7 @@ impl App {
     ) {
         match result {
             Ok(api::DeleteQueueOutcome::NeedsConfirmation) => {
-                if !self.queues.iter().any(|queue| queue.id == queue_id)
-                    || self.confirmation_modal.is_some()
-                    || self.modal.is_some()
-                    || self.queue_modal.is_some()
-                    || self.download_modal.is_some()
-                {
+                if !self.queues.iter().any(|queue| queue.id == queue_id) || self.has_open_modal() {
                     return;
                 }
                 self.open_confirmation(
@@ -268,6 +258,20 @@ mod tests {
         app.cancel_confirmation();
         assert!(app.confirmation_modal.is_none());
         assert_eq!(app.queues.len(), 3);
+    }
+
+    #[test]
+    fn late_queue_confirmation_does_not_replace_help() {
+        let (mut app, _receiver) = app();
+        app.open_help_modal();
+        app.apply_queue_delete_result(
+            2,
+            "Second".into(),
+            Ok(api::DeleteQueueOutcome::NeedsConfirmation),
+        );
+        assert!(app.help_modal.is_some());
+        assert!(app.confirmation_modal.is_none());
+        assert!(app.pending_confirmation_action.is_none());
     }
 
     #[test]

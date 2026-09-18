@@ -3,6 +3,19 @@ use ratatui::{Frame, layout::Rect, style::Style, widgets::Paragraph};
 use crate::app::{App, Focus, downloads_table::DownloadAction};
 
 pub fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
+    // Reserve the help hint first; contextual shortcuts may be clipped.
+    let help_width = area.width.min(9);
+    let hint_area = Rect::new(area.x, area.y, help_width, area.height);
+    let area = Rect::new(
+        area.x + help_width,
+        area.y,
+        area.width - help_width,
+        area.height,
+    );
+    f.render_widget(
+        Paragraph::new("?: Help").style(Style::default().fg(app.theme.accent)),
+        hint_area,
+    );
     let help = match app.focus {
         Focus::Downloads => {
             let rp = downloads_rp_hint(app.current_download_action());
