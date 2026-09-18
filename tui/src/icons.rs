@@ -37,6 +37,13 @@ impl IconSet {
         Self { mode }
     }
 
+    pub const fn ellipsis(self) -> &'static str {
+        match self.mode {
+            GlyphMode::Ascii => "...",
+            GlyphMode::NerdFont | GlyphMode::Unicode => "…",
+        }
+    }
+
     pub const fn all(self) -> &'static str {
         match self.mode {
             GlyphMode::NerdFont => "\u{f07b}",
