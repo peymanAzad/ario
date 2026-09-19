@@ -111,6 +111,14 @@ pub fn shutdown_if_idle(base: &str) -> anyhow::Result<ShutdownIfIdleResponse> {
     Ok(resp.json()?)
 }
 
+pub fn shutdown(base: &str) -> anyhow::Result<ShutdownIfIdleResponse> {
+    let resp = client()
+        .post(format!("{base}/shutdown"))
+        .send()?
+        .error_for_status()?;
+    Ok(resp.json()?)
+}
+
 pub fn pause_download(base: &str, id: i64) -> anyhow::Result<()> {
     client()
         .post(format!("{base}/downloads/{id}/pause"))

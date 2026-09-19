@@ -24,6 +24,7 @@ use tui::Tui;
 use update::update;
 
 use crate::app::AppEvent;
+use crate::config::{ManagedExitAction, StopManagedDaemon};
 
 const TICK_RATE_MS: u64 = 500;
 
@@ -84,7 +85,11 @@ fn main() -> anyhow::Result<()> {
 
     let mut tui = Tui::new(terminal, events);
     if let Err(error) = tui.enter() {
-        finish_server_process(server_process.as_ref(), &app.api_base);
+        finish_server_process(
+            server_process.as_ref(),
+            &app.api_base,
+            tui_config.on_app_exit.stop_managed_daemon,
+        );
         return Err(error);
     }
 
@@ -133,39 +138,73 @@ fn main() -> anyhow::Result<()> {
 
     let exit_result = tui.exit();
 
-    finish_server_process(server_process.as_ref(), &app.api_base);
+    finish_server_process(
+        server_process.as_ref(),
+        &app.api_base,
+        tui_config.on_app_exit.stop_managed_daemon,
+    );
 
     run_result?;
     exit_result
 }
 
-fn finish_server_process(process: Option<&Arc<ServerProcess>>, api_base: &str) {
+fn finish_server_process(
+    process: Option<&Arc<ServerProcess>>,
+    api_base: &str,
+    policy: StopManagedDaemon,
+) {
     let Some(process) = process else { return };
 
     // Prevent a graceful daemon exit from racing with the respawner.
     process.stop_supervisor();
-    process.wait_for_startup(api_base);
-    match api::health(api_base) {
-        Ok(health) if health.tui_managed => match api::shutdown_if_idle(api_base) {
-            Ok(result) => match result.outcome {
-                common::lifecycle::ShutdownOutcome::ShuttingDown => process.wait_for_shutdown(),
-                common::lifecycle::ShutdownOutcome::KeptRunning => {
-                    eprintln!(
-                        "ario_daemon kept running: {} active download(s), {} scheduled queue(s)",
-                        result.active_downloads, result.scheduled_queues
-                    );
-                    process.detach();
-                }
-                common::lifecycle::ShutdownOutcome::NotManaged => process.detach(),
-            },
-            Err(e) => {
-                eprintln!("ario_daemon kept running: shutdown check failed: {e}");
+    if policy == StopManagedDaemon::Never {
+        process.detach();
+        return;
+    }
+
+    let health = api::health(api_base).ok();
+    let tui_managed = health.as_ref().map(|h| h.tui_managed);
+    let owns_child = process.owns_process() && process.has_child();
+    match config::managed_exit_action(policy, tui_managed, owns_child) {
+        ManagedExitAction::Detach => {
+            if health.is_none() {
+                eprintln!("ario_daemon kept running: health check failed");
+            }
+            process.detach();
+        }
+        ManagedExitAction::TerminateOwned => process.terminate_owned(),
+        ManagedExitAction::ShutdownIfIdle => {
+            apply_shutdown_result(process, api::shutdown_if_idle(api_base), false)
+        }
+        ManagedExitAction::ForceShutdown => {
+            apply_shutdown_result(process, api::shutdown(api_base), true)
+        }
+    }
+}
+
+fn apply_shutdown_result(
+    process: &ServerProcess,
+    result: anyhow::Result<common::lifecycle::ShutdownIfIdleResponse>,
+    force: bool,
+) {
+    match result {
+        Ok(result) => match result.outcome {
+            common::lifecycle::ShutdownOutcome::ShuttingDown => process.wait_for_shutdown(),
+            common::lifecycle::ShutdownOutcome::KeptRunning => {
+                eprintln!(
+                    "ario_daemon kept running: {} active download(s), {} scheduled queue(s)",
+                    result.active_downloads, result.scheduled_queues
+                );
                 process.detach();
             }
+            common::lifecycle::ShutdownOutcome::NotManaged => process.detach(),
         },
-        Ok(_) => process.detach(),
+        Err(e) if force && process.owns_process() && process.has_child() => {
+            eprintln!("ario_daemon shutdown request failed: {e}; terminating owned process");
+            process.terminate_owned();
+        }
         Err(e) => {
-            eprintln!("ario_daemon kept running: health check failed: {e}");
+            eprintln!("ario_daemon kept running: shutdown check failed: {e}");
             process.detach();
         }
     }

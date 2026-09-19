@@ -65,6 +65,28 @@ impl AppState {
             scheduled_queues,
         })
     }
+
+    pub async fn request_shutdown(
+        &self,
+    ) -> Result<common::lifecycle::ShutdownIfIdleResponse, crate::error::AppError> {
+        use common::lifecycle::{ShutdownIfIdleResponse, ShutdownOutcome};
+
+        let _guard = self.activity_gate.write().await;
+        let (active_downloads, scheduled_queues) = self.db.lifecycle_blocker_counts()?;
+        let outcome = if !self.tui_managed {
+            ShutdownOutcome::NotManaged
+        } else {
+            self.stopping.store(true, Ordering::SeqCst);
+            self.shutdown_notify.notify_one();
+            ShutdownOutcome::ShuttingDown
+        };
+
+        Ok(ShutdownIfIdleResponse {
+            outcome,
+            active_downloads,
+            scheduled_queues,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -107,6 +129,60 @@ mod tests {
         let response = state.request_idle_shutdown().await.unwrap();
         assert_eq!(response.outcome, ShutdownOutcome::KeptRunning);
         assert_eq!(response.scheduled_queues, 1);
+        assert!(state.activity_guard().await.is_ok());
+    }
+
+    fn insert_active_download(state: &AppState) {
+        use chrono::Utc;
+        use common::download::Download;
+        use common::enums::{DownloadStatus, FileCategory, SourceType};
+        use common::finetune::FineTune;
+
+        let download = Download {
+            id: 0,
+            aria2_gid: None,
+            url: "https://example.test/file".into(),
+            filename: None,
+            destination_path: "/tmp".into(),
+            source_type: SourceType::Http,
+            category: FileCategory::Other,
+            status: DownloadStatus::Active,
+            paused_by_scheduler: false,
+            manually_started: false,
+            size: None,
+            queue_id: 1,
+            position_in_queue: 0,
+            finetune: FineTune::default(),
+            created_at: Utc::now(),
+            started_at: None,
+            completed_at: None,
+        };
+        state.db.insert_download(&download).unwrap();
+    }
+
+    #[tokio::test]
+    async fn force_shutdown_stops_managed_daemon_with_active_work() {
+        let state = state(true);
+        insert_active_download(&state);
+        let mut queue = state.db.get_queue(1).unwrap().unwrap();
+        queue.scheduler.enabled = true;
+        state.db.update_queue(&queue).unwrap();
+
+        let response = state.request_shutdown().await.unwrap();
+        assert_eq!(response.outcome, ShutdownOutcome::ShuttingDown);
+        assert_eq!(response.active_downloads, 1);
+        assert_eq!(response.scheduled_queues, 1);
+        assert!(state.activity_guard().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn force_shutdown_does_not_stop_unmanaged_daemon() {
+        let state = state(false);
+        insert_active_download(&state);
+
+        let response = state.request_shutdown().await.unwrap();
+        assert_eq!(response.outcome, ShutdownOutcome::NotManaged);
+        assert_eq!(response.active_downloads, 1);
         assert!(state.activity_guard().await.is_ok());
     }
 }
