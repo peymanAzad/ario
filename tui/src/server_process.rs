@@ -288,33 +288,6 @@ impl ServerProcess {
         }
     }
 
-    pub fn wait_for_startup(&self, api_base: &str) {
-        if !self.owns_process() || !self.has_child() {
-            return;
-        }
-        let deadline = Instant::now() + HEALTH_WAIT_TIMEOUT;
-        while Instant::now() < deadline {
-            if api::health(api_base).is_ok() {
-                return;
-            }
-            let mut child = self.child.lock().expect("server child lock poisoned");
-            match child.as_mut().map(|running| running.process.try_wait()) {
-                Some(Ok(Some(_))) => {
-                    *child = None;
-                    return;
-                }
-                Some(Err(e)) => {
-                    eprintln!("ario_daemon wait failed during startup: {e}");
-                    return;
-                }
-                None => return,
-                Some(Ok(None)) => {}
-            }
-            drop(child);
-            thread::sleep(HEALTH_POLL_INTERVAL);
-        }
-    }
-
     pub fn detach(&self) {
         self.stop_supervisor();
         let _ = self
@@ -322,6 +295,22 @@ impl ServerProcess {
             .lock()
             .expect("server child lock poisoned")
             .take();
+    }
+
+    pub fn terminate_owned(&self) {
+        self.stop_supervisor();
+        if !self.owns_process() {
+            return;
+        }
+        if let Some(running) = self
+            .child
+            .lock()
+            .expect("server child lock poisoned")
+            .as_mut()
+        {
+            signal_terminate(&mut running.process);
+        }
+        self.wait_for_shutdown();
     }
 
     pub fn wait_for_shutdown(&self) {
@@ -356,6 +345,22 @@ impl ServerProcess {
                 }
             }
         }
+    }
+}
+
+fn signal_terminate(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill")
+            .args(["-TERM", &child.id().to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
     }
 }
 
@@ -492,9 +497,16 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn false_binary() -> &'static str {
+        ["/usr/bin/false", "/bin/false"]
+            .into_iter()
+            .find(|path| std::path::Path::new(path).is_file())
+            .unwrap_or("false")
+    }
+
     fn test_process() -> Arc<ServerProcess> {
         Arc::new(ServerProcess::new(ServerProcessConfig {
-            binary_path: "/bin/false".into(),
+            binary_path: false_binary().into(),
             api_base: "http://127.0.0.1:9".into(),
             target: ManagedServerTarget {
                 host: "127.0.0.1".parse().unwrap(),
@@ -583,7 +595,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn immediate_exit_reports_status_and_retries_after_backoff() {
-        let process = isolated_process("/bin/false", "http://127.0.0.1:1".into());
+        let process = isolated_process(false_binary(), "http://127.0.0.1:1".into());
         let (sender, receiver) = std::sync::mpsc::channel();
         process.start_supervisor(sender);
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -607,7 +619,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn failed_spawn_recovers_after_backoff() {
-        let mut process = isolated_process("/bin/false", "http://127.0.0.1:1".into());
+        let mut process = isolated_process(false_binary(), "http://127.0.0.1:1".into());
         let script = process.config.log_path.with_extension("sh");
         Arc::get_mut(&mut process).unwrap().config.binary_path =
             script.to_string_lossy().into_owned();
@@ -681,7 +693,7 @@ mod tests {
     fn attaches_to_existing_daemon_and_quit_stops_worker() {
         let ready = Arc::new(AtomicBool::new(true));
         let (api_base, stop, health_thread) = fake_health(ready);
-        let process = isolated_process("/bin/false", api_base);
+        let process = isolated_process(false_binary(), api_base);
         let (sender, receiver) = std::sync::mpsc::channel();
         process.start_supervisor(sender);
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -705,7 +717,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn five_fast_exits_stop_daemon_retries() {
-        let process = isolated_process("/bin/false", "http://127.0.0.1:1".into());
+        let process = isolated_process(false_binary(), "http://127.0.0.1:1".into());
         let (sender, receiver) = std::sync::mpsc::channel();
         process.start_supervisor(sender);
         let deadline = Instant::now() + Duration::from_secs(11);
@@ -723,6 +735,26 @@ mod tests {
         assert!(gave_up);
         assert!(!process.has_child());
         process.stop_supervisor();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminate_owned_signals_child_without_long_wait() {
+        let process = test_process();
+        let child = Command::new("/bin/sh")
+            .args(["-c", "exec sleep 30"])
+            .spawn()
+            .unwrap();
+        *process.child.lock().unwrap() = Some(RunningChild {
+            process: child,
+            started_at: Instant::now(),
+        });
+        process.owns_process.store(true, Ordering::SeqCst);
+
+        let started = Instant::now();
+        process.terminate_owned();
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(!process.has_child());
     }
 
     #[cfg(unix)]

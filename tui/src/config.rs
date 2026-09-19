@@ -22,6 +22,48 @@ pub struct TuiConfig {
     pub glyph_mode: Option<String>,
     #[serde(default)]
     pub custom_theme: CustomTheme,
+    #[serde(default, rename = "on-app-exit")]
+    pub on_app_exit: OnAppExit,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct OnAppExit {
+    #[serde(default)]
+    pub stop_managed_daemon: StopManagedDaemon,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StopManagedDaemon {
+    #[default]
+    WhenIdle,
+    Always,
+    Never,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ManagedExitAction {
+    Detach,
+    ShutdownIfIdle,
+    ForceShutdown,
+    TerminateOwned,
+}
+
+pub fn managed_exit_action(
+    policy: StopManagedDaemon,
+    tui_managed: Option<bool>,
+    owns_child: bool,
+) -> ManagedExitAction {
+    match policy {
+        StopManagedDaemon::Never => ManagedExitAction::Detach,
+        policy => match tui_managed {
+            Some(true) if policy == StopManagedDaemon::Always => ManagedExitAction::ForceShutdown,
+            Some(true) => ManagedExitAction::ShutdownIfIdle,
+            Some(false) => ManagedExitAction::Detach,
+            None if owns_child => ManagedExitAction::TerminateOwned,
+            None => ManagedExitAction::Detach,
+        },
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -59,6 +101,7 @@ impl Default for TuiConfig {
             theme: default_theme(),
             glyph_mode: None,
             custom_theme: CustomTheme::default(),
+            on_app_exit: OnAppExit::default(),
         }
     }
 }
@@ -183,5 +226,75 @@ mod tests {
         let (mode, warning) = resolve_glyph_mode(None, Some("emoji"), None, None, Some("C.UTF-8"));
         assert_eq!(mode, GlyphMode::NerdFont);
         assert!(warning.unwrap().contains("glyph_mode"));
+    }
+
+    #[test]
+    fn on_app_exit_defaults_to_when_idle() {
+        let config: TuiConfig = toml::from_str("").unwrap();
+        assert_eq!(
+            config.on_app_exit.stop_managed_daemon,
+            StopManagedDaemon::WhenIdle
+        );
+
+        let config: TuiConfig = toml::from_str("server_url = \"http://127.0.0.1:1\"").unwrap();
+        assert_eq!(
+            config.on_app_exit.stop_managed_daemon,
+            StopManagedDaemon::WhenIdle
+        );
+    }
+
+    #[test]
+    fn on_app_exit_parses_section_values() {
+        let always: TuiConfig = toml::from_str(
+            r#"
+            [on-app-exit]
+            stop_managed_daemon = "always"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            always.on_app_exit.stop_managed_daemon,
+            StopManagedDaemon::Always
+        );
+
+        let never: TuiConfig = toml::from_str(
+            r#"
+            [on-app-exit]
+            stop_managed_daemon = "never"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            never.on_app_exit.stop_managed_daemon,
+            StopManagedDaemon::Never
+        );
+    }
+
+    #[test]
+    fn managed_exit_action_follows_policy_and_health() {
+        assert_eq!(
+            managed_exit_action(StopManagedDaemon::Never, Some(true), true),
+            ManagedExitAction::Detach
+        );
+        assert_eq!(
+            managed_exit_action(StopManagedDaemon::WhenIdle, Some(true), true),
+            ManagedExitAction::ShutdownIfIdle
+        );
+        assert_eq!(
+            managed_exit_action(StopManagedDaemon::Always, Some(true), false),
+            ManagedExitAction::ForceShutdown
+        );
+        assert_eq!(
+            managed_exit_action(StopManagedDaemon::Always, Some(false), true),
+            ManagedExitAction::Detach
+        );
+        assert_eq!(
+            managed_exit_action(StopManagedDaemon::Always, None, true),
+            ManagedExitAction::TerminateOwned
+        );
+        assert_eq!(
+            managed_exit_action(StopManagedDaemon::WhenIdle, None, false),
+            ManagedExitAction::Detach
+        );
     }
 }

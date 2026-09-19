@@ -196,34 +196,41 @@ impl Aria2Process {
             state.child.take()
         };
         if let Some(ref mut running) = child {
-            match tokio::time::timeout(Duration::from_secs(2), client.shutdown()).await {
+            match tokio::time::timeout(Duration::from_millis(200), client.shutdown()).await {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => eprintln!("aria2c shutdown RPC failed: {e}"),
                 Err(_) => eprintln!("aria2c shutdown RPC timed out"),
             }
-            match tokio::time::timeout(Duration::from_secs(5), running.child.wait()).await {
-                Ok(Ok(_)) => {}
-                Ok(Err(e)) => {
-                    eprintln!("aria2c wait() failed: {e}; killing it");
-                    if let Err(e) = running.child.kill().await {
-                        eprintln!("aria2c kill failed: {e}");
-                    }
-                    if let Err(e) = running.child.wait().await {
-                        eprintln!("aria2c reap failed: {e}");
-                    }
-                }
-                Err(_) => {
-                    eprintln!("aria2c did not exit within five seconds; killing it");
-                    if let Err(e) = running.child.kill().await {
-                        eprintln!("aria2c kill failed: {e}");
-                    }
-                    if let Err(e) = running.child.wait().await {
-                        eprintln!("aria2c reap failed: {e}");
-                    }
-                }
+            match running.child.try_wait() {
+                Ok(None) => terminate_child(&mut running.child),
+                Ok(Some(_)) => {}
+                Err(e) => eprintln!("aria2c try_wait() failed: {e}"),
             }
         }
     }
+}
+
+fn terminate_child(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        if let Some(pid) = child.id() {
+            send_term(pid);
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child.start_kill();
+    }
+}
+
+#[cfg(unix)]
+fn send_term(pid: u32) {
+    let _ = std::process::Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 #[cfg(all(test, unix))]
@@ -232,6 +239,13 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    fn false_binary() -> &'static str {
+        ["/usr/bin/false", "/bin/false"]
+            .into_iter()
+            .find(|path| std::path::Path::new(path).is_file())
+            .unwrap_or("false")
+    }
 
     fn process(binary: &str) -> Arc<Aria2Process> {
         let dir = std::env::temp_dir().join(format!(
@@ -264,32 +278,57 @@ mod tests {
         pid
     }
 
+    fn process_is_alive(pid: u32) -> bool {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+
+    fn wait_until_reaped(pid: u32) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if !process_is_alive(pid) {
+                return;
+            }
+            if Instant::now() >= deadline {
+                panic!("process {pid} was not signaled");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     #[tokio::test]
-    async fn shutdown_waits_for_delayed_child_and_blocks_respawn() {
-        let process = process("/bin/false");
-        owned_sleep(&process, "0.3").await;
+    async fn shutdown_returns_quickly_and_blocks_respawn() {
+        let process = process(false_binary());
+        owned_sleep(&process, "30").await;
         let supervisor = tokio::spawn(Arc::clone(&process).supervise());
         let started = Instant::now();
         process.shutdown(&client()).await;
         supervisor.await.unwrap();
-        assert!(started.elapsed() >= Duration::from_millis(250));
+        assert!(started.elapsed() < Duration::from_millis(400));
         assert!(process.lifecycle.lock().await.child.is_none());
         assert!(process.start().await.is_err());
     }
 
     #[tokio::test]
-    async fn shutdown_kills_and_reaps_unresponsive_owned_child() {
-        let process = process("/bin/false");
+    async fn shutdown_signals_owned_child_without_waiting() {
+        let process = process(false_binary());
         let pid = owned_sleep(&process, "30").await;
+        let started = Instant::now();
         process.shutdown(&client()).await;
+        assert!(started.elapsed() < Duration::from_millis(400));
         assert!(process.lifecycle.lock().await.child.is_none());
-        // kill(pid, 0) returns ESRCH after the owned child has been reaped.
-        assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
+        wait_until_reaped(pid);
     }
 
     #[tokio::test]
     async fn failed_respawn_is_retried_after_backoff() {
-        let mut process = process("/bin/false");
+        let mut process = process(false_binary());
         let script_path = process.config.log_path.with_file_name("test-aria2c");
         Arc::get_mut(&mut process).unwrap().config.binary_path =
             script_path.to_string_lossy().into_owned();
@@ -309,7 +348,7 @@ mod tests {
 
     #[tokio::test]
     async fn five_fast_exits_stop_supervision() {
-        let process = process("/bin/false");
+        let process = process(false_binary());
         process.start().await.unwrap();
         let supervisor = tokio::spawn(Arc::clone(&process).supervise());
         tokio::time::timeout(Duration::from_secs(11), supervisor)
