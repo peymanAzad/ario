@@ -7,7 +7,7 @@ pub mod help_modal;
 pub mod queue_list;
 pub mod queue_modal;
 
-use std::{sync::mpsc::Sender, thread};
+use std::{collections::VecDeque, sync::mpsc::Sender, thread};
 
 use crate::app::clipboard_import_modal::ClipboardImportModal;
 use crate::app::confirmation_modal::ConfirmationModal;
@@ -31,6 +31,7 @@ pub enum AppEvent {
         queues: anyhow::Result<Vec<Queue>>,
         server_reachable: bool,
         aria2_reachable: bool,
+        download_speed: u64,
         lifecycle_revision: u64,
     },
     QueueDownloadsLoaded(anyhow::Result<Vec<DownloadLiveStatus>>),
@@ -85,6 +86,8 @@ impl Focus {
     }
 }
 
+pub const SPEED_HISTORY_LEN: usize = 16;
+
 pub const ALL_CATEGORIES: [FileCategory; 6] = [
     FileCategory::Video,
     FileCategory::Music,
@@ -116,6 +119,8 @@ pub struct App {
     pub focus: Focus,
     pub server_reachable: bool,
     pub aria2_reachable: bool,
+    pub total_download_speed: u64,
+    pub speed_history: VecDeque<u64>,
     pub lifecycle: LifecycleState,
     pub last_error: Option<String>,
     pub should_quit: bool,
@@ -153,6 +158,8 @@ impl App {
             focus: Focus::Downloads,
             server_reachable: false,
             aria2_reachable: false,
+            total_download_speed: 0,
+            speed_history: VecDeque::new(),
             lifecycle: LifecycleState::Starting,
             last_error: None,
             should_quit: false,
@@ -226,26 +233,30 @@ impl App {
 
         thread::spawn(move || {
             let health = api::health(&api_base);
-            let server_reachable = health.is_ok();
-            let aria2_reachable = health.map(|h| h.aria2_reachable).unwrap_or(false);
+            let (server_reachable, aria2_reachable, download_speed) = match health {
+                Ok(h) => (true, h.aria2_reachable, h.download_speed),
+                Err(_) => (false, false, 0),
+            };
 
             let downloads = api::list_downloads(&api_base, &filter);
             let queues = api::list_queues(&api_base);
             // A managed daemon may have been restarted by the supervisor between requests.
-            let (server_reachable, aria2_reachable) = if !server_reachable && manages_server {
-                match api::health(&api_base) {
-                    Ok(h) => (true, h.aria2_reachable),
-                    Err(_) => (false, false),
-                }
-            } else {
-                (server_reachable, aria2_reachable)
-            };
+            let (server_reachable, aria2_reachable, download_speed) =
+                if !server_reachable && manages_server {
+                    match api::health(&api_base) {
+                        Ok(h) => (true, h.aria2_reachable, h.download_speed),
+                        Err(_) => (false, false, 0),
+                    }
+                } else {
+                    (server_reachable, aria2_reachable, download_speed)
+                };
 
             let _ = sender.send(Event::App(AppEvent::Refreshed {
                 downloads,
                 queues,
                 server_reachable,
                 aria2_reachable,
+                download_speed,
                 lifecycle_revision,
             }));
         });
@@ -257,6 +268,7 @@ impl App {
         queues: anyhow::Result<Vec<Queue>>,
         server_reachable: bool,
         aria2_reachable: bool,
+        download_speed: u64,
         lifecycle_revision: u64,
     ) {
         self.refresh_in_flight = false;
@@ -294,9 +306,18 @@ impl App {
         }
         self.server_reachable = server_reachable;
         self.aria2_reachable = aria2_reachable;
+        self.total_download_speed = download_speed;
         if server_reachable {
+            self.push_speed_sample(download_speed);
             self.apply_lifecycle(LifecycleState::Connected);
         }
+    }
+
+    fn push_speed_sample(&mut self, speed: u64) {
+        if self.speed_history.len() == SPEED_HISTORY_LEN {
+            self.speed_history.pop_front();
+        }
+        self.speed_history.push_back(speed);
     }
 
     pub fn apply_lifecycle(&mut self, state: LifecycleState) {
@@ -465,18 +486,20 @@ mod tests {
             false,
             false,
             0,
+            0,
         );
         assert!(app.last_error.is_none());
         app.apply_lifecycle(LifecycleState::Retrying);
         app.apply_lifecycle(LifecycleState::Connected);
         let revision = app.lifecycle_revision;
-        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, revision);
+        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 0, revision);
         assert!(app.server_reachable);
         app.apply_refresh(
             Err(anyhow::anyhow!("old")),
             Err(anyhow::anyhow!("old")),
             false,
             false,
+            0,
             0,
         );
         assert!(app.server_reachable);
@@ -488,11 +511,52 @@ mod tests {
             Err(anyhow::anyhow!("offline")),
             false,
             false,
+            0,
             app.lifecycle_revision,
         );
         assert_eq!(app.last_error.as_deref(), Some("daemon exited"));
-        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, app.lifecycle_revision);
+        app.apply_refresh(
+            Ok(vec![]),
+            Ok(vec![]),
+            true,
+            true,
+            0,
+            app.lifecycle_revision,
+        );
         assert_eq!(app.lifecycle, LifecycleState::Connected);
         assert!(app.last_error.is_none());
+    }
+
+    #[test]
+    fn reachable_refresh_records_speed_history_and_caps_it() {
+        let mut app = app();
+        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 100, 0);
+        assert_eq!(app.total_download_speed, 100);
+        assert_eq!(app.speed_history.iter().copied().collect::<Vec<_>>(), [100]);
+
+        app.apply_refresh(Ok(vec![]), Ok(vec![]), false, false, 50, 0);
+        assert_eq!(app.total_download_speed, 50);
+        assert_eq!(app.speed_history.iter().copied().collect::<Vec<_>>(), [100]);
+
+        for speed in 1..=SPEED_HISTORY_LEN as u64 {
+            app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, speed, 0);
+        }
+        assert_eq!(app.speed_history.len(), SPEED_HISTORY_LEN);
+        assert_eq!(app.speed_history.front(), Some(&1));
+        assert_eq!(app.speed_history.back(), Some(&(SPEED_HISTORY_LEN as u64)));
+        app.apply_refresh(
+            Ok(vec![]),
+            Ok(vec![]),
+            true,
+            true,
+            SPEED_HISTORY_LEN as u64 + 1,
+            0,
+        );
+        assert_eq!(app.speed_history.len(), SPEED_HISTORY_LEN);
+        assert_eq!(app.speed_history.front(), Some(&2));
+        assert_eq!(
+            app.speed_history.back(),
+            Some(&(SPEED_HISTORY_LEN as u64 + 1))
+        );
     }
 }

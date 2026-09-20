@@ -26,14 +26,17 @@ struct HealthResponse {
     server: &'static str,
     aria2_reachable: bool,
     tui_managed: bool,
+    download_speed: u64,
 }
 
 async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     let aria2_reachable = state.aria2.get_version().await.is_ok();
+    let download_speed = crate::live_status::total_download_speed(&*state.live_status.read().await);
     Json(HealthResponse {
         server: "ok",
         aria2_reachable,
         tui_managed: state.tui_managed,
+        download_speed,
     })
 }
 
