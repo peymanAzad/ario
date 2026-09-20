@@ -1,7 +1,7 @@
 use crate::aria2::Aria2AddMode;
 use crate::db::{DownloadArtifact, DownloadArtifactKind};
+use crate::error::AppError;
 use crate::state::AppState;
-use crate::{error::AppError, live_status::LiveStats};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -44,27 +44,26 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn merge_live(state: &AppState, download: Download) -> DownloadLiveStatus {
-    let live = state
-        .live_status
-        .read()
-        .await
-        .get(&download.id)
-        .copied()
-        .unwrap_or(LiveStats {
-            completed_length: 0,
-            download_speed: 0,
-        });
+    let live = state.live_status.read().await.get(&download.id).copied();
+    let completed_length = match live {
+        Some(stats) => crate::live_status::coalesce_completed_length(
+            stats.completed_length,
+            download.completed_length,
+        ),
+        None => download.completed_length.unwrap_or(0),
+    };
+    let download_speed = live.map(|stats| stats.download_speed).unwrap_or(0);
 
-    let eta_seconds = match (download.size, live.download_speed) {
-        (Some(total), speed) if speed > 0 && total > live.completed_length => {
-            Some((total - live.completed_length) / speed)
+    let eta_seconds = match (download.size, download_speed) {
+        (Some(total), speed) if speed > 0 && total > completed_length => {
+            Some((total - completed_length) / speed)
         }
         _ => None,
     };
 
     DownloadLiveStatus {
-        completed_length: live.completed_length,
-        download_speed: live.download_speed,
+        completed_length,
+        download_speed,
         eta_seconds,
         download,
     }
@@ -167,6 +166,7 @@ async fn add_downloads(
             paused_by_scheduler: false,
             manually_started: false,
             size: None,
+            completed_length: None,
             queue_id: queue.id,
             position_in_queue: next_position,
             finetune: finetune.clone(),
@@ -574,6 +574,7 @@ async fn resume_download(
             DownloadStatus::Completed => {
                 readd_in_aria2(&state, &download, Aria2AddMode::Restart).await?;
                 state.db.clear_completed_at(id)?;
+                state.db.update_download_completed_length(id, 0)?;
             }
             _ => match download.aria2_gid {
                 Some(gid) => {
@@ -666,6 +667,7 @@ mod delete_files_tests {
             paused_by_scheduler: false,
             manually_started: false,
             size: None,
+            completed_length: None,
             queue_id: 1,
             position_in_queue: 0,
             finetune: FineTune::default(),
@@ -798,5 +800,103 @@ mod delete_files_tests {
         assert!(state.db.get_download(download.id).unwrap().is_none());
         fs::remove_file(&coincidental_file).unwrap();
         fs::remove_dir(&dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod merge_live_tests {
+    use super::*;
+    use crate::{aria2::Aria2Client, config::ServerConfig, db::Database, live_status::LiveStats};
+    use common::finetune::FineTune;
+
+    fn state() -> AppState {
+        AppState::new(
+            Database::open(":memory:").unwrap(),
+            Aria2Client::new("http://127.0.0.1:1/jsonrpc", None),
+            ServerConfig::default(),
+            false,
+        )
+    }
+
+    fn insert_download(state: &AppState, completed_length: Option<u64>) -> Download {
+        let mut download = Download {
+            id: 0,
+            aria2_gid: None,
+            url: "https://example.test/file.bin".into(),
+            filename: Some("file.bin".into()),
+            destination_path: "/tmp".into(),
+            source_type: SourceType::Http,
+            category: FileCategory::Other,
+            status: DownloadStatus::Paused,
+            paused_by_scheduler: false,
+            manually_started: false,
+            size: Some(100),
+            completed_length,
+            queue_id: 1,
+            position_in_queue: 0,
+            finetune: FineTune::default(),
+            created_at: Utc::now(),
+            started_at: None,
+            completed_at: None,
+        };
+        download.id = state.db.insert_download(&download).unwrap();
+        download
+    }
+
+    #[tokio::test]
+    async fn empty_live_map_uses_persisted_completed_length() {
+        let state = state();
+        let download = insert_download(&state, Some(42));
+        let download = state.db.get_download(download.id).unwrap().unwrap();
+
+        let live = merge_live(&state, download).await;
+        assert_eq!(live.completed_length, 42);
+        assert_eq!(live.download_speed, 0);
+        assert_eq!(live.eta_seconds, None);
+    }
+
+    #[tokio::test]
+    async fn live_map_overrides_persisted_completed_length() {
+        let state = state();
+        let download = insert_download(&state, Some(42));
+        state.live_status.write().await.insert(
+            download.id,
+            LiveStats {
+                completed_length: 80,
+                download_speed: 10,
+            },
+        );
+
+        let live = merge_live(&state, download).await;
+        assert_eq!(live.completed_length, 80);
+        assert_eq!(live.download_speed, 10);
+        assert_eq!(live.eta_seconds, Some(2));
+    }
+
+    #[tokio::test]
+    async fn missing_live_and_persisted_progress_defaults_to_zero() {
+        let state = state();
+        let download = insert_download(&state, None);
+
+        let live = merge_live(&state, download).await;
+        assert_eq!(live.completed_length, 0);
+        assert_eq!(live.download_speed, 0);
+    }
+
+    #[tokio::test]
+    async fn live_zero_does_not_clobber_persisted_completed_length() {
+        let state = state();
+        let download = insert_download(&state, Some(42));
+        state.live_status.write().await.insert(
+            download.id,
+            LiveStats {
+                completed_length: 0,
+                download_speed: 0,
+            },
+        );
+
+        let live = merge_live(&state, download).await;
+        assert_eq!(live.completed_length, 42);
+        assert_eq!(live.download_speed, 0);
     }
 }

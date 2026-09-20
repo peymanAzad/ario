@@ -54,7 +54,10 @@ pub async fn run(state: AppState) {
                             );
                         }
                     }
-                    let completed_length: u64 = status.completed_length.parse().unwrap_or(0);
+                    let completed_length = crate::live_status::coalesce_completed_length(
+                        status.completed_length.parse().unwrap_or(0),
+                        download.completed_length,
+                    );
                     let total_length: u64 = status.total_length.parse().unwrap_or(0);
                     let download_speed: u64 = status.download_speed.parse().unwrap_or(0);
 
@@ -65,6 +68,17 @@ pub async fn run(state: AppState) {
                             download_speed,
                         },
                     );
+
+                    if download.completed_length != Some(completed_length)
+                        && let Err(error) = state
+                            .db
+                            .update_download_completed_length(download.id, completed_length)
+                    {
+                        eprintln!(
+                            "poller: failed to persist completed_length for download {}: {error}",
+                            download.id
+                        );
+                    }
 
                     if let Some(file) = status.files.first() {
                         if !file.path.is_empty() {

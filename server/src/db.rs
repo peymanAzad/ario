@@ -133,9 +133,9 @@ impl Database {
         conn.execute(
             "INSERT INTO downloads (aria2_gid, url, filename, destination_path, source_type,
                                      category, status, status_error, paused_by_scheduler, manually_started,
-                                     size, queue_id, position_in_queue, finetune, created_at, started_at,
-                                     completed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                                     size, completed_length, queue_id, position_in_queue, finetune, created_at,
+                                     started_at, completed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 d.aria2_gid,
                 d.url,
@@ -148,6 +148,7 @@ impl Database {
                 d.paused_by_scheduler as i64,
                 d.manually_started as i64,
                 d.size.map(|v| v as i64),
+                d.completed_length.map(|v| v as i64),
                 d.queue_id,
                 d.position_in_queue,
                 finetune_json,
@@ -243,6 +244,19 @@ impl Database {
                 category_to_str(category),
                 id
             ],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_download_completed_length(
+        &self,
+        id: i64,
+        completed_length: u64,
+    ) -> SqlResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE downloads SET completed_length = ?1 WHERE id = ?2",
+            params![completed_length as i64, id],
         )?;
         Ok(())
     }
@@ -537,6 +551,21 @@ fn run_migrations(conn: &Connection) -> SqlResult<()> {
         )?;
     }
 
+    let has_completed_length: bool = conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM pragma_table_info('downloads') WHERE name = 'completed_length'
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+
+    if has_downloads_table && !has_completed_length {
+        conn.execute(
+            "ALTER TABLE downloads ADD COLUMN completed_length INTEGER",
+            [],
+        )?;
+    }
+
     Ok(())
 }
 
@@ -634,6 +663,9 @@ fn row_to_download(row: &Row) -> SqlResult<Download> {
         paused_by_scheduler: row.get::<_, i64>("paused_by_scheduler")? != 0,
         manually_started: row.get::<_, i64>("manually_started")? != 0,
         size: row.get::<_, Option<i64>>("size")?.map(|v| v as u64),
+        completed_length: row
+            .get::<_, Option<i64>>("completed_length")?
+            .map(|v| v as u64),
         queue_id: row.get("queue_id")?,
         position_in_queue: row.get("position_in_queue")?,
         finetune,
@@ -849,5 +881,59 @@ mod tests {
 
         db.delete_download(id).unwrap();
         assert!(db.list_download_artifacts(id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn completed_length_round_trips() {
+        let db = Database::open(":memory:").unwrap();
+        let id = insert_download_with_status(&db, 1, "Active");
+        assert_eq!(db.get_download(id).unwrap().unwrap().completed_length, None);
+
+        db.update_download_completed_length(id, 42).unwrap();
+        assert_eq!(
+            db.get_download(id).unwrap().unwrap().completed_length,
+            Some(42)
+        );
+
+        db.update_download_completed_length(id, 42).unwrap();
+        assert_eq!(
+            db.get_download(id).unwrap().unwrap().completed_length,
+            Some(42)
+        );
+
+        db.update_download_completed_length(id, 80).unwrap();
+        assert_eq!(
+            db.get_download(id).unwrap().unwrap().completed_length,
+            Some(80)
+        );
+    }
+
+    #[test]
+    fn completed_length_migration_is_idempotent_and_nullable() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE queues (
+                 id INTEGER PRIMARY KEY,
+                 name TEXT NOT NULL
+             );
+             CREATE TABLE downloads (
+                 id INTEGER PRIMARY KEY,
+                 url TEXT NOT NULL
+             );
+             INSERT INTO downloads (id, url) VALUES (1, 'https://example.test/file');",
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+
+        let completed_length: Option<i64> = conn
+            .query_row(
+                "SELECT completed_length FROM downloads WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(completed_length, None);
     }
 }
