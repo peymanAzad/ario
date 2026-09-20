@@ -5,15 +5,21 @@ use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
+    symbols,
     text::{Line, Span},
     widgets::{Paragraph, RenderDirection, Sparkline},
 };
 
 const SPEED_LABEL_WIDTH: u16 = 12;
+const SPARKLINE_BARS: symbols::bar::Set = symbols::bar::Set {
+    empty: "▁",
+    ..symbols::bar::NINE_LEVELS
+};
 
 pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
-    let show_sparkline = app.icons.glyph_mode() != GlyphMode::Ascii;
+    let show_speed_cluster = has_download_activity(app);
+    let show_sparkline = show_speed_cluster && app.icons.glyph_mode() != GlyphMode::Ascii;
     let chunks = if show_sparkline {
         Layout::default()
             .direction(Direction::Horizontal)
@@ -23,10 +29,15 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                 Constraint::Length(SPEED_LABEL_WIDTH),
             ])
             .split(area)
-    } else {
+    } else if show_speed_cluster {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Min(0), Constraint::Length(SPEED_LABEL_WIDTH)])
+            .split(area)
+    } else {
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(0)])
             .split(area)
     };
 
@@ -91,6 +102,10 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
 
     f.render_widget(Paragraph::new(Line::from(spans)), chunks[0]);
 
+    if !show_speed_cluster {
+        return;
+    }
+
     let speed_label = Paragraph::new(format!(
         "{}/s",
         super::format_bytes(app.total_download_speed)
@@ -102,6 +117,8 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         let sparkline = Sparkline::default()
             .data(sparkline_bars(app.speed_history.iter().copied()))
             .max(sparkline_max(app.speed_history.iter().copied()))
+            .bar_set(SPARKLINE_BARS)
+            .absent_value_symbol("▁")
             .direction(RenderDirection::LeftToRight)
             .style(theme.accent);
         f.render_widget(sparkline, chunks[1]);
@@ -109,6 +126,10 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     } else {
         f.render_widget(speed_label, chunks[1]);
     }
+}
+
+fn has_download_activity(app: &App) -> bool {
+    app.total_download_speed > 0 || app.speed_history.iter().any(|&speed| speed > 0)
 }
 
 fn sparkline_bars(history: impl IntoIterator<Item = u64>) -> Vec<Option<u64>> {
@@ -267,7 +288,20 @@ mod tests {
         assert!(rendered.contains("server: up"));
         assert!(rendered.contains("aria2: down"));
         assert!(!rendered.contains("connected"));
-        assert!(rendered.contains("0.0 B/s"));
+        assert!(!rendered.contains("0.0 B/s"));
+        assert!(!rendered.contains("▁"));
+        assert!(!rendered.contains("█"));
+    }
+
+    #[test]
+    fn idle_status_bar_hides_speed_cluster_so_errors_use_the_full_width() {
+        let mut app = app_with_glyphs(true, GlyphMode::Unicode);
+        app.apply_lifecycle(LifecycleState::Connected);
+        app.last_error = Some("can't reach server: connection refused".into());
+        app.speed_history.extend([0, 0, 0]);
+        let rendered = rendered_status_bar(&app);
+        assert!(rendered.contains("can't reach server: connection refused"));
+        assert!(!rendered.contains("0.0 B/s"));
         assert!(!rendered.contains("▁"));
         assert!(!rendered.contains("█"));
     }
@@ -290,6 +324,15 @@ mod tests {
                 || rendered.contains("▇")
                 || rendered.contains("█")
         );
+    }
+
+    #[test]
+    fn zero_speed_samples_draw_a_baseline() {
+        let mut app = app_with_glyphs(true, GlyphMode::Unicode);
+        app.apply_lifecycle(LifecycleState::Connected);
+        app.speed_history.extend([100, 0]);
+        let rendered = rendered_status_bar(&app);
+        assert!(rendered.contains("▁"));
     }
 
     #[test]
