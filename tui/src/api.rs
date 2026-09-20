@@ -20,6 +20,8 @@ pub struct HealthResponse {
     pub aria2_reachable: bool,
     #[serde(default)]
     pub tui_managed: bool,
+    #[serde(default)]
+    pub download_speed: u64,
 }
 
 fn client() -> reqwest::blocking::Client {
