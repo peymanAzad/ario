@@ -184,6 +184,7 @@ mod tests {
                 paused_by_scheduler: false,
                 manually_started: false,
                 size: None,
+                completed_length: None,
                 queue_id: 1,
                 position_in_queue: 0,
                 finetune: FineTune::default(),

@@ -213,6 +213,7 @@ mod tests {
                 paused_by_scheduler: false,
                 manually_started: false,
                 size: Some(100),
+                completed_length: Some(50),
                 queue_id: 1,
                 position_in_queue: 0,
                 finetune: FineTune::default(),

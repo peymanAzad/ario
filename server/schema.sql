@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS downloads (
     manually_started    INTEGER NOT NULL DEFAULT 0, -- user-started item bypasses queue pause/schedule until terminal
 
     size                INTEGER,                   -- bytes; NULL until aria2 reports it
+    completed_length    INTEGER,                   -- last-known bytes completed; NULL until aria2 reports it
 
     queue_id            INTEGER NOT NULL REFERENCES queues(id) ON DELETE CASCADE,
     position_in_queue   INTEGER NOT NULL DEFAULT 0,

@@ -22,6 +22,9 @@ pub struct Download {
     /// independently of its containing queue.
     pub manually_started: bool,
     pub size: Option<u64>,
+    /// Last-known bytes completed; `None` until aria2 has reported progress.
+    #[serde(default)]
+    pub completed_length: Option<u64>,
     pub queue_id: i64,
     pub position_in_queue: i32,
     pub finetune: FineTune,
