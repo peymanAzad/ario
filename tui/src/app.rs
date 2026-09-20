@@ -7,7 +7,12 @@ pub mod help_modal;
 pub mod queue_list;
 pub mod queue_modal;
 
-use std::{collections::VecDeque, sync::mpsc::Sender, thread};
+use std::{
+    collections::VecDeque,
+    sync::mpsc::Sender,
+    thread,
+    time::{Duration, Instant},
+};
 
 use crate::app::clipboard_import_modal::ClipboardImportModal;
 use crate::app::confirmation_modal::ConfirmationModal;
@@ -86,7 +91,8 @@ impl Focus {
     }
 }
 
-pub const SPEED_HISTORY_LEN: usize = 16;
+pub const SPEED_HISTORY_LEN: usize = 15;
+pub(crate) const SPEED_SAMPLE_INTERVAL: Duration = Duration::from_secs(2);
 
 pub const ALL_CATEGORIES: [FileCategory; 6] = [
     FileCategory::Video,
@@ -138,6 +144,7 @@ pub struct App {
     refresh_in_flight: bool,
     lifecycle_revision: u64,
     pending_confirmation_action: Option<PendingConfirmationAction>,
+    last_speed_sample_at: Option<Instant>,
 }
 
 impl App {
@@ -175,6 +182,7 @@ impl App {
             refresh_in_flight: false,
             lifecycle_revision: 0,
             pending_confirmation_action: None,
+            last_speed_sample_at: None,
             toasts: ToastStack::new(),
         }
     }
@@ -308,12 +316,20 @@ impl App {
         self.aria2_reachable = aria2_reachable;
         self.total_download_speed = download_speed;
         if server_reachable {
-            self.push_speed_sample(download_speed);
+            if self.should_record_speed_sample() {
+                self.push_speed_sample(download_speed);
+                self.last_speed_sample_at = Some(Instant::now());
+            }
             self.apply_lifecycle(LifecycleState::Connected);
         }
     }
 
-    fn push_speed_sample(&mut self, speed: u64) {
+    fn should_record_speed_sample(&self) -> bool {
+        self.last_speed_sample_at
+            .is_none_or(|at| at.elapsed() >= SPEED_SAMPLE_INTERVAL)
+    }
+
+    pub(crate) fn push_speed_sample(&mut self, speed: u64) {
         if self.speed_history.len() == SPEED_HISTORY_LEN {
             self.speed_history.pop_front();
         }
@@ -436,6 +452,7 @@ mod tests {
     use super::*;
     use common::download::DeleteDownloadFilesResult;
     use std::sync::mpsc;
+    use std::time::Instant;
 
     fn app() -> App {
         let (sender, _receiver) = mpsc::channel();
@@ -539,24 +556,33 @@ mod tests {
         assert_eq!(app.speed_history.iter().copied().collect::<Vec<_>>(), [100]);
 
         for speed in 1..=SPEED_HISTORY_LEN as u64 {
-            app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, speed, 0);
+            app.push_speed_sample(speed);
         }
         assert_eq!(app.speed_history.len(), SPEED_HISTORY_LEN);
         assert_eq!(app.speed_history.front(), Some(&1));
         assert_eq!(app.speed_history.back(), Some(&(SPEED_HISTORY_LEN as u64)));
-        app.apply_refresh(
-            Ok(vec![]),
-            Ok(vec![]),
-            true,
-            true,
-            SPEED_HISTORY_LEN as u64 + 1,
-            0,
-        );
+        app.push_speed_sample(SPEED_HISTORY_LEN as u64 + 1);
         assert_eq!(app.speed_history.len(), SPEED_HISTORY_LEN);
         assert_eq!(app.speed_history.front(), Some(&2));
         assert_eq!(
             app.speed_history.back(),
             Some(&(SPEED_HISTORY_LEN as u64 + 1))
+        );
+    }
+
+    #[test]
+    fn reachable_refresh_throttles_speed_samples() {
+        let mut app = app();
+        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 100, 0);
+        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 200, 0);
+        assert_eq!(app.total_download_speed, 200);
+        assert_eq!(app.speed_history.iter().copied().collect::<Vec<_>>(), [100]);
+
+        app.last_speed_sample_at = Some(Instant::now() - SPEED_SAMPLE_INTERVAL);
+        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 300, 0);
+        assert_eq!(
+            app.speed_history.iter().copied().collect::<Vec<_>>(),
+            [100, 300]
         );
     }
 }
