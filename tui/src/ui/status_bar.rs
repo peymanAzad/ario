@@ -100,7 +100,8 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
 
     if show_sparkline {
         let sparkline = Sparkline::default()
-            .data(app.speed_history.iter().copied())
+            .data(sparkline_bars(app.speed_history.iter().copied()))
+            .max(sparkline_max(app.speed_history.iter().copied()))
             .direction(RenderDirection::LeftToRight)
             .style(theme.accent);
         f.render_widget(sparkline, chunks[1]);
@@ -108,6 +109,23 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     } else {
         f.render_widget(speed_label, chunks[1]);
     }
+}
+
+fn sparkline_bars(history: impl IntoIterator<Item = u64>) -> Vec<Option<u64>> {
+    let samples: Vec<u64> = history.into_iter().collect();
+    let pad = SPEED_HISTORY_LEN.saturating_sub(samples.len());
+    std::iter::repeat_n(None, pad)
+        .chain(samples.into_iter().map(Some))
+        .collect()
+}
+
+fn sparkline_max(history: impl IntoIterator<Item = u64>) -> u64 {
+    history
+        .into_iter()
+        .max()
+        .unwrap_or(0)
+        .saturating_mul(2)
+        .max(1)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -272,5 +290,23 @@ mod tests {
                 || rendered.contains("▇")
                 || rendered.contains("█")
         );
+    }
+
+    #[test]
+    fn sparkline_bars_pad_on_the_left_so_newest_sits_on_the_right() {
+        let bars = sparkline_bars([1, 2]);
+        assert_eq!(bars.len(), SPEED_HISTORY_LEN);
+        assert!(bars.iter().take(SPEED_HISTORY_LEN - 2).all(Option::is_none));
+        assert_eq!(bars[SPEED_HISTORY_LEN - 2], Some(1));
+        assert_eq!(bars[SPEED_HISTORY_LEN - 1], Some(2));
+    }
+
+    #[test]
+    fn sparkline_max_uses_double_peak_with_a_floor_of_one() {
+        assert_eq!(sparkline_max(std::iter::empty()), 1);
+        assert_eq!(sparkline_max([0, 0, 0]), 1);
+        assert_eq!(sparkline_max([100]), 200);
+        assert_eq!(sparkline_max([10, 50, 25]), 100);
+        assert_eq!(sparkline_max([u64::MAX]), u64::MAX);
     }
 }
