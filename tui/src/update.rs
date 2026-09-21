@@ -237,9 +237,8 @@ fn handle_queue_modal_key(app: &mut App, key_event: KeyEvent) {
         KeyCode::Esc | KeyCode::Char('c') => app.cancel_queue_modal(),
         KeyCode::Tab => app.queue_modal_next_tab(),
         KeyCode::BackTab => app.queue_modal_prev_tab(),
-        // Enter: on the name field or a Once date field, starts text
-        // editing; everywhere else on the Common/Scheduler tabs it's
-        // unused, and on Download Items it's likewise a no-op.
+        // Enter starts text editing on the queue name. Scheduler values use
+        // left/right adjustment controls, and elsewhere Enter is a no-op.
         KeyCode::Enter => app.queue_modal_start_text_edit(),
         KeyCode::Char('s') => app.save_queue_modal(),
         // Reordering uses dedicated shifted keys rather than left/right,
@@ -400,6 +399,36 @@ mod tests {
         press(&mut app, KeyCode::Char('s'));
 
         assert!(app.queue_modal.is_none());
+    }
+
+    #[test]
+    fn one_time_schedule_uses_adjustable_date_and_time_fields() {
+        use chrono::Duration as ChronoDuration;
+
+        let mut app = test_app();
+        app.open_create_queue_modal();
+        let modal = app.queue_modal.as_mut().unwrap();
+        modal.tab = QueueModalTab::Scheduler;
+        modal.recurrence_kind = crate::app::queue_modal::RecurrenceKind::Once;
+        modal.scheduler_cursor = 2;
+
+        let start_date = modal.once_start_date;
+        press(&mut app, KeyCode::Right);
+        assert_eq!(
+            app.queue_modal.as_ref().unwrap().once_start_date,
+            start_date + ChronoDuration::days(1)
+        );
+
+        press(&mut app, KeyCode::Down);
+        let start_time = app.queue_modal.as_ref().unwrap().once_start_time;
+        press(&mut app, KeyCode::Right);
+        assert_eq!(
+            app.queue_modal.as_ref().unwrap().once_start_time,
+            start_time + ChronoDuration::minutes(5)
+        );
+
+        press(&mut app, KeyCode::Enter);
+        assert!(!app.queue_modal.as_ref().unwrap().editing_text);
     }
 
     #[test]

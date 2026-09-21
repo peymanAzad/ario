@@ -85,7 +85,7 @@ pub const KEYBINDINGS: &[KeybindingSection] = &[
             ("k / Up", "Select previous field or download item"),
             ("h / Left", "Decrease value or select previous weekday"),
             ("l / Right", "Increase value or select next weekday"),
-            ("Enter", "Edit queue name or a Once schedule date field"),
+            ("Enter", "Edit queue name"),
             (
                 "Space",
                 "Toggle highlighted weekday (Scheduler weekly days row)",
@@ -101,7 +101,7 @@ pub const KEYBINDINGS: &[KeybindingSection] = &[
     KeybindingSection {
         title: "Text Editing",
         bindings: &[
-            ("Characters", "Type queue name or Once schedule date"),
+            ("Characters", "Type queue name"),
             ("Backspace", "Delete last character"),
             ("Enter", "Accept text edit"),
             ("Esc", "Discard text edit and return to queue editor"),

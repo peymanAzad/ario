@@ -1,6 +1,9 @@
 use super::*;
 
-use chrono::{DateTime, Duration as ChronoDuration, NaiveTime, Utc, Weekday};
+use chrono::{
+    DateTime, Duration as ChronoDuration, Local, NaiveDate, NaiveTime, TimeZone, Timelike, Utc,
+    Weekday,
+};
 
 use crate::app::App;
 use common::{
@@ -88,11 +91,13 @@ pub struct QueueModal {
     pub weekly_days: [bool; 7],
     pub weekly_start: NaiveTime,
     pub weekly_end: NaiveTime,
-    /// Free-text RFC3339 datetime strings, parsed on Save — see
-    /// `queue_modal_confirm_text_edit`'s doc comment for why `Once` uses
-    /// text entry rather than a dedicated date/time widget.
-    pub once_start: String,
-    pub once_end: String,
+    /// One-time schedules use separate date and time controls. They are
+    /// interpreted in the same local timezone as weekly schedules, then
+    /// converted to UTC only when the request is built.
+    pub once_start_date: NaiveDate,
+    pub once_start_time: NaiveTime,
+    pub once_end_date: NaiveDate,
+    pub once_end_time: NaiveTime,
     pub run_missed_on_startup: bool,
     /// Which day is highlighted for toggling, within the days row (cursor
     /// position 2 when `recurrence_kind == Weekly`) — a sub-cursor scoped
@@ -100,11 +105,11 @@ pub struct QueueModal {
     pub day_cursor: usize,
     /// 0 = enabled toggle, 1 = recurrence kind toggle, then depends on
     /// `recurrence_kind`: Weekly -> [2: days, 3: start time, 4: end time,
-    /// 5: run_missed_on_startup]; Once -> [2: start text, 3: end text,
-    /// 4: run_missed_on_startup].
+    /// 5: run_missed_on_startup]; Once -> [2: start date, 3: start time,
+    /// 4: end date, 5: end time, 6: run_missed_on_startup].
     pub scheduler_cursor: usize,
 
-    // ---- Shared text-editing state (name field, Once start/end) ----
+    // ---- Name text-editing state ----
     pub editing_text: bool,
     pub text_buffer: String,
 
@@ -125,6 +130,8 @@ impl App {
             return;
         }
 
+        let (once_start_date, once_start_time, once_end_date, once_end_time) =
+            default_once_window();
         self.queue_modal = Some(QueueModal {
             mode: QueueModalMode::Create,
             tab: QueueModalTab::Common,
@@ -138,8 +145,10 @@ impl App {
             weekly_days: [false; 7],
             weekly_start: NaiveTime::from_hms_opt(2, 0, 0).unwrap(),
             weekly_end: NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
-            once_start: String::new(),
-            once_end: String::new(),
+            once_start_date,
+            once_start_time,
+            once_end_date,
+            once_end_time,
             run_missed_on_startup: false,
             day_cursor: 0,
             scheduler_cursor: 0,
@@ -162,37 +171,51 @@ impl App {
             return;
         };
 
-        let (recurrence_kind, weekly_days, weekly_start, weekly_end, once_start, once_end) =
-            match &queue.scheduler.recurrence {
-                Recurrence::Weekly {
-                    days,
-                    start_time,
-                    end_time,
-                } => {
-                    let mut wd = [false; 7];
-                    for d in days {
-                        if let Some(idx) = WEEKDAY_ORDER.iter().position(|w| w == d) {
-                            wd[idx] = true;
-                        }
+        let (default_start_date, default_start_time, default_end_date, default_end_time) =
+            default_once_window();
+        let (
+            recurrence_kind,
+            weekly_days,
+            weekly_start,
+            weekly_end,
+            once_start_date,
+            once_start_time,
+            once_end_date,
+            once_end_time,
+        ) = match &queue.scheduler.recurrence {
+            Recurrence::Weekly {
+                days,
+                start_time,
+                end_time,
+            } => {
+                let mut wd = [false; 7];
+                for d in days {
+                    if let Some(idx) = WEEKDAY_ORDER.iter().position(|w| w == d) {
+                        wd[idx] = true;
                     }
-                    (
-                        RecurrenceKind::Weekly,
-                        wd,
-                        *start_time,
-                        *end_time,
-                        String::new(),
-                        String::new(),
-                    )
                 }
-                Recurrence::Once { start, end } => (
-                    RecurrenceKind::Once,
-                    [false; 7],
-                    NaiveTime::from_hms_opt(2, 0, 0).unwrap(),
-                    NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
-                    start.to_rfc3339(),
-                    end.to_rfc3339(),
-                ),
-            };
+                (
+                    RecurrenceKind::Weekly,
+                    wd,
+                    *start_time,
+                    *end_time,
+                    default_start_date,
+                    default_start_time,
+                    default_end_date,
+                    default_end_time,
+                )
+            }
+            Recurrence::Once { start, end } => (
+                RecurrenceKind::Once,
+                [false; 7],
+                NaiveTime::from_hms_opt(2, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+                start.with_timezone(&Local).date_naive(),
+                start.with_timezone(&Local).time(),
+                end.with_timezone(&Local).date_naive(),
+                end.with_timezone(&Local).time(),
+            ),
+        };
 
         self.queue_modal = Some(QueueModal {
             mode: QueueModalMode::Edit { queue_id: queue.id },
@@ -207,8 +230,10 @@ impl App {
             weekly_days,
             weekly_start,
             weekly_end,
-            once_start,
-            once_end,
+            once_start_date,
+            once_start_time,
+            once_end_date,
+            once_end_time,
             run_missed_on_startup: queue.scheduler.run_missed_on_startup,
             day_cursor: 0,
             scheduler_cursor: 0,
@@ -280,14 +305,8 @@ impl App {
         }
     }
 
-    /// Enters text-edit mode for whichever field the cursor is currently on
-    /// — the name field (Common tab, cursor 0) or the Once start/end fields
-    /// (Scheduler tab, cursors 2/3 when `recurrence_kind == Once`). A
-    /// dedicated date/time picker widget would be nicer, but free-text
-    /// RFC3339 entry reuses the exact same edit mechanism as the name
-    /// field, which is a meaningfully smaller amount of new code for a v1 —
-    /// worth revisiting if hand-typing timestamps proves too fiddly in
-    /// practice.
+    /// Enters text-edit mode for the queue name. Scheduler values use
+    /// left/right adjustment controls instead of free-form text.
     pub fn queue_modal_start_text_edit(&mut self) {
         if let Some(m) = &mut self.queue_modal {
             let initial = match (
@@ -297,10 +316,6 @@ impl App {
                 m.recurrence_kind,
             ) {
                 (QueueModalTab::Common, 0, _, _) => Some(m.name.clone()),
-                (QueueModalTab::Scheduler, _, 2, RecurrenceKind::Once) => {
-                    Some(m.once_start.clone())
-                }
-                (QueueModalTab::Scheduler, _, 3, RecurrenceKind::Once) => Some(m.once_end.clone()),
                 _ => None,
             };
             if let Some(text) = initial {
@@ -338,12 +353,6 @@ impl App {
                 m.recurrence_kind,
             ) {
                 (QueueModalTab::Common, 0, _, _) => m.name = m.text_buffer.clone(),
-                (QueueModalTab::Scheduler, _, 2, RecurrenceKind::Once) => {
-                    m.once_start = m.text_buffer.clone()
-                }
-                (QueueModalTab::Scheduler, _, 3, RecurrenceKind::Once) => {
-                    m.once_end = m.text_buffer.clone()
-                }
                 _ => {}
             }
             m.editing_text = false;
@@ -363,7 +372,7 @@ impl App {
                 QueueModalTab::Scheduler => {
                     let max = match m.recurrence_kind {
                         RecurrenceKind::Weekly => 5,
-                        RecurrenceKind::Once => 4,
+                        RecurrenceKind::Once => 6,
                     };
                     m.scheduler_cursor = (m.scheduler_cursor + 1).min(max);
                 }
@@ -411,7 +420,12 @@ impl App {
                         m.recurrence_kind = match m.recurrence_kind {
                             RecurrenceKind::Once => RecurrenceKind::Weekly,
                             RecurrenceKind::Weekly => RecurrenceKind::Once,
-                        }
+                        };
+                        let max = match m.recurrence_kind {
+                            RecurrenceKind::Weekly => 5,
+                            RecurrenceKind::Once => 6,
+                        };
+                        m.scheduler_cursor = m.scheduler_cursor.min(max);
                     }
                     (2, RecurrenceKind::Weekly) => {
                         m.day_cursor = if forward {
@@ -429,8 +443,20 @@ impl App {
                     (5, RecurrenceKind::Weekly) => {
                         m.run_missed_on_startup = !m.run_missed_on_startup
                     }
-                    (4, RecurrenceKind::Once) => m.run_missed_on_startup = !m.run_missed_on_startup,
-                    _ => {} // Once's start/end (cursors 2/3) — handled via text-edit
+                    (2, RecurrenceKind::Once) => {
+                        m.once_start_date = adjust_date(m.once_start_date, forward)
+                    }
+                    (3, RecurrenceKind::Once) => {
+                        m.once_start_time = adjust_time(m.once_start_time, forward)
+                    }
+                    (4, RecurrenceKind::Once) => {
+                        m.once_end_date = adjust_date(m.once_end_date, forward)
+                    }
+                    (5, RecurrenceKind::Once) => {
+                        m.once_end_time = adjust_time(m.once_end_time, forward)
+                    }
+                    (6, RecurrenceKind::Once) => m.run_missed_on_startup = !m.run_missed_on_startup,
+                    _ => {}
                 },
                 QueueModalTab::DownloadItems => {}
             }
@@ -495,22 +521,8 @@ impl App {
                 })
             }
             RecurrenceKind::Once => {
-                let start = DateTime::parse_from_rfc3339(&m.once_start)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .map_err(|_| {
-                        format!(
-                            "start date {:?} isn't valid RFC3339 (e.g. \"2026-08-10T02:00:00Z\")",
-                            m.once_start
-                        )
-                    })?;
-                let end = DateTime::parse_from_rfc3339(&m.once_end)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .map_err(|_| {
-                        format!(
-                            "end date {:?} isn't valid RFC3339 (e.g. \"2026-08-10T06:00:00Z\")",
-                            m.once_end
-                        )
-                    })?;
+                let start = once_datetime(m.once_start_date, m.once_start_time, "start")?;
+                let end = once_datetime(m.once_end_date, m.once_end_time, "end")?;
                 Ok(Recurrence::Once { start, end })
             }
         }
@@ -604,4 +616,36 @@ fn adjust_time(time: NaiveTime, forward: bool) -> NaiveTime {
         ChronoDuration::minutes(-TIME_STEP_MIN)
     };
     time + delta
+}
+
+fn adjust_date(date: NaiveDate, forward: bool) -> NaiveDate {
+    let delta = ChronoDuration::days(if forward { 1 } else { -1 });
+    date.checked_add_signed(delta).unwrap_or(date)
+}
+
+fn once_datetime(
+    date: NaiveDate,
+    time: NaiveTime,
+    field_name: &str,
+) -> Result<DateTime<Utc>, String> {
+    Local
+        .from_local_datetime(&date.and_time(time))
+        .single()
+        .map(|datetime| datetime.with_timezone(&Utc))
+        .ok_or_else(|| format!("{field_name} date and time aren't valid in the local timezone"))
+}
+
+fn default_once_window() -> (NaiveDate, NaiveTime, NaiveDate, NaiveTime) {
+    let now = Local::now();
+    let remainder = now.minute() % TIME_STEP_MIN as u32;
+    let minutes_to_next_step = if remainder == 0 && now.second() == 0 {
+        0
+    } else {
+        TIME_STEP_MIN - i64::from(remainder)
+    };
+    let start = now + ChronoDuration::minutes(minutes_to_next_step);
+    let start_time = NaiveTime::from_hms_opt(start.hour(), start.minute(), 0).unwrap();
+    let start = start.date_naive().and_time(start_time);
+    let end = start + ChronoDuration::hours(4);
+    (start.date(), start.time(), end.date(), end.time())
 }
