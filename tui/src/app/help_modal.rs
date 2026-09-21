@@ -94,7 +94,7 @@ pub const KEYBINDINGS: &[KeybindingSection] = &[
                 "J / K",
                 "Move selected download item down / up (Download Items tab)",
             ),
-            ("s", "Save queue (Common or Scheduler tab)"),
+            ("s", "Save queue"),
             ("c / Esc", "Cancel queue editing"),
         ],
     },

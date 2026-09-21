@@ -116,6 +116,7 @@ pub enum SortField {
     CreatedAt,
     Size,
     Name,
+    QueuePosition,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
