@@ -10,7 +10,6 @@ use ratatui::{
     widgets::{Paragraph, RenderDirection, Sparkline},
 };
 
-const SPEED_LABEL_WIDTH: u16 = 12;
 const SPARKLINE_BARS: symbols::bar::Set = symbols::bar::Set {
     empty: "▁",
     ..symbols::bar::NINE_LEVELS
@@ -20,19 +19,21 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
     let show_speed_cluster = has_download_activity(app);
     let show_sparkline = show_speed_cluster && app.icons.glyph_mode() != GlyphMode::Ascii;
+    let speed_label_text = format!("{}/s ", super::format_bytes(app.total_download_speed));
+    let speed_label_width = speed_label_text.len() as u16 + u16::from(show_sparkline);
     let chunks = if show_sparkline {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
                 Constraint::Min(0),
                 Constraint::Length(SPEED_HISTORY_LEN as u16),
-                Constraint::Length(SPEED_LABEL_WIDTH),
+                Constraint::Length(speed_label_width),
             ])
             .split(area)
     } else if show_speed_cluster {
         Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(0), Constraint::Length(SPEED_LABEL_WIDTH)])
+            .constraints([Constraint::Min(0), Constraint::Length(speed_label_width)])
             .split(area)
     } else {
         Layout::default()
@@ -106,12 +107,9 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let speed_label = Paragraph::new(format!(
-        "{}/s",
-        super::format_bytes(app.total_download_speed)
-    ))
-    .style(Style::default().fg(theme.accent))
-    .right_aligned();
+    let speed_label = Paragraph::new(speed_label_text)
+        .style(Style::default().fg(theme.accent))
+        .right_aligned();
 
     if show_sparkline {
         let sparkline = Sparkline::default()
@@ -314,6 +312,11 @@ mod tests {
         app.speed_history.extend([1, 2, 4, 8, 16, 12, 10, 14]);
         let rendered = rendered_status_bar(&app);
         assert!(rendered.contains("1.0 KB/s"));
+        let label_start = rendered.find("1.0 KB/s").unwrap();
+        let preceding: Vec<char> = rendered[..label_start].chars().rev().take(2).collect();
+        assert_eq!(preceding[0], ' ');
+        assert_ne!(preceding[1], ' ');
+        assert!(rendered.ends_with("1.0 KB/s "));
         assert!(
             rendered.contains("▁")
                 || rendered.contains("▂")
