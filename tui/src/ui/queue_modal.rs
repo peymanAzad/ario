@@ -298,29 +298,40 @@ fn draw_weekly_fields(f: &mut Frame, theme: &crate::theme::Theme, modal: &QueueM
 }
 
 fn draw_once_fields(f: &mut Frame, theme: &crate::theme::Theme, modal: &QueueModal, area: Rect) {
-    let start_display = if modal.editing_text && modal.scheduler_cursor == 2 {
-        format!("{}▏", modal.text_buffer)
-    } else {
-        modal.once_start.clone()
-    };
-    let end_display = if modal.editing_text && modal.scheduler_cursor == 3 {
-        format!("{}▏", modal.text_buffer)
-    } else {
-        modal.once_end.clone()
-    };
-
-    let start_style = field_style(theme, modal.scheduler_cursor == 2);
-    let end_style = field_style(theme, modal.scheduler_cursor == 3);
-    let run_missed_style = field_style(theme, modal.scheduler_cursor == 4);
+    let start_date_style = field_style(theme, modal.scheduler_cursor == 2);
+    let start_time_style = field_style(theme, modal.scheduler_cursor == 3);
+    let end_date_style = field_style(theme, modal.scheduler_cursor == 4);
+    let end_time_style = field_style(theme, modal.scheduler_cursor == 5);
+    let run_missed_style = field_style(theme, modal.scheduler_cursor == 6);
 
     let lines = vec![
         Line::from(Span::styled(
-            format!("Start (RFC3339)        {start_display}"),
-            start_style,
+            format!(
+                "Start date            ◀ {} ▶",
+                modal.once_start_date.format("%Y-%m-%d")
+            ),
+            start_date_style,
         )),
         Line::from(Span::styled(
-            format!("End (RFC3339)          {end_display}"),
-            end_style,
+            format!(
+                "Start time            ◀ {} ▶",
+                modal.once_start_time.format("%H:%M")
+            ),
+            start_time_style,
+        )),
+        Line::from(Span::styled(
+            format!(
+                "End date              ◀ {} ▶",
+                modal.once_end_date.format("%Y-%m-%d")
+            ),
+            end_date_style,
+        )),
+        Line::from(Span::styled(
+            format!(
+                "End time              ◀ {} ▶",
+                modal.once_end_time.format("%H:%M")
+            ),
+            end_time_style,
         )),
         Line::from(""),
         Line::from(Span::styled(
@@ -340,7 +351,7 @@ fn draw_once_fields(f: &mut Frame, theme: &crate::theme::Theme, modal: &QueueMod
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border))
         .title(Span::styled(
-            " j/k: field   Enter: edit date   h/l: adjust ",
+            " j/k: field   h/l: adjust date or time ",
             Style::default().fg(theme.text_muted),
         ));
     let inner = block.inner(area);
