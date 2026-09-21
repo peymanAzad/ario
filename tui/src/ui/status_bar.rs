@@ -19,7 +19,7 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
     let show_speed_cluster = has_download_activity(app);
     let show_sparkline = show_speed_cluster && app.icons.glyph_mode() != GlyphMode::Ascii;
-    let speed_label_text = format!("{}/s ", super::format_bytes(app.total_download_speed));
+    let speed_label_text = format!("{}/s ", super::format_bytes(app.displayed_download_speed()));
     let speed_label_width = speed_label_text.len() as u16 + u16::from(show_sparkline);
     let chunks = if show_sparkline {
         Layout::default()
@@ -114,9 +114,9 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     if show_sparkline {
         let sparkline = Sparkline::default()
             .data(sparkline_bars(app.speed_history.iter().copied()))
-            .max(sparkline_max(app.speed_history.iter().copied()))
+            .max(app.speed_chart_max())
             .bar_set(SPARKLINE_BARS)
-            .absent_value_symbol("▁")
+            .absent_value_symbol(" ")
             .direction(RenderDirection::LeftToRight)
             .style(theme.accent);
         f.render_widget(sparkline, chunks[1]);
@@ -136,15 +136,6 @@ fn sparkline_bars(history: impl IntoIterator<Item = u64>) -> Vec<Option<u64>> {
     std::iter::repeat_n(None, pad)
         .chain(samples.into_iter().map(Some))
         .collect()
-}
-
-fn sparkline_max(history: impl IntoIterator<Item = u64>) -> u64 {
-    history
-        .into_iter()
-        .max()
-        .unwrap_or(0)
-        .saturating_mul(2)
-        .max(1)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -348,11 +339,12 @@ mod tests {
     }
 
     #[test]
-    fn sparkline_max_uses_double_peak_with_a_floor_of_one() {
-        assert_eq!(sparkline_max(std::iter::empty()), 1);
-        assert_eq!(sparkline_max([0, 0, 0]), 1);
-        assert_eq!(sparkline_max([100]), 200);
-        assert_eq!(sparkline_max([10, 50, 25]), 100);
-        assert_eq!(sparkline_max([u64::MAX]), u64::MAX);
+    fn unsampled_history_is_blank_while_zero_samples_draw_a_baseline() {
+        let mut app = app_with_glyphs(true, GlyphMode::Unicode);
+        app.total_download_speed = 100;
+        app.speed_history.push_back(0);
+        let rendered = rendered_status_bar(&app);
+        let graph_start = rendered.find('▁').unwrap();
+        assert!(rendered[..graph_start].ends_with("              "));
     }
 }

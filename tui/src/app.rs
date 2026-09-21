@@ -94,6 +94,12 @@ impl Focus {
 pub const SPEED_HISTORY_LEN: usize = 15;
 pub(crate) const SPEED_SAMPLE_INTERVAL: Duration = Duration::from_secs(2);
 
+fn speed_scale_target(history: impl IntoIterator<Item = u64>) -> u64 {
+    let peak = history.into_iter().max().unwrap_or(0);
+    let headroom = peak / 5 + u64::from(peak % 5 != 0);
+    peak.saturating_add(headroom).max(1)
+}
+
 pub const ALL_CATEGORIES: [FileCategory; 6] = [
     FileCategory::Video,
     FileCategory::Music,
@@ -127,6 +133,8 @@ pub struct App {
     pub aria2_reachable: bool,
     pub total_download_speed: u64,
     pub speed_history: VecDeque<u64>,
+    smoothed_download_speed: Option<u64>,
+    speed_chart_max: u64,
     pub lifecycle: LifecycleState,
     pub last_error: Option<String>,
     pub should_quit: bool,
@@ -167,6 +175,8 @@ impl App {
             aria2_reachable: false,
             total_download_speed: 0,
             speed_history: VecDeque::new(),
+            smoothed_download_speed: None,
+            speed_chart_max: 1,
             lifecycle: LifecycleState::Starting,
             last_error: None,
             should_quit: false,
@@ -316,11 +326,19 @@ impl App {
         self.aria2_reachable = aria2_reachable;
         self.total_download_speed = download_speed;
         if server_reachable {
+            self.smoothed_download_speed = Some(
+                self.smoothed_download_speed
+                    .map_or(download_speed, |previous| {
+                        ((u128::from(previous) * 3 + u128::from(download_speed)) / 4) as u64
+                    }),
+            );
             if self.should_record_speed_sample() {
                 self.push_speed_sample(download_speed);
                 self.last_speed_sample_at = Some(Instant::now());
             }
             self.apply_lifecycle(LifecycleState::Connected);
+        } else {
+            self.smoothed_download_speed = None;
         }
     }
 
@@ -334,6 +352,24 @@ impl App {
             self.speed_history.pop_front();
         }
         self.speed_history.push_back(speed);
+
+        let target = speed_scale_target(self.speed_history.iter().copied());
+        self.speed_chart_max = if target >= self.speed_chart_max {
+            target
+        } else {
+            let decay = self.speed_chart_max / 10 + u64::from(self.speed_chart_max % 10 != 0);
+            self.speed_chart_max.saturating_sub(decay).max(target)
+        };
+    }
+
+    pub(crate) fn displayed_download_speed(&self) -> u64 {
+        self.smoothed_download_speed
+            .unwrap_or(self.total_download_speed)
+    }
+
+    pub(crate) fn speed_chart_max(&self) -> u64 {
+        self.speed_chart_max
+            .max(speed_scale_target(self.speed_history.iter().copied()))
     }
 
     pub fn apply_lifecycle(&mut self, state: LifecycleState) {
@@ -576,13 +612,34 @@ mod tests {
         app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 100, 0);
         app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 200, 0);
         assert_eq!(app.total_download_speed, 200);
+        assert_eq!(app.displayed_download_speed(), 125);
         assert_eq!(app.speed_history.iter().copied().collect::<Vec<_>>(), [100]);
 
         app.last_speed_sample_at = Some(Instant::now() - SPEED_SAMPLE_INTERVAL);
         app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 300, 0);
+        assert_eq!(app.displayed_download_speed(), 168);
         assert_eq!(
             app.speed_history.iter().copied().collect::<Vec<_>>(),
             [100, 300]
         );
+    }
+
+    #[test]
+    fn speed_chart_uses_twenty_percent_headroom_and_decays_gradually() {
+        assert_eq!(speed_scale_target(std::iter::empty()), 1);
+        assert_eq!(speed_scale_target([1]), 2);
+        assert_eq!(speed_scale_target([100]), 120);
+        assert_eq!(speed_scale_target([u64::MAX]), u64::MAX);
+
+        let mut app = app();
+        app.push_speed_sample(100);
+        assert_eq!(app.speed_chart_max(), 120);
+
+        app.speed_history.clear();
+        app.push_speed_sample(0);
+        assert_eq!(app.speed_chart_max(), 108);
+        app.speed_history.clear();
+        app.push_speed_sample(0);
+        assert_eq!(app.speed_chart_max(), 97);
     }
 }
