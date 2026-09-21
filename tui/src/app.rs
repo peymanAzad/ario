@@ -39,7 +39,11 @@ pub enum AppEvent {
         download_speed: u64,
         lifecycle_revision: u64,
     },
-    QueueDownloadsLoaded(anyhow::Result<Vec<DownloadLiveStatus>>),
+    QueueDownloadsLoaded {
+        queue_id: i64,
+        result: anyhow::Result<Vec<DownloadLiveStatus>>,
+    },
+    QueueSaved(anyhow::Result<()>),
     Toast {
         message: String,
         level: ToastLevel,

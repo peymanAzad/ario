@@ -241,7 +241,7 @@ fn handle_queue_modal_key(app: &mut App, key_event: KeyEvent) {
         // editing; everywhere else on the Common/Scheduler tabs it's
         // unused, and on Download Items it's likewise a no-op.
         KeyCode::Enter => app.queue_modal_start_text_edit(),
-        KeyCode::Char('s') if !on_items_tab => app.save_queue_modal(),
+        KeyCode::Char('s') => app.save_queue_modal(),
         // Reordering uses dedicated shifted keys rather than left/right,
         // since left/right has no natural meaning for moving an item up
         // or down a vertical list.
@@ -386,6 +386,20 @@ mod tests {
         app.open_help_modal();
         assert!(app.help_modal.is_none());
         assert!(app.confirmation_modal.is_some());
+    }
+
+    #[test]
+    fn queue_editor_can_save_from_download_items_tab() {
+        let mut app = test_app();
+        app.open_create_queue_modal();
+        let modal = app.queue_modal.as_mut().unwrap();
+        modal.mode = crate::app::queue_modal::QueueModalMode::Edit { queue_id: 1 };
+        modal.tab = QueueModalTab::DownloadItems;
+        modal.name = "Queue".into();
+
+        press(&mut app, KeyCode::Char('s'));
+
+        assert!(app.queue_modal.is_none());
     }
 
     #[test]

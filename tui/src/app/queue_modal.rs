@@ -5,7 +5,7 @@ use chrono::{DateTime, Duration as ChronoDuration, NaiveTime, Utc, Weekday};
 use crate::app::App;
 use common::{
     download::Download,
-    enums::Recurrence,
+    enums::{Recurrence, SortField},
     queue::{CreateQueueRequest, UpdateQueueRequest},
 };
 
@@ -228,12 +228,15 @@ impl App {
             queue_id: Some(queue.id),
             category: None,
             status: None,
-            sort_by: None,
+            sort_by: Some(SortField::QueuePosition),
             sort_desc: false,
         };
         thread::spawn(move || {
             let result = api::list_downloads(&api_base, &filter);
-            let _ = sender.send(Event::App(AppEvent::QueueDownloadsLoaded(result)));
+            let _ = sender.send(Event::App(AppEvent::QueueDownloadsLoaded {
+                queue_id: queue.id,
+                result,
+            }));
         });
     }
 
@@ -242,11 +245,23 @@ impl App {
     /// cancelled before this arrived, there's nothing to populate.
     pub fn apply_queue_downloads_loaded(
         &mut self,
+        queue_id: i64,
         result: anyhow::Result<Vec<DownloadLiveStatus>>,
     ) {
-        if let (Some(modal), Ok(list)) = (&mut self.queue_modal, result) {
+        let modal_matches_queue = matches!(
+            self.queue_modal.as_ref().map(|modal| modal.mode),
+            Some(QueueModalMode::Edit { queue_id: open_queue_id }) if open_queue_id == queue_id
+        );
+        if modal_matches_queue && let (Some(modal), Ok(list)) = (&mut self.queue_modal, result) {
             modal.items = list.into_iter().map(|d| d.download).collect();
         }
+    }
+
+    pub fn apply_queue_saved(&mut self, result: anyhow::Result<()>) {
+        if let Err(error) = result {
+            self.apply_toast(error.to_string(), ToastLevel::Error);
+        }
+        self.refresh();
     }
 
     pub fn cancel_queue_modal(&mut self) {
@@ -542,12 +557,8 @@ impl App {
                 };
                 let sender = self.event_sender.clone();
                 thread::spawn(move || {
-                    if let Err(e) = api::create_queue(&api_base, &request) {
-                        let _ = sender.send(Event::App(AppEvent::Toast {
-                            message: e.to_string(),
-                            level: ToastLevel::Error,
-                        }));
-                    }
+                    let result = api::create_queue(&api_base, &request).map(|_| ());
+                    let _ = sender.send(Event::App(AppEvent::QueueSaved(result)));
                 });
             }
             QueueModalMode::Edit { queue_id } => {
@@ -564,26 +575,17 @@ impl App {
                 let ordered_ids: Vec<i64> = modal.items.iter().map(|d| d.id).collect();
                 let sender = self.event_sender.clone();
                 thread::spawn(move || {
-                    if let Err(e) = api::update_queue(&api_base, queue_id, &request) {
-                        let _ = sender.send(Event::App(AppEvent::Toast {
-                            message: e.to_string(),
-                            level: ToastLevel::Error,
-                        }));
-                        return;
-                    }
-                    if !ordered_ids.is_empty() {
-                        if let Err(e) = api::reorder_queue(&api_base, queue_id, &ordered_ids) {
-                            let _ = sender.send(Event::App(AppEvent::Toast {
-                                message: e.to_string(),
-                                level: ToastLevel::Error,
-                            }));
+                    let result = api::update_queue(&api_base, queue_id, &request).and_then(|_| {
+                        if ordered_ids.is_empty() {
+                            Ok(())
+                        } else {
+                            api::reorder_queue(&api_base, queue_id, &ordered_ids)
                         }
-                    }
+                    });
+                    let _ = sender.send(Event::App(AppEvent::QueueSaved(result)));
                 });
             }
         }
-
-        self.refresh();
     }
 }
 

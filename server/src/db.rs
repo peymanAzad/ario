@@ -203,6 +203,7 @@ impl Database {
         let sort_col = match filter.sort_by {
             Some(SortField::Size) => "size",
             Some(SortField::Name) => "filename",
+            Some(SortField::QueuePosition) => "position_in_queue",
             Some(SortField::CreatedAt) | None => "created_at",
         };
         sql.push_str(&format!(
@@ -729,6 +730,25 @@ mod tests {
         )
         .unwrap();
         conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn queue_position_sort_reflects_reordered_downloads() {
+        let db = Database::open(":memory:").unwrap();
+        let first = insert_download_with_status(&db, 1, "Pending");
+        let second = insert_download_with_status(&db, 1, "Paused");
+
+        db.reorder_queue(1, &[second, first]).unwrap();
+
+        let downloads = db
+            .list_downloads(&DownloadFilter {
+                queue_id: Some(1),
+                sort_by: Some(SortField::QueuePosition),
+                ..DownloadFilter::default()
+            })
+            .unwrap();
+        let ids: Vec<i64> = downloads.into_iter().map(|download| download.id).collect();
+        assert_eq!(ids, vec![second, first]);
     }
 
     #[test]
