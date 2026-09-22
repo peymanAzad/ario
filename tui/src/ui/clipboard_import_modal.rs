@@ -163,7 +163,7 @@ fn draw_modal_finetuning_tab(f: &mut Frame, app: &App, modal: &ClipboardImportMo
         Some(StreamPieceSelector::Geom) => "geom".to_string(),
     };
 
-    let fields: [(&str, String); 4] = [
+    let fields: [(&str, String); 6] = [
         (
             "Connections per download",
             modal
@@ -182,6 +182,22 @@ fn draw_modal_finetuning_tab(f: &mut Frame, app: &App, modal: &ClipboardImportMo
         ),
         ("File allocation", alloc_label),
         ("Stream piece selector", selector_label),
+        (
+            "Max retries",
+            modal
+                .finetune
+                .max_retries
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "(default)".to_string()),
+        ),
+        (
+            "Retry wait (seconds)",
+            modal
+                .finetune
+                .retry_wait_seconds
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "(default)".to_string()),
+        ),
     ];
 
     let items: Vec<ListItem> = fields

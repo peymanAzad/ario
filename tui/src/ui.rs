@@ -232,6 +232,7 @@ mod tests {
             settings: QueueSettings {
                 max_concurrent_downloads: 1,
                 max_retries: 3,
+                retry_wait_seconds: 5,
                 default_finetune: FineTune::default(),
             },
             scheduler: Scheduler {

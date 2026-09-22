@@ -11,7 +11,7 @@ use ratatui::{
 
 pub fn draw_download_modal(f: &mut Frame, app: &App, modal: &DownloadEditModal) {
     let theme = &app.theme;
-    let area = centered_rect(55, 45, f.area());
+    let area = centered_rect(60, 60, f.area());
     f.render_widget(Clear, area);
 
     let outer = Block::default()
@@ -55,7 +55,7 @@ pub fn draw_download_modal(f: &mut Frame, app: &App, modal: &DownloadEditModal) 
         .get(modal.queue_cursor)
         .map(|queue| queue.name.clone())
         .unwrap_or_else(|| "(unavailable)".into());
-    let rows: [(&str, String); 5] = [
+    let rows: [(&str, String); 7] = [
         (
             "Connections per download",
             modal
@@ -74,6 +74,22 @@ pub fn draw_download_modal(f: &mut Frame, app: &App, modal: &DownloadEditModal) 
         ),
         ("File allocation", alloc_label),
         ("Stream piece selector", selector_label),
+        (
+            "Max retries",
+            modal
+                .finetune
+                .max_retries
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "(default)".into()),
+        ),
+        (
+            "Retry wait (seconds)",
+            modal
+                .finetune
+                .retry_wait_seconds
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "(default)".into()),
+        ),
         ("Queue", queue_label),
     ];
 

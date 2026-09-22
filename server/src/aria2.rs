@@ -223,6 +223,15 @@ fn finetune_to_options(f: &FineTune, destination_path: &str, mode: Aria2AddMode)
         };
         opts.insert("stream-piece-selector".into(), json!(s));
     }
+    if let Some(max_retries) = f.max_retries {
+        opts.insert(
+            "max-tries".into(),
+            json!(max_retries.saturating_add(1).to_string()),
+        );
+    }
+    if let Some(retry_wait_seconds) = f.retry_wait_seconds {
+        opts.insert("retry-wait".into(), json!(retry_wait_seconds.to_string()));
+    }
 
     Value::Object(opts)
 }
@@ -318,6 +327,38 @@ mod tests {
             Some("true")
         );
         assert_eq!(restart.get("continue"), None);
+    }
+
+    #[test]
+    fn retry_options_are_translated_for_aria2() {
+        let finetune = FineTune {
+            max_retries: Some(3),
+            retry_wait_seconds: Some(5),
+            ..FineTune::default()
+        };
+        let options = finetune_to_options(&finetune, "/tmp", Aria2AddMode::Fresh);
+
+        assert_eq!(options.get("max-tries").and_then(|v| v.as_str()), Some("4"));
+        assert_eq!(
+            options.get("retry-wait").and_then(|v| v.as_str()),
+            Some("5")
+        );
+
+        let no_retries = FineTune {
+            max_retries: Some(0),
+            retry_wait_seconds: Some(0),
+            ..FineTune::default()
+        };
+        let options = finetune_to_options(&no_retries, "/tmp", Aria2AddMode::Fresh);
+        assert_eq!(options.get("max-tries").and_then(|v| v.as_str()), Some("1"));
+        assert_eq!(
+            options.get("retry-wait").and_then(|v| v.as_str()),
+            Some("0")
+        );
+
+        let defaults = finetune_to_options(&FineTune::default(), "/tmp", Aria2AddMode::Fresh);
+        assert_eq!(defaults.get("max-tries"), None);
+        assert_eq!(defaults.get("retry-wait"), None);
     }
 
     #[test]

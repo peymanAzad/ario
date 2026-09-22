@@ -58,6 +58,7 @@ async fn create_queue(
         settings: QueueSettings {
             max_concurrent_downloads: req.max_concurrent_downloads,
             max_retries: req.max_retries,
+            retry_wait_seconds: req.retry_wait_seconds,
             default_finetune: req.default_finetune,
         },
         scheduler: Scheduler {
@@ -95,6 +96,7 @@ async fn update_queue(
         settings: QueueSettings {
             max_concurrent_downloads: req.max_concurrent_downloads,
             max_retries: req.max_retries,
+            retry_wait_seconds: req.retry_wait_seconds,
             default_finetune: req.default_finetune,
         },
         scheduler: Scheduler {
@@ -244,6 +246,7 @@ mod delete_tests {
                 settings: QueueSettings {
                     max_concurrent_downloads: 1,
                     max_retries: 3,
+                    retry_wait_seconds: 5,
                     default_finetune: FineTune::default(),
                 },
                 scheduler: Scheduler {

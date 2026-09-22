@@ -442,7 +442,21 @@ fn adjust_finetune_field(f: &mut FineTune, cursor: usize, forward: bool) {
             f.stream_piece_selector =
                 cycle(&STREAM_SELECTOR_ORDER, &f.stream_piece_selector, forward)
         }
+        4 => f.max_retries = adjust_opt_u32_including_zero(f.max_retries, forward, 20),
+        5 => {
+            f.retry_wait_seconds = adjust_opt_u32_including_zero(f.retry_wait_seconds, forward, 300)
+        }
         _ => {}
+    }
+}
+
+fn adjust_opt_u32_including_zero(current: Option<u32>, forward: bool, max: u32) -> Option<u32> {
+    match (current, forward) {
+        (None, true) => Some(0),
+        (None, false) => None,
+        (Some(0), false) => None,
+        (Some(value), true) => Some(value.saturating_add(1).min(max)),
+        (Some(value), false) => Some(value - 1),
     }
 }
 
@@ -503,6 +517,14 @@ mod tests {
             sender,
             false,
         )
+    }
+
+    #[test]
+    fn optional_retry_values_include_default_zero_and_bounded_values() {
+        assert_eq!(adjust_opt_u32_including_zero(None, true, 20), Some(0));
+        assert_eq!(adjust_opt_u32_including_zero(Some(0), false, 20), None);
+        assert_eq!(adjust_opt_u32_including_zero(Some(20), true, 20), Some(20));
+        assert_eq!(adjust_opt_u32_including_zero(Some(1), false, 20), Some(0));
     }
 
     #[test]
