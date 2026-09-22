@@ -9,7 +9,7 @@ use crate::app::App;
 use common::{
     download::Download,
     enums::{Recurrence, SortField},
-    queue::{CreateQueueRequest, UpdateQueueRequest},
+    queue::{CreateQueueRequest, DEFAULT_RETRY_WAIT_SECONDS, UpdateQueueRequest},
 };
 
 const TIME_STEP_MIN: i64 = 5;
@@ -78,9 +78,11 @@ pub struct QueueModal {
     pub name: String,
     pub max_concurrent_downloads: u32,
     pub max_retries: u32,
+    pub retry_wait_seconds: u32,
     pub finetune: FineTune,
     /// 0 = name, 1 = max_concurrent_downloads, 2 = max_retries,
-    /// 3-6 = finetune fields (same 4-field order as the clipboard modal's
+    /// 3 = retry_wait_seconds, 4-7 = the remaining finetune fields
+    /// (same 4-field order as the clipboard modal's
     /// Fine Tuning tab, reusing `adjust_finetune_field`).
     pub common_cursor: usize,
 
@@ -138,6 +140,7 @@ impl App {
             name: String::new(),
             max_concurrent_downloads: 1,
             max_retries: 3,
+            retry_wait_seconds: DEFAULT_RETRY_WAIT_SECONDS,
             finetune: FineTune::default(),
             common_cursor: 0,
             scheduler_enabled: false,
@@ -223,6 +226,7 @@ impl App {
             name: queue.name,
             max_concurrent_downloads: queue.settings.max_concurrent_downloads,
             max_retries: queue.settings.max_retries,
+            retry_wait_seconds: queue.settings.retry_wait_seconds,
             finetune: queue.settings.default_finetune,
             common_cursor: 0,
             scheduler_enabled: queue.scheduler.enabled,
@@ -368,7 +372,7 @@ impl App {
     pub fn queue_modal_move_down(&mut self) {
         if let Some(m) = &mut self.queue_modal {
             match m.tab {
-                QueueModalTab::Common => m.common_cursor = (m.common_cursor + 1).min(6),
+                QueueModalTab::Common => m.common_cursor = (m.common_cursor + 1).min(7),
                 QueueModalTab::Scheduler => {
                     let max = match m.recurrence_kind {
                         RecurrenceKind::Weekly => 5,
@@ -411,7 +415,11 @@ impl App {
                             adjust_u32_bounded(m.max_concurrent_downloads, forward, 1, 20)
                     }
                     2 => m.max_retries = adjust_u32_bounded(m.max_retries, forward, 0, 20),
-                    3..=6 => adjust_finetune_field(&mut m.finetune, m.common_cursor - 3, forward),
+                    3 => {
+                        m.retry_wait_seconds =
+                            adjust_u32_bounded(m.retry_wait_seconds, forward, 0, 300)
+                    }
+                    4..=7 => adjust_finetune_field(&mut m.finetune, m.common_cursor - 4, forward),
                     _ => {} // cursor 0 (name) — handled via text-edit instead
                 },
                 QueueModalTab::Scheduler => match (m.scheduler_cursor, m.recurrence_kind) {
@@ -562,6 +570,7 @@ impl App {
                     position: 0,
                     max_concurrent_downloads: modal.max_concurrent_downloads,
                     max_retries: modal.max_retries,
+                    retry_wait_seconds: modal.retry_wait_seconds,
                     default_finetune: modal.finetune,
                     scheduler_enabled: modal.scheduler_enabled,
                     recurrence,
@@ -579,6 +588,7 @@ impl App {
                     position: 0,
                     max_concurrent_downloads: modal.max_concurrent_downloads,
                     max_retries: modal.max_retries,
+                    retry_wait_seconds: modal.retry_wait_seconds,
                     default_finetune: modal.finetune,
                     scheduler_enabled: modal.scheduler_enabled,
                     recurrence,

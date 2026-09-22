@@ -116,7 +116,7 @@ impl App {
 
     pub fn download_modal_move_down(&mut self) {
         if let Some(m) = &mut self.download_modal {
-            m.cursor = (m.cursor + 1).min(4);
+            m.cursor = (m.cursor + 1).min(6);
         }
     }
 
@@ -136,7 +136,7 @@ impl App {
 
     fn download_modal_adjust(&mut self, forward: bool) {
         if let Some(m) = &mut self.download_modal {
-            if m.cursor == 4 {
+            if m.cursor == 6 {
                 if !self.queues.is_empty() {
                     let len = self.queues.len();
                     m.queue_cursor = if forward {
@@ -163,13 +163,13 @@ impl App {
         let api_base = self.api_base.clone();
         let sender = self.event_sender.clone();
         thread::spawn(move || {
-            let result = api::update_finetune(&api_base, modal.download_id, &modal.finetune)
-                .and_then(|_| {
-                    if queue_id != modal.original_queue_id {
-                        api::move_download_queue(&api_base, modal.download_id, queue_id)?;
-                    }
-                    Ok(())
-                });
+            let result: anyhow::Result<()> = (|| {
+                if queue_id != modal.original_queue_id {
+                    api::move_download_queue(&api_base, modal.download_id, queue_id)?;
+                }
+                api::update_finetune(&api_base, modal.download_id, &modal.finetune)?;
+                Ok(())
+            })();
             if let Err(e) = result {
                 let _ = sender.send(Event::App(AppEvent::Toast {
                     message: e.to_string(),

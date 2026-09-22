@@ -47,15 +47,16 @@ impl Database {
         let recurrence_json = serde_json::to_string(&q.scheduler.recurrence).unwrap();
 
         conn.execute(
-            "INSERT INTO queues (name, position, max_concurrent_downloads, max_retries,
+            "INSERT INTO queues (name, position, max_concurrent_downloads, max_retries, retry_wait_seconds,
                                   default_finetune, scheduler_enabled, scheduler_recurrence,
                                   scheduler_run_missed, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 q.name,
                 q.position,
                 q.settings.max_concurrent_downloads,
                 q.settings.max_retries,
+                q.settings.retry_wait_seconds,
                 finetune_json,
                 q.scheduler.enabled as i64,
                 recurrence_json,
@@ -90,14 +91,16 @@ impl Database {
 
         conn.execute(
             "UPDATE queues SET name = ?1, position = ?2, max_concurrent_downloads = ?3,
-                                max_retries = ?4, default_finetune = ?5, scheduler_enabled = ?6,
-                                scheduler_recurrence = ?7, scheduler_run_missed = ?8
-             WHERE id = ?9",
+                                max_retries = ?4, retry_wait_seconds = ?5, default_finetune = ?6,
+                                scheduler_enabled = ?7, scheduler_recurrence = ?8,
+                                scheduler_run_missed = ?9
+             WHERE id = ?10",
             params![
                 q.name,
                 q.position,
                 q.settings.max_concurrent_downloads,
                 q.settings.max_retries,
+                q.settings.retry_wait_seconds,
                 finetune_json,
                 q.scheduler.enabled as i64,
                 recurrence_json,
@@ -514,6 +517,21 @@ fn run_migrations(conn: &Connection) -> SqlResult<()> {
         )?;
     }
 
+    let has_retry_wait_seconds: bool = conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM pragma_table_info('queues') WHERE name = 'retry_wait_seconds'
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+
+    if !has_retry_wait_seconds {
+        conn.execute(
+            "ALTER TABLE queues ADD COLUMN retry_wait_seconds INTEGER NOT NULL DEFAULT 5",
+            [],
+        )?;
+    }
+
     let has_scheduler_suppression: bool = conn.query_row(
         "SELECT EXISTS(
              SELECT 1 FROM pragma_table_info('queues')
@@ -698,6 +716,7 @@ fn row_to_queue(row: &Row) -> SqlResult<Queue> {
         settings: QueueSettings {
             max_concurrent_downloads: row.get("max_concurrent_downloads")?,
             max_retries: row.get("max_retries")?,
+            retry_wait_seconds: row.get("retry_wait_seconds")?,
             default_finetune,
         },
         scheduler: Scheduler {
@@ -713,6 +732,7 @@ fn row_to_queue(row: &Row) -> SqlResult<Queue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn insert_download_with_status(db: &Database, queue_id: i64, status: &str) -> i64 {
         let conn = db.conn.lock().unwrap();
@@ -730,6 +750,47 @@ mod tests {
         )
         .unwrap();
         conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn opening_a_legacy_database_adds_retry_wait_before_queue_reads() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "ario-retry-wait-migration-{}-{nonce}.sqlite",
+            std::process::id()
+        ));
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE queues (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     name TEXT NOT NULL,
+                     position INTEGER NOT NULL DEFAULT 0,
+                     max_concurrent_downloads INTEGER NOT NULL DEFAULT 1,
+                     max_retries INTEGER NOT NULL DEFAULT 3,
+                     default_finetune TEXT NOT NULL DEFAULT '{}',
+                     scheduler_enabled INTEGER NOT NULL DEFAULT 0,
+                     scheduler_recurrence TEXT,
+                     scheduler_run_missed INTEGER NOT NULL DEFAULT 0,
+                     scheduler_suppressed_occurrence TEXT,
+                     scheduler_active_occurrence TEXT,
+                     status TEXT NOT NULL DEFAULT 'Paused',
+                     created_at TEXT NOT NULL
+                 );
+                 INSERT INTO queues (id, name, created_at)
+                 VALUES (1, 'Legacy Queue', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));",
+            )
+            .unwrap();
+        }
+
+        let db = Database::open(path.to_str().unwrap()).unwrap();
+        let queue = db.get_queue(1).unwrap().unwrap();
+        assert_eq!(queue.settings.retry_wait_seconds, 5);
+        drop(db);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -772,6 +833,15 @@ mod tests {
             })
             .unwrap();
         assert_eq!(status, "Paused");
+
+        let retry_wait_seconds: i64 = conn
+            .query_row(
+                "SELECT retry_wait_seconds FROM queues WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retry_wait_seconds, 5);
 
         let suppression: Option<String> = conn
             .query_row(

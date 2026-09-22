@@ -68,7 +68,7 @@ impl App {
                     }
                 }
                 ModalTab::FineTuning => {
-                    m.finetune_cursor = (m.finetune_cursor + 1).min(3);
+                    m.finetune_cursor = (m.finetune_cursor + 1).min(5);
                 }
             }
         }

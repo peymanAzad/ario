@@ -127,7 +127,7 @@ fn draw_queue_modal_common_tab(
         Some(StreamPieceSelector::Geom) => "geom".to_string(),
     };
 
-    let rows: [(String, String); 7] = [
+    let rows: [(String, String); 8] = [
         ("Name".to_string(), name_display),
         (
             "Max concurrent downloads".to_string(),
@@ -136,6 +136,10 @@ fn draw_queue_modal_common_tab(
         (
             "Max retries".to_string(),
             format!("◀ {} ▶", modal.max_retries),
+        ),
+        (
+            "Retry wait (seconds)".to_string(),
+            format!("◀ {} ▶", modal.retry_wait_seconds),
         ),
         (
             "Connections per download".to_string(),

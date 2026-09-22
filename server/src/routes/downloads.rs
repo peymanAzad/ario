@@ -16,6 +16,7 @@ use common::{
     },
     enums::{DownloadStatus, FileCategory, SourceType},
     finetune::FineTune,
+    queue::QueueSettings,
 };
 use std::{collections::HashSet, fs, io::ErrorKind, path::PathBuf};
 
@@ -69,6 +70,16 @@ async fn merge_live(state: &AppState, download: Download) -> DownloadLiveStatus 
     }
 }
 
+fn resolve_finetune(settings: &QueueSettings, overrides: Option<FineTune>) -> FineTune {
+    let mut finetune = settings.default_finetune.clone();
+    finetune.max_retries = Some(settings.max_retries);
+    finetune.retry_wait_seconds = Some(settings.retry_wait_seconds);
+    if let Some(overrides) = overrides {
+        finetune.apply_override(overrides);
+    }
+    finetune
+}
+
 /// `GET /downloads?queue_id=&status=&category=&sort_by=&sort_desc=`
 async fn list_downloads(
     State(state): State<AppState>,
@@ -107,9 +118,7 @@ async fn add_downloads(
         .get_queue(req.queue_id)?
         .ok_or_else(|| AppError::BadRequest(format!("queue {} does not exist", req.queue_id)))?;
 
-    let finetune: FineTune = req
-        .finetune_override
-        .unwrap_or(queue.settings.default_finetune);
+    let finetune = resolve_finetune(&queue.settings, req.finetune_override);
     let mut next_position = state.db.next_position_in_queue(queue.id)?;
 
     let mut created = Vec::with_capacity(req.inputs.len());
@@ -439,6 +448,15 @@ async fn update_finetune(
     Json(finetune): Json<FineTune>,
 ) -> Result<Json<DownloadLiveStatus>, AppError> {
     let _activity = state.activity_guard().await?;
+    let download = state
+        .db
+        .get_download(id)?
+        .ok_or_else(|| AppError::NotFound(format!("download {id}")))?;
+    let queue = state
+        .db
+        .get_queue(download.queue_id)?
+        .ok_or_else(|| AppError::NotFound(format!("queue {}", download.queue_id)))?;
+    let finetune = resolve_finetune(&queue.settings, Some(finetune));
     state.db.update_download_finetune(id, &finetune)?;
     let updated = state
         .db
@@ -898,5 +916,38 @@ mod merge_live_tests {
         let live = merge_live(&state, download).await;
         assert_eq!(live.completed_length, 42);
         assert_eq!(live.download_speed, 0);
+    }
+}
+
+#[cfg(test)]
+mod finetune_resolution_tests {
+    use super::resolve_finetune;
+    use common::{finetune::FineTune, queue::QueueSettings};
+
+    #[test]
+    fn unset_download_fields_inherit_individual_queue_defaults() {
+        let settings = QueueSettings {
+            max_concurrent_downloads: 2,
+            max_retries: 3,
+            retry_wait_seconds: 5,
+            default_finetune: FineTune {
+                connections_per_download: Some(4),
+                max_connections_per_server: Some(2),
+                ..FineTune::default()
+            },
+        };
+
+        let resolved = resolve_finetune(
+            &settings,
+            Some(FineTune {
+                max_retries: Some(0),
+                ..FineTune::default()
+            }),
+        );
+
+        assert_eq!(resolved.connections_per_download, Some(4));
+        assert_eq!(resolved.max_connections_per_server, Some(2));
+        assert_eq!(resolved.max_retries, Some(0));
+        assert_eq!(resolved.retry_wait_seconds, Some(5));
     }
 }

@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS queues (
     -- QueueSettings
     max_concurrent_downloads    INTEGER NOT NULL DEFAULT 1,
     max_retries                 INTEGER NOT NULL DEFAULT 3,
+    retry_wait_seconds          INTEGER NOT NULL DEFAULT 5,
     default_finetune            TEXT NOT NULL DEFAULT '{}', -- JSON: FineTune
 
     -- Scheduler
