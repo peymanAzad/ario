@@ -8,6 +8,7 @@ use ratatui::{
 };
 
 use crate::app::Focus;
+use common::enums::QueueStatus;
 
 pub fn draw_queues_list(f: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
@@ -19,10 +20,12 @@ pub fn draw_queues_list(f: &mut Frame, app: &App, area: Rect) {
             queue.name.clone(),
             Style::default().fg(theme.foreground),
         )];
-        spans.push(Span::styled(
-            format!(" {}", app.icons.queue_status(&queue.status)),
-            Style::default().fg(app.icons.queue_status_color(&queue.status, theme)),
-        ));
+        if queue.status == QueueStatus::Active {
+            spans.push(Span::styled(
+                format!(" {}", app.icons.queue_running()),
+                Style::default().fg(theme.status_ok),
+            ));
+        }
         if queue.scheduler.enabled {
             spans.push(Span::styled(
                 format!(" {}", app.icons.scheduler()),
