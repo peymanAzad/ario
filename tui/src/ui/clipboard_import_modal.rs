@@ -149,14 +149,14 @@ fn draw_modal_finetuning_tab(f: &mut Frame, app: &App, modal: &ClipboardImportMo
     let theme = &app.theme;
 
     let alloc_label = match &modal.finetune.alloc_strategy {
-        None => "(default)".to_string(),
+        None => "(queue default)".to_string(),
         Some(AllocStrategy::None) => "none".to_string(),
         Some(AllocStrategy::Prealloc) => "prealloc".to_string(),
         Some(AllocStrategy::Falloc) => "falloc".to_string(),
         Some(AllocStrategy::Trunc) => "trunc".to_string(),
     };
     let selector_label = match &modal.finetune.stream_piece_selector {
-        None => "(default)".to_string(),
+        None => "(queue default)".to_string(),
         Some(StreamPieceSelector::Default) => "default".to_string(),
         Some(StreamPieceSelector::InOrder) => "inorder".to_string(),
         Some(StreamPieceSelector::Random) => "random".to_string(),
@@ -170,7 +170,7 @@ fn draw_modal_finetuning_tab(f: &mut Frame, app: &App, modal: &ClipboardImportMo
                 .finetune
                 .connections_per_download
                 .map(|v| v.to_string())
-                .unwrap_or_else(|| "(default)".to_string()),
+                .unwrap_or_else(|| "(queue default)".to_string()),
         ),
         (
             "Max connections per server",
@@ -178,7 +178,7 @@ fn draw_modal_finetuning_tab(f: &mut Frame, app: &App, modal: &ClipboardImportMo
                 .finetune
                 .max_connections_per_server
                 .map(|v| v.to_string())
-                .unwrap_or_else(|| "(default)".to_string()),
+                .unwrap_or_else(|| "(queue default)".to_string()),
         ),
         ("File allocation", alloc_label),
         ("Stream piece selector", selector_label),
@@ -188,7 +188,7 @@ fn draw_modal_finetuning_tab(f: &mut Frame, app: &App, modal: &ClipboardImportMo
                 .finetune
                 .max_retries
                 .map(|v| v.to_string())
-                .unwrap_or_else(|| "(default)".to_string()),
+                .unwrap_or_else(|| "(queue default)".to_string()),
         ),
         (
             "Retry wait (seconds)",
@@ -196,7 +196,7 @@ fn draw_modal_finetuning_tab(f: &mut Frame, app: &App, modal: &ClipboardImportMo
                 .finetune
                 .retry_wait_seconds
                 .map(|v| v.to_string())
-                .unwrap_or_else(|| "(default)".to_string()),
+                .unwrap_or_else(|| "(queue default)".to_string()),
         ),
     ];
 
