@@ -113,14 +113,14 @@ fn draw_queue_modal_common_tab(
     };
 
     let alloc_label = match &modal.finetune.alloc_strategy {
-        None => "(default)".to_string(),
+        None => "(aria2 default)".to_string(),
         Some(AllocStrategy::None) => "none".to_string(),
         Some(AllocStrategy::Prealloc) => "prealloc".to_string(),
         Some(AllocStrategy::Falloc) => "falloc".to_string(),
         Some(AllocStrategy::Trunc) => "trunc".to_string(),
     };
     let selector_label = match &modal.finetune.stream_piece_selector {
-        None => "(default)".to_string(),
+        None => "(aria2 default)".to_string(),
         Some(StreamPieceSelector::Default) => "default".to_string(),
         Some(StreamPieceSelector::InOrder) => "inorder".to_string(),
         Some(StreamPieceSelector::Random) => "random".to_string(),
@@ -149,7 +149,7 @@ fn draw_queue_modal_common_tab(
                     .finetune
                     .connections_per_download
                     .map(|v| v.to_string())
-                    .unwrap_or_else(|| "(default)".to_string())
+                    .unwrap_or_else(|| "(aria2 default)".to_string())
             ),
         ),
         (
@@ -160,7 +160,7 @@ fn draw_queue_modal_common_tab(
                     .finetune
                     .max_connections_per_server
                     .map(|v| v.to_string())
-                    .unwrap_or_else(|| "(default)".to_string())
+                    .unwrap_or_else(|| "(aria2 default)".to_string())
             ),
         ),
         ("File allocation".to_string(), format!("◀ {alloc_label} ▶")),
