@@ -25,7 +25,7 @@ use crate::toast::ToastStack;
 use crate::{api, event::Event};
 use common::download::{AddDownloadInput, AddDownloadsRequest, DownloadFilter, DownloadLiveStatus};
 use common::enums::{AllocStrategy, DownloadStatus, FileCategory, StreamPieceSelector};
-use common::finetune::FineTune;
+use common::finetune::{Aria2GlobalOptions, FineTune};
 use common::queue::Queue;
 
 #[derive(Debug)]
@@ -37,6 +37,7 @@ pub enum AppEvent {
         server_reachable: bool,
         aria2_reachable: bool,
         download_speed: u64,
+        aria2_global_options: Option<Aria2GlobalOptions>,
         lifecycle_revision: u64,
     },
     QueueDownloadsLoaded {
@@ -135,6 +136,7 @@ pub struct App {
     pub focus: Focus,
     pub server_reachable: bool,
     pub aria2_reachable: bool,
+    pub aria2_global_options: Option<Aria2GlobalOptions>,
     pub total_download_speed: u64,
     pub speed_history: VecDeque<u64>,
     smoothed_download_speed: Option<u64>,
@@ -177,6 +179,7 @@ impl App {
             focus: Focus::Downloads,
             server_reachable: false,
             aria2_reachable: false,
+            aria2_global_options: None,
             total_download_speed: 0,
             speed_history: VecDeque::new(),
             smoothed_download_speed: None,
@@ -255,22 +258,38 @@ impl App {
 
         thread::spawn(move || {
             let health = api::health(&api_base);
-            let (server_reachable, aria2_reachable, download_speed) = match health {
-                Ok(h) => (true, h.aria2_reachable, h.download_speed),
-                Err(_) => (false, false, 0),
-            };
+            let (server_reachable, aria2_reachable, download_speed, aria2_global_options) =
+                match health {
+                    Ok(h) => (
+                        true,
+                        h.aria2_reachable,
+                        h.download_speed,
+                        h.aria2_global_options,
+                    ),
+                    Err(_) => (false, false, 0, None),
+                };
 
             let downloads = api::list_downloads(&api_base, &filter);
             let queues = api::list_queues(&api_base);
             // A managed daemon may have been restarted by the supervisor between requests.
-            let (server_reachable, aria2_reachable, download_speed) =
+            let (server_reachable, aria2_reachable, download_speed, aria2_global_options) =
                 if !server_reachable && manages_server {
                     match api::health(&api_base) {
-                        Ok(h) => (true, h.aria2_reachable, h.download_speed),
-                        Err(_) => (false, false, 0),
+                        Ok(h) => (
+                            true,
+                            h.aria2_reachable,
+                            h.download_speed,
+                            h.aria2_global_options,
+                        ),
+                        Err(_) => (false, false, 0, None),
                     }
                 } else {
-                    (server_reachable, aria2_reachable, download_speed)
+                    (
+                        server_reachable,
+                        aria2_reachable,
+                        download_speed,
+                        aria2_global_options,
+                    )
                 };
 
             let _ = sender.send(Event::App(AppEvent::Refreshed {
@@ -279,6 +298,7 @@ impl App {
                 server_reachable,
                 aria2_reachable,
                 download_speed,
+                aria2_global_options,
                 lifecycle_revision,
             }));
         });
@@ -291,6 +311,7 @@ impl App {
         server_reachable: bool,
         aria2_reachable: bool,
         download_speed: u64,
+        aria2_global_options: Option<Aria2GlobalOptions>,
         lifecycle_revision: u64,
     ) {
         self.refresh_in_flight = false;
@@ -328,6 +349,9 @@ impl App {
         }
         self.server_reachable = server_reachable;
         self.aria2_reachable = aria2_reachable;
+        if server_reachable {
+            self.aria2_global_options = aria2_global_options;
+        }
         self.total_download_speed = download_speed;
         if server_reachable {
             self.smoothed_download_speed = Some(
@@ -565,13 +589,14 @@ mod tests {
             false,
             false,
             0,
+            None,
             0,
         );
         assert!(app.last_error.is_none());
         app.apply_lifecycle(LifecycleState::Retrying);
         app.apply_lifecycle(LifecycleState::Connected);
         let revision = app.lifecycle_revision;
-        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 0, revision);
+        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 0, None, revision);
         assert!(app.server_reachable);
         app.apply_refresh(
             Err(anyhow::anyhow!("old")),
@@ -579,6 +604,7 @@ mod tests {
             false,
             false,
             0,
+            None,
             0,
         );
         assert!(app.server_reachable);
@@ -591,6 +617,7 @@ mod tests {
             false,
             false,
             0,
+            None,
             app.lifecycle_revision,
         );
         assert_eq!(app.last_error.as_deref(), Some("daemon exited"));
@@ -600,6 +627,7 @@ mod tests {
             true,
             true,
             0,
+            None,
             app.lifecycle_revision,
         );
         assert_eq!(app.lifecycle, LifecycleState::Connected);
@@ -609,11 +637,11 @@ mod tests {
     #[test]
     fn reachable_refresh_records_speed_history_and_caps_it() {
         let mut app = app();
-        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 100, 0);
+        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 100, None, 0);
         assert_eq!(app.total_download_speed, 100);
         assert_eq!(app.speed_history.iter().copied().collect::<Vec<_>>(), [100]);
 
-        app.apply_refresh(Ok(vec![]), Ok(vec![]), false, false, 50, 0);
+        app.apply_refresh(Ok(vec![]), Ok(vec![]), false, false, 50, None, 0);
         assert_eq!(app.total_download_speed, 50);
         assert_eq!(app.speed_history.iter().copied().collect::<Vec<_>>(), [100]);
 
@@ -633,16 +661,39 @@ mod tests {
     }
 
     #[test]
+    fn successful_health_refresh_caches_aria2_global_options() {
+        let mut app = app();
+        let options = Aria2GlobalOptions {
+            connections_per_download: Some(5),
+            max_connections_per_server: Some(1),
+            alloc_strategy: Some(AllocStrategy::Prealloc),
+            stream_piece_selector: Some(StreamPieceSelector::Default),
+        };
+
+        app.apply_refresh(
+            Ok(vec![]),
+            Ok(vec![]),
+            true,
+            true,
+            0,
+            Some(options.clone()),
+            0,
+        );
+
+        assert_eq!(app.aria2_global_options, Some(options));
+    }
+
+    #[test]
     fn reachable_refresh_throttles_speed_samples() {
         let mut app = app();
-        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 100, 0);
-        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 200, 0);
+        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 100, None, 0);
+        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 200, None, 0);
         assert_eq!(app.total_download_speed, 200);
         assert_eq!(app.displayed_download_speed(), 125);
         assert_eq!(app.speed_history.iter().copied().collect::<Vec<_>>(), [100]);
 
         app.last_speed_sample_at = Some(Instant::now() - SPEED_SAMPLE_INTERVAL);
-        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 300, 0);
+        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 300, None, 0);
         assert_eq!(app.displayed_download_speed(), 168);
         assert_eq!(
             app.speed_history.iter().copied().collect::<Vec<_>>(),

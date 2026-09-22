@@ -1,6 +1,6 @@
 use common::{
     download::{DownloadFilter, DownloadLiveStatus},
-    finetune::FineTune,
+    finetune::{Aria2GlobalOptions, FineTune},
     lifecycle::ShutdownIfIdleResponse,
     queue::Queue,
 };
@@ -22,6 +22,8 @@ pub struct HealthResponse {
     pub tui_managed: bool,
     #[serde(default)]
     pub download_speed: u64,
+    #[serde(default)]
+    pub aria2_global_options: Option<Aria2GlobalOptions>,
 }
 
 fn client() -> reqwest::blocking::Client {
@@ -234,4 +236,19 @@ pub fn move_download_queue(
         .send()?
         .error_for_status()?;
     Ok(resp.json()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HealthResponse;
+
+    #[test]
+    fn health_without_global_options_remains_compatible() {
+        let response: HealthResponse = serde_json::from_str(
+            r#"{"server":"ok","aria2_reachable":true,"tui_managed":false,"download_speed":0}"#,
+        )
+        .unwrap();
+
+        assert!(response.aria2_global_options.is_none());
+    }
 }

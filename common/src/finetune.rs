@@ -19,6 +19,17 @@ pub struct FineTune {
     pub retry_wait_seconds: Option<u32>,
 }
 
+/// Effective aria2 global values captured when the daemon starts. Individual
+/// fields remain optional so an unexpected or unavailable value can degrade
+/// to a text-only fallback in clients.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Aria2GlobalOptions {
+    pub connections_per_download: Option<u32>,
+    pub max_connections_per_server: Option<u32>,
+    pub alloc_strategy: Option<AllocStrategy>,
+    pub stream_piece_selector: Option<StreamPieceSelector>,
+}
+
 impl FineTune {
     /// Applies only explicitly selected per-download values, leaving all
     /// other fields at their queue-provided defaults.

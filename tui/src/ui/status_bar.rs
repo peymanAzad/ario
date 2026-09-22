@@ -259,6 +259,7 @@ mod tests {
             false,
             false,
             0,
+            None,
             3, // Retrying, Failed, then Connected.
         );
         assert_eq!(server_status(&app), ServerStatus::Down);
