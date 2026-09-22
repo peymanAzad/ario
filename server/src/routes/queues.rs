@@ -14,7 +14,10 @@ use crate::state::AppState;
 use crate::{
     error::AppError,
     routes::downloads::delete_download_record,
-    scheduler::{current_schedule_occurrence, pause_downloads, start_eligible_downloads},
+    scheduler::{
+        current_schedule_occurrence, effective_queue_status, pause_downloads,
+        start_eligible_downloads,
+    },
 };
 
 const MAIN_QUEUE_ID: i64 = 1;
@@ -31,7 +34,10 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn list_queues(State(state): State<AppState>) -> Result<Json<Vec<Queue>>, AppError> {
-    let queues = state.db.list_queues()?;
+    let mut queues = state.db.list_queues()?;
+    for queue in &mut queues {
+        queue.status = effective_queue_status(&state.db, queue)?;
+    }
     Ok(Json(queues))
 }
 
@@ -39,10 +45,11 @@ async fn get_queue(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<Queue>, AppError> {
-    let queue = state
+    let mut queue = state
         .db
         .get_queue(id)?
         .ok_or_else(|| AppError::NotFound(format!("queue {id}")))?;
+    queue.status = effective_queue_status(&state.db, &queue)?;
     Ok(Json(queue))
 }
 
@@ -71,10 +78,11 @@ async fn create_queue(
     };
 
     let id = state.db.insert_queue(&queue)?;
-    let created = state
+    let mut created = state
         .db
         .get_queue(id)?
         .ok_or_else(|| AppError::NotFound(format!("queue {id}")))?;
+    created.status = effective_queue_status(&state.db, &created)?;
     Ok(Json(created))
 }
 
@@ -115,10 +123,11 @@ async fn update_queue(
         // suppress or claim ownership of a newly edited schedule.
         state.db.set_queue_scheduler_suppression(id, None)?;
     }
-    let updated = state
+    let mut updated = state
         .db
         .get_queue(id)?
         .ok_or_else(|| AppError::NotFound(format!("queue {id}")))?;
+    updated.status = effective_queue_status(&state.db, &updated)?;
     Ok(Json(updated))
 }
 

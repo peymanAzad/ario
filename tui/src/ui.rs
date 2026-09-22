@@ -190,7 +190,7 @@ mod tests {
         assert_eq!(format_bytes(1024_u64.pow(4)), "1.0 TB");
     }
 
-    fn rendered_app(mode: GlyphMode) -> (String, usize) {
+    fn rendered_app(mode: GlyphMode, queue_status: QueueStatus) -> (String, usize) {
         let (sender, _receiver) = mpsc::channel();
         let icons = IconSet::new(mode);
         let mut app = App::new(
@@ -244,7 +244,7 @@ mod tests {
                 run_missed_on_startup: false,
             },
             created_at: Utc::now(),
-            status: QueueStatus::Paused,
+            status: queue_status,
         });
 
         let width = 120;
@@ -274,7 +274,7 @@ mod tests {
         let mut status_columns = Vec::new();
         for mode in [GlyphMode::NerdFont, GlyphMode::Unicode, GlyphMode::Ascii] {
             let icons = IconSet::new(mode);
-            let (output, status_column) = rendered_app(mode);
+            let (output, status_column) = rendered_app(mode, QueueStatus::Paused);
             status_columns.push(status_column);
 
             assert!(output.contains(&format!("{} All", icons.all())));
@@ -286,9 +286,10 @@ mod tests {
                 "{} tool.bin",
                 icons.category(&FileCategory::Program)
             )));
-            assert!(output.contains(&format!(
+            assert!(output.contains(&format!("Main Queue {}", icons.scheduler())));
+            assert!(!output.contains(&format!(
                 "Main Queue {} {}",
-                icons.queue_status(&QueueStatus::Paused),
+                icons.queue_running(),
                 icons.scheduler()
             )));
             assert!(output.contains("Download: checksum mismatch"));
@@ -301,5 +302,18 @@ mod tests {
                 .windows(2)
                 .all(|columns| columns[0] == columns[1])
         );
+    }
+
+    #[test]
+    fn running_queue_shows_play_icon() {
+        for mode in [GlyphMode::NerdFont, GlyphMode::Unicode, GlyphMode::Ascii] {
+            let icons = IconSet::new(mode);
+            let (output, _) = rendered_app(mode, QueueStatus::Active);
+            assert!(output.contains(&format!(
+                "Main Queue {} {}",
+                icons.queue_running(),
+                icons.scheduler()
+            )));
+        }
     }
 }

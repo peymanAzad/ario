@@ -216,6 +216,41 @@ pub async fn pause_downloads(
     Ok(())
 }
 
+/// Returns the queue state presented to clients. `QueueStatus::Active` in the
+/// database is a persistent manual-run override; a scheduled queue can also be
+/// effectively running during an unsuppressed open occurrence without changing
+/// that stored control state.
+pub fn effective_queue_status(
+    db: &crate::db::Database,
+    queue: &Queue,
+) -> anyhow::Result<QueueStatus> {
+    let occurrence = current_schedule_occurrence(&queue.scheduler.recurrence);
+    effective_queue_status_for_occurrence(db, queue, occurrence.as_deref())
+}
+
+fn effective_queue_status_for_occurrence(
+    db: &crate::db::Database,
+    queue: &Queue,
+    occurrence: Option<&str>,
+) -> anyhow::Result<QueueStatus> {
+    if queue.status == QueueStatus::Active {
+        return Ok(QueueStatus::Active);
+    }
+    if !queue.scheduler.enabled {
+        return Ok(QueueStatus::Paused);
+    }
+
+    let Some(occurrence) = occurrence else {
+        return Ok(QueueStatus::Paused);
+    };
+    let suppressed = db.get_queue_scheduler_suppression(queue.id)?;
+    Ok(if suppressed.as_deref() == Some(occurrence) {
+        QueueStatus::Paused
+    } else {
+        QueueStatus::Active
+    })
+}
+
 /// Pauses every currently-`Active` download in `queue`, marking each as
 /// scheduler-paused so the next open window knows it's safe to auto-resume.
 async fn pause_scheduled_downloads(state: &AppState, queue: &Queue) -> anyhow::Result<()> {
@@ -271,6 +306,7 @@ fn weekly_occurrence_date(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::{finetune::FineTune, queue::QueueSettings, scheduler::Scheduler};
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(year, month, day).unwrap()
@@ -278,6 +314,70 @@ mod tests {
 
     fn time(hour: u32, minute: u32) -> NaiveTime {
         NaiveTime::from_hms_opt(hour, minute, 0).unwrap()
+    }
+
+    fn queue(status: QueueStatus, scheduler_enabled: bool) -> Queue {
+        Queue {
+            id: 1,
+            name: "test".into(),
+            position: 0,
+            settings: QueueSettings {
+                max_concurrent_downloads: 1,
+                max_retries: 3,
+                retry_wait_seconds: 5,
+                default_finetune: FineTune::default(),
+            },
+            scheduler: Scheduler {
+                enabled: scheduler_enabled,
+                recurrence: Recurrence::Once {
+                    start: Utc::now(),
+                    end: Utc::now(),
+                },
+                run_missed_on_startup: false,
+            },
+            created_at: Utc::now(),
+            status,
+        }
+    }
+
+    #[test]
+    fn effective_status_covers_manual_scheduled_and_idle_queues() {
+        let db = crate::db::Database::open(":memory:").unwrap();
+
+        assert_eq!(
+            effective_queue_status_for_occurrence(&db, &queue(QueueStatus::Active, false), None)
+                .unwrap(),
+            QueueStatus::Active
+        );
+        assert_eq!(
+            effective_queue_status_for_occurrence(
+                &db,
+                &queue(QueueStatus::Paused, false),
+                Some("open")
+            )
+            .unwrap(),
+            QueueStatus::Paused
+        );
+        assert_eq!(
+            effective_queue_status_for_occurrence(
+                &db,
+                &queue(QueueStatus::Paused, true),
+                Some("open")
+            )
+            .unwrap(),
+            QueueStatus::Active
+        );
+
+        db.set_queue_scheduler_suppression(1, Some("open")).unwrap();
+        assert_eq!(
+            effective_queue_status_for_occurrence(
+                &db,
+                &queue(QueueStatus::Paused, true),
+                Some("open")
+            )
+            .unwrap(),
+            QueueStatus::Paused
+        );
     }
 
     #[test]
