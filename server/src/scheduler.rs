@@ -32,7 +32,7 @@ use crate::aria2::Aria2AddMode;
 use crate::state::AppState;
 use chrono::{Datelike, Local, NaiveDate, NaiveTime, Utc, Weekday};
 use common::{
-    enums::{DownloadStatus, QueueStatus, Recurrence},
+    enums::{DownloadStatus, QueueStatus, Recurrence, SourceType},
     queue::Queue,
 };
 use std::time::Duration;
@@ -110,6 +110,19 @@ enum ScheduleDecision {
     CloseWindow,
 }
 
+/// Whether a queue should currently be driving its queue-controlled downloads.
+///
+/// An explicitly resumed queue always runs. Otherwise, an open scheduler
+/// occurrence runs unless the user suppressed that same occurrence.
+pub fn queue_is_running(
+    queue_status: &QueueStatus,
+    suppressed: Option<&str>,
+    occurrence: Option<&str>,
+) -> bool {
+    *queue_status == QueueStatus::Active
+        || matches!(occurrence, Some(current) if suppressed != Some(current))
+}
+
 /// Resolves the queue's manual-run override, then advances the persisted
 /// per-occurrence suppression state. A manually resumed queue stays active
 /// until the user pauses it, regardless of its configured schedule. Otherwise,
@@ -121,19 +134,20 @@ fn schedule_decision(
     queue_status: &QueueStatus,
     occurrence: Option<&str>,
 ) -> anyhow::Result<ScheduleDecision> {
-    if *queue_status == QueueStatus::Active {
+    if queue_is_running(queue_status, None, None) {
         return Ok(ScheduleDecision::Start);
     }
 
     let suppressed = db.get_queue_scheduler_suppression(queue_id)?;
     match occurrence {
         Some(current) if suppressed.as_deref() == Some(current) => Ok(ScheduleDecision::StayPaused),
-        Some(_) => {
+        Some(_) if queue_is_running(queue_status, suppressed.as_deref(), occurrence) => {
             if suppressed.is_some() {
                 db.set_queue_scheduler_suppression(queue_id, None)?;
             }
             Ok(ScheduleDecision::Start)
         }
+        Some(_) => Ok(ScheduleDecision::StayPaused),
         None => {
             if suppressed.is_some() {
                 db.set_queue_scheduler_suppression(queue_id, None)?;
@@ -143,10 +157,11 @@ fn schedule_decision(
     }
 }
 
-/// Starts (or resumes) enough `Pending`/scheduler-paused downloads in
-/// `queue` to fill up to `max_concurrent_downloads`, in `position_in_queue`
-/// order — this is the app-level concurrency cap we enforce ourselves
-/// (independent of aria2's own global settings), per the queue design.
+/// Starts (or resumes) enough `Pending`, `Paused`, or retryable `Error`
+/// downloads in `queue` to fill up to `max_concurrent_downloads`, in
+/// `position_in_queue` order — this is the app-level concurrency cap we
+/// enforce ourselves (independent of aria2's own global settings), per the
+/// queue design.
 pub async fn start_eligible_downloads(state: &AppState, queue: &Queue) -> anyhow::Result<()> {
     let active_count = state.db.count_active_downloads_in_queue(queue.id)?;
     let capacity = (queue.settings.max_concurrent_downloads as i64 - active_count).max(0);
@@ -157,6 +172,10 @@ pub async fn start_eligible_downloads(state: &AppState, queue: &Queue) -> anyhow
     let candidates = state.db.list_startable_downloads(queue.id)?;
 
     for download in candidates.into_iter().take(capacity as usize) {
+        if matches!(download.status, DownloadStatus::Error(_)) {
+            retry_failed_download(state, &download).await?;
+            continue;
+        }
         match &download.aria2_gid {
             // Already known to aria2 (was scheduler-paused earlier) — unpause it.
             Some(gid) => {
@@ -193,6 +212,44 @@ pub async fn start_eligible_downloads(state: &AppState, queue: &Queue) -> anyhow
         }
     }
 
+    Ok(())
+}
+
+async fn retry_failed_download(
+    state: &AppState,
+    download: &common::download::Download,
+) -> anyhow::Result<()> {
+    state.db.increment_retry_count(download.id)?;
+    if download.source_type == SourceType::Torrent {
+        return Ok(());
+    }
+
+    if let Some(gid) = &download.aria2_gid {
+        let _ = state.aria2.remove(gid).await;
+        let _ = state.aria2.remove_download_result(gid).await;
+    }
+    match state
+        .aria2
+        .add_uri(
+            &download.url,
+            &download.finetune,
+            &download.destination_path,
+            Aria2AddMode::Retry,
+        )
+        .await
+    {
+        Ok(gid) => {
+            state.db.update_download_gid(download.id, &gid)?;
+            state
+                .db
+                .update_download_status(download.id, &DownloadStatus::Active)?;
+        }
+        Err(error) => {
+            state
+                .db
+                .update_download_status(download.id, &DownloadStatus::Error(error.to_string()))?;
+        }
+    }
     Ok(())
 }
 
@@ -378,6 +435,73 @@ mod tests {
         assert_eq!(
             schedule_decision(&db, 1, &QueueStatus::Paused, None).unwrap(),
             ScheduleDecision::CloseWindow
+        );
+    }
+}
+
+#[cfg(test)]
+mod retry_budget_tests {
+    use super::*;
+    use crate::{aria2::Aria2Client, config::ServerConfig, db::Database, state::AppState};
+    use chrono::Utc;
+    use common::{
+        download::Download,
+        enums::{FileCategory, SourceType},
+        finetune::FineTune,
+    };
+
+    #[tokio::test]
+    async fn automatic_retry_stops_when_max_retries_is_spent() {
+        let state = AppState::new(
+            Database::open(":memory:").unwrap(),
+            Aria2Client::new("http://127.0.0.1:1/jsonrpc", None),
+            ServerConfig::default(),
+            false,
+        );
+        let mut queue = state.db.get_queue(1).unwrap().unwrap();
+        queue.settings.max_retries = 1;
+        state.db.update_queue(&queue).unwrap();
+        let queue = state.db.get_queue(1).unwrap().unwrap();
+        let download_id = state
+            .db
+            .insert_download(&Download {
+                id: 0,
+                aria2_gid: None,
+                url: "https://example.test/file.bin".into(),
+                filename: Some("file.bin".into()),
+                destination_path: "/tmp".into(),
+                source_type: SourceType::Torrent,
+                category: FileCategory::Other,
+                status: DownloadStatus::Error("disk full".into()),
+                paused_by_scheduler: false,
+                manually_started: false,
+                retry_count: 0,
+                size: None,
+                completed_length: None,
+                queue_id: queue.id,
+                position_in_queue: 0,
+                finetune: FineTune::default(),
+                created_at: Utc::now(),
+                started_at: None,
+                completed_at: None,
+            })
+            .unwrap();
+
+        start_eligible_downloads(&state, &queue).await.unwrap();
+        let download = state.db.get_download(download_id).unwrap().unwrap();
+        assert_eq!(download.retry_count, 1);
+        assert_eq!(download.status, DownloadStatus::Error("disk full".into()));
+
+        start_eligible_downloads(&state, &queue).await.unwrap();
+        let download = state.db.get_download(download_id).unwrap().unwrap();
+        assert_eq!(download.retry_count, 1);
+        assert_eq!(download.status, DownloadStatus::Error("disk full".into()));
+        assert!(
+            state
+                .db
+                .list_startable_downloads(queue.id)
+                .unwrap()
+                .is_empty()
         );
     }
 }

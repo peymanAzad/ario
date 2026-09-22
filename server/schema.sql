@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS downloads (
     status_error        TEXT,                      -- populated only when status = 'Error'
     paused_by_scheduler INTEGER NOT NULL DEFAULT 0, -- 0/1 boolean
     manually_started    INTEGER NOT NULL DEFAULT 0, -- user-started item bypasses queue pause/schedule until terminal
+    retry_count         INTEGER NOT NULL DEFAULT 0, -- automatic queue retries already spent
 
     size                INTEGER,                   -- bytes; NULL until aria2 reports it
     completed_length    INTEGER,                   -- last-known bytes completed; NULL until aria2 reports it

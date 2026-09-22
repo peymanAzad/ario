@@ -21,6 +21,9 @@ pub struct Download {
     /// True while an explicitly started download is allowed to run
     /// independently of its containing queue.
     pub manually_started: bool,
+    /// Automatic queue retries already spent. Eligible while this is below the queue's `max_retries`.
+    #[serde(default)]
+    pub retry_count: u32,
     pub size: Option<u64>,
     /// Last-known bytes completed; `None` until aria2 has reported progress.
     #[serde(default)]

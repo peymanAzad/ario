@@ -14,7 +14,9 @@ use crate::state::AppState;
 use crate::{
     error::AppError,
     routes::downloads::delete_download_record,
-    scheduler::{current_schedule_occurrence, pause_downloads, start_eligible_downloads},
+    scheduler::{
+        current_schedule_occurrence, pause_downloads, queue_is_running, start_eligible_downloads,
+    },
 };
 
 const MAIN_QUEUE_ID: i64 = 1;
@@ -31,8 +33,25 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn list_queues(State(state): State<AppState>) -> Result<Json<Vec<Queue>>, AppError> {
-    let queues = state.db.list_queues()?;
+    let queues = state
+        .db
+        .list_queues()?
+        .into_iter()
+        .map(|queue| with_running_state(&state, queue))
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(Json(queues))
+}
+
+fn with_running_state(state: &AppState, mut queue: Queue) -> Result<Queue, AppError> {
+    let occurrence = queue
+        .scheduler
+        .enabled
+        .then(|| current_schedule_occurrence(&queue.scheduler.recurrence))
+        .flatten();
+    let suppressed = state.db.get_queue_scheduler_suppression(queue.id)?;
+    queue.running = queue_is_running(&queue.status, suppressed.as_deref(), occurrence.as_deref())
+        && state.db.queue_has_work(queue.id)?;
+    Ok(queue)
 }
 
 async fn get_queue(
@@ -43,7 +62,7 @@ async fn get_queue(
         .db
         .get_queue(id)?
         .ok_or_else(|| AppError::NotFound(format!("queue {id}")))?;
-    Ok(Json(queue))
+    Ok(Json(with_running_state(&state, queue)?))
 }
 
 async fn create_queue(
@@ -67,6 +86,7 @@ async fn create_queue(
         },
         status: common::enums::QueueStatus::Paused,
         created_at: Utc::now(),
+        running: false,
     };
 
     let id = state.db.insert_queue(&queue)?;
@@ -74,7 +94,7 @@ async fn create_queue(
         .db
         .get_queue(id)?
         .ok_or_else(|| AppError::NotFound(format!("queue {id}")))?;
-    Ok(Json(created))
+    Ok(Json(with_running_state(&state, created)?))
 }
 
 async fn update_queue(
@@ -104,6 +124,7 @@ async fn update_queue(
         },
         status: existing.status,
         created_at: existing.created_at,
+        running: false,
     };
 
     let scheduler_changed = queue.scheduler != existing.scheduler;
@@ -117,7 +138,7 @@ async fn update_queue(
         .db
         .get_queue(id)?
         .ok_or_else(|| AppError::NotFound(format!("queue {id}")))?;
-    Ok(Json(updated))
+    Ok(Json(with_running_state(&state, updated)?))
 }
 
 #[derive(Default, serde::Deserialize)]
@@ -172,6 +193,10 @@ async fn resume_queue(
         .db
         .get_queue(id)?
         .ok_or_else(|| AppError::NotFound(format!("queue {id}")))?;
+    state.db.reset_error_retry_counts(id)?;
+    if !state.db.queue_has_work(id)? {
+        return Ok(axum::http::StatusCode::NO_CONTENT);
+    }
     state.db.set_queue_scheduler_suppression(id, None)?;
     state
         .db
@@ -256,6 +281,7 @@ mod delete_tests {
                 },
                 status: QueueStatus::Paused,
                 created_at: Utc::now(),
+                running: false,
             })
             .unwrap()
     }
@@ -274,6 +300,7 @@ mod delete_tests {
                 status: DownloadStatus::Paused,
                 paused_by_scheduler: false,
                 manually_started: false,
+                retry_count: 0,
                 size: None,
                 completed_length: None,
                 queue_id,
@@ -389,5 +416,162 @@ mod delete_tests {
 
         assert!(matches!(result, Err(AppError::BadRequest(_))));
         assert!(state.db.get_queue(MAIN_QUEUE_ID).unwrap().is_some());
+    }
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+    use crate::{aria2::Aria2Client, config::ServerConfig, db::Database};
+    use chrono::Utc;
+    use common::{
+        download::Download,
+        enums::{DownloadStatus, FileCategory, QueueStatus, Recurrence, SourceType},
+        finetune::FineTune,
+        queue::{Queue, QueueSettings},
+        scheduler::Scheduler,
+    };
+
+    fn state() -> AppState {
+        AppState::new(
+            Database::open(":memory:").unwrap(),
+            Aria2Client::new("http://127.0.0.1:1/jsonrpc", None),
+            ServerConfig::default(),
+            false,
+        )
+    }
+
+    fn insert_queue(state: &AppState) -> i64 {
+        state
+            .db
+            .insert_queue(&Queue {
+                id: 0,
+                name: "Retry".into(),
+                position: 1,
+                settings: QueueSettings {
+                    max_concurrent_downloads: 1,
+                    max_retries: 3,
+                    default_finetune: FineTune::default(),
+                },
+                scheduler: Scheduler {
+                    enabled: false,
+                    recurrence: Recurrence::Once {
+                        start: Utc::now(),
+                        end: Utc::now(),
+                    },
+                    run_missed_on_startup: false,
+                },
+                status: QueueStatus::Paused,
+                created_at: Utc::now(),
+                running: false,
+            })
+            .unwrap()
+    }
+
+    fn insert_download(
+        state: &AppState,
+        queue_id: i64,
+        status: DownloadStatus,
+        retry_count: u32,
+    ) -> i64 {
+        state
+            .db
+            .insert_download(&Download {
+                id: 0,
+                aria2_gid: None,
+                url: "https://example.test/file.bin".into(),
+                filename: Some("file.bin".into()),
+                destination_path: "/tmp".into(),
+                source_type: SourceType::Torrent,
+                category: FileCategory::Other,
+                status,
+                paused_by_scheduler: false,
+                manually_started: false,
+                retry_count,
+                size: None,
+                completed_length: None,
+                queue_id,
+                position_in_queue: 0,
+                finetune: FineTune::default(),
+                created_at: Utc::now(),
+                started_at: None,
+                completed_at: None,
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn empty_or_completed_queue_resume_does_nothing() {
+        let state = state();
+        let empty_id = insert_queue(&state);
+        let status = resume_queue(State(state.clone()), Path(empty_id))
+            .await
+            .unwrap();
+        assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+        assert_eq!(
+            state.db.get_queue(empty_id).unwrap().unwrap().status,
+            QueueStatus::Paused
+        );
+
+        let completed_id = insert_queue(&state);
+        insert_download(&state, completed_id, DownloadStatus::Completed, 0);
+        let status = resume_queue(State(state.clone()), Path(completed_id))
+            .await
+            .unwrap();
+        assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+        assert_eq!(
+            state.db.get_queue(completed_id).unwrap().unwrap().status,
+            QueueStatus::Paused
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_retries_an_eligible_error_with_a_fresh_budget() {
+        let state = state();
+        let queue_id = insert_queue(&state);
+        let download_id = insert_download(
+            &state,
+            queue_id,
+            DownloadStatus::Error("disk full".into()),
+            4,
+        );
+
+        let status = resume_queue(State(state.clone()), Path(queue_id))
+            .await
+            .unwrap();
+
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(
+            state.db.get_queue(queue_id).unwrap().unwrap().status,
+            QueueStatus::Active
+        );
+        let download = state.db.get_download(download_id).unwrap().unwrap();
+        assert_eq!(download.retry_count, 1);
+        assert_eq!(download.status, DownloadStatus::Error("disk full".into()));
+    }
+
+    #[tokio::test]
+    async fn running_requires_retryable_work() {
+        let state = state();
+        let queue_id = insert_queue(&state);
+        state
+            .db
+            .update_queue_status(queue_id, QueueStatus::Active)
+            .unwrap();
+        insert_download(
+            &state,
+            queue_id,
+            DownloadStatus::Error("disk full".into()),
+            3,
+        );
+
+        let exhausted =
+            with_running_state(&state, state.db.get_queue(queue_id).unwrap().unwrap()).unwrap();
+        assert!(!exhausted.running);
+
+        state.db.reset_error_retry_counts(queue_id).unwrap();
+        let eligible =
+            with_running_state(&state, state.db.get_queue(queue_id).unwrap().unwrap()).unwrap();
+        assert!(eligible.running);
     }
 }

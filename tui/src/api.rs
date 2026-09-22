@@ -71,12 +71,21 @@ pub fn pause_queue(base: &str, queue_id: i64) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn resume_queue(base: &str, queue_id: i64) -> anyhow::Result<()> {
-    client()
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResumeQueueOutcome {
+    Resumed,
+    NothingToDownload,
+}
+
+pub fn resume_queue(base: &str, queue_id: i64) -> anyhow::Result<ResumeQueueOutcome> {
+    let response = client()
         .post(format!("{base}/queues/{queue_id}/resume"))
-        .send()?
-        .error_for_status()?;
-    Ok(())
+        .send()?;
+    if response.status() == reqwest::StatusCode::NO_CONTENT {
+        return Ok(ResumeQueueOutcome::NothingToDownload);
+    }
+    response.error_for_status()?;
+    Ok(ResumeQueueOutcome::Resumed)
 }
 
 pub fn delete_queue(

@@ -273,6 +273,7 @@ mod tests {
                 status: DownloadStatus::Active,
                 paused_by_scheduler: false,
                 manually_started: false,
+                retry_count: 0,
                 size: Some(100),
                 completed_length: Some(42),
                 queue_id: 1,

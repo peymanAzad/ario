@@ -133,9 +133,9 @@ impl Database {
         conn.execute(
             "INSERT INTO downloads (aria2_gid, url, filename, destination_path, source_type,
                                      category, status, status_error, paused_by_scheduler, manually_started,
-                                     size, completed_length, queue_id, position_in_queue, finetune, created_at,
-                                     started_at, completed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                                     retry_count, size, completed_length, queue_id, position_in_queue,
+                                     finetune, created_at, started_at, completed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 d.aria2_gid,
                 d.url,
@@ -147,6 +147,7 @@ impl Database {
                 status_err,
                 d.paused_by_scheduler as i64,
                 d.manually_started as i64,
+                d.retry_count,
                 d.size.map(|v| v as i64),
                 d.completed_length.map(|v| v as i64),
                 d.queue_id,
@@ -406,13 +407,64 @@ impl Database {
     pub fn list_startable_downloads(&self, queue_id: i64) -> SqlResult<Vec<Download>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT * FROM downloads
-             WHERE queue_id = ?1
-               AND (status = 'Pending' OR status = 'Paused')
-             ORDER BY position_in_queue ASC",
+            "SELECT downloads.* FROM downloads
+             JOIN queues ON queues.id = downloads.queue_id
+             WHERE downloads.queue_id = ?1
+               AND (
+                 downloads.status = 'Pending'
+                 OR downloads.status = 'Paused'
+                 OR (
+                   downloads.status = 'Error'
+                   AND downloads.retry_count < queues.max_retries
+                 )
+               )
+             ORDER BY downloads.position_in_queue ASC",
         )?;
         let rows = stmt.query_map(params![queue_id], row_to_download)?;
         rows.collect()
+    }
+
+    /// Pending, paused, retryable errors, or queue-controlled active downloads.
+    pub fn queue_has_work(&self, queue_id: i64) -> SqlResult<bool> {
+        let conn = self.conn.lock().unwrap();
+        let has: i64 = conn.query_row(
+            "SELECT EXISTS(
+                 SELECT 1
+                 FROM downloads
+                 JOIN queues ON queues.id = downloads.queue_id
+                 WHERE downloads.queue_id = ?1
+                   AND (
+                     downloads.status IN ('Pending', 'Paused')
+                     OR (downloads.status = 'Active' AND downloads.manually_started = 0)
+                     OR (
+                       downloads.status = 'Error'
+                       AND downloads.retry_count < queues.max_retries
+                     )
+                   )
+             )",
+            params![queue_id],
+            |row| row.get(0),
+        )?;
+        Ok(has != 0)
+    }
+
+    pub fn reset_error_retry_counts(&self, queue_id: i64) -> SqlResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE downloads SET retry_count = 0
+             WHERE queue_id = ?1 AND status = 'Error'",
+            params![queue_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn increment_retry_count(&self, id: i64) -> SqlResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE downloads SET retry_count = retry_count + 1 WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(())
     }
 
     /// Active downloads still controlled by their queue. An item explicitly
@@ -567,6 +619,21 @@ fn run_migrations(conn: &Connection) -> SqlResult<()> {
         )?;
     }
 
+    let has_retry_count: bool = conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM pragma_table_info('downloads') WHERE name = 'retry_count'
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+
+    if has_downloads_table && !has_retry_count {
+        conn.execute(
+            "ALTER TABLE downloads ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+
     Ok(())
 }
 
@@ -663,6 +730,7 @@ fn row_to_download(row: &Row) -> SqlResult<Download> {
         status: status_from_str(&status_str, status_err),
         paused_by_scheduler: row.get::<_, i64>("paused_by_scheduler")? != 0,
         manually_started: row.get::<_, i64>("manually_started")? != 0,
+        retry_count: row.get::<_, i64>("retry_count")? as u32,
         size: row.get::<_, Option<i64>>("size")?.map(|v| v as u64),
         completed_length: row
             .get::<_, Option<i64>>("completed_length")?
@@ -707,6 +775,7 @@ fn row_to_queue(row: &Row) -> SqlResult<Queue> {
         },
         status: queue_status_from_str(&status),
         created_at: row.get::<_, DateTime<Utc>>("created_at")?,
+        running: false,
     })
 }
 

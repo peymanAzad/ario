@@ -118,12 +118,18 @@ impl App {
             let api_base = self.api_base.clone();
             let sender = self.event_sender.clone();
             thread::spawn(move || {
-                if let Err(e) = api::resume_queue(&api_base, id) {
-                    let _ = sender.send(Event::App(AppEvent::Toast {
-                        message: e.to_string(),
+                let result = match api::resume_queue(&api_base, id) {
+                    Ok(api::ResumeQueueOutcome::NothingToDownload) => Event::App(AppEvent::Toast {
+                        message: "there is nothing to download".into(),
+                        level: ToastLevel::Info,
+                    }),
+                    Ok(api::ResumeQueueOutcome::Resumed) => return,
+                    Err(error) => Event::App(AppEvent::Toast {
+                        message: error.to_string(),
                         level: ToastLevel::Error,
-                    }));
-                }
+                    }),
+                };
+                let _ = sender.send(result);
             });
         }
     }
@@ -204,6 +210,7 @@ mod tests {
             },
             status: QueueStatus::Paused,
             created_at: Utc::now(),
+            running: false,
         }
     }
 

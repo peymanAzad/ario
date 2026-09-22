@@ -24,6 +24,9 @@ pub struct Queue {
     pub scheduler: Scheduler,
     pub created_at: DateTime<Utc>,
     pub status: QueueStatus,
+    /// Server-computed: true while the queue itself is driving downloads.
+    #[serde(default)]
+    pub running: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

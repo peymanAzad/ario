@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use common::enums::{DownloadStatus, FileCategory, QueueStatus};
+use common::enums::{DownloadStatus, FileCategory};
 use ratatui::style::Color;
 
 use crate::theme::Theme;
@@ -111,22 +111,16 @@ impl IconSet {
         }
     }
 
-    pub fn queue_status(self, status: &QueueStatus) -> &'static str {
-        match (self.mode, status) {
-            (GlyphMode::NerdFont, QueueStatus::Active) => "\u{f04b}",
-            (GlyphMode::NerdFont, QueueStatus::Paused) => "\u{f04c}",
-            (GlyphMode::Unicode, QueueStatus::Active) => "▶",
-            (GlyphMode::Unicode, QueueStatus::Paused) => "‖",
-            (GlyphMode::Ascii, QueueStatus::Active) => ">",
-            (GlyphMode::Ascii, QueueStatus::Paused) => "|",
+    pub const fn queue_running(self) -> &'static str {
+        match self.mode {
+            GlyphMode::NerdFont => "\u{f04b}",
+            GlyphMode::Unicode => "▶",
+            GlyphMode::Ascii => ">",
         }
     }
 
-    pub fn queue_status_color(self, status: &QueueStatus, theme: &Theme) -> Color {
-        match status {
-            QueueStatus::Active => theme.status_ok,
-            QueueStatus::Paused => theme.status_warning,
-        }
+    pub const fn queue_running_color(self, theme: &Theme) -> Color {
+        theme.status_ok
     }
 
     pub const fn scheduler(self) -> &'static str {
@@ -186,18 +180,12 @@ mod tests {
             DownloadStatus::Error("failure".into()),
             DownloadStatus::Removed,
         ];
-        let queue_statuses = [QueueStatus::Active, QueueStatus::Paused];
-
         for mode in MODES {
             let icons = IconSet::new(mode);
             for glyph in std::iter::once(icons.all())
                 .chain(CATEGORIES.iter().map(|category| icons.category(category)))
                 .chain(statuses.iter().map(|status| icons.download_status(status)))
-                .chain(
-                    queue_statuses
-                        .iter()
-                        .map(|status| icons.queue_status(status)),
-                )
+                .chain(std::iter::once(icons.queue_running()))
                 .chain(std::iter::once(icons.scheduler()))
             {
                 assert!(!glyph.is_empty());

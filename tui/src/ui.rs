@@ -190,7 +190,7 @@ mod tests {
         assert_eq!(format_bytes(1024_u64.pow(4)), "1.0 TB");
     }
 
-    fn rendered_app(mode: GlyphMode) -> (String, usize) {
+    fn rendered_app(mode: GlyphMode, queue_running: bool) -> (String, usize) {
         let (sender, _receiver) = mpsc::channel();
         let icons = IconSet::new(mode);
         let mut app = App::new(
@@ -212,6 +212,7 @@ mod tests {
                 status: DownloadStatus::Error("checksum mismatch".into()),
                 paused_by_scheduler: false,
                 manually_started: false,
+                retry_count: 0,
                 size: Some(100),
                 completed_length: Some(50),
                 queue_id: 1,
@@ -244,6 +245,7 @@ mod tests {
             },
             created_at: Utc::now(),
             status: QueueStatus::Paused,
+            running: queue_running,
         });
 
         let width = 120;
@@ -273,7 +275,8 @@ mod tests {
         let mut status_columns = Vec::new();
         for mode in [GlyphMode::NerdFont, GlyphMode::Unicode, GlyphMode::Ascii] {
             let icons = IconSet::new(mode);
-            let (output, status_column) = rendered_app(mode);
+            let (output, status_column) = rendered_app(mode, false);
+            let (running_output, _) = rendered_app(mode, true);
             status_columns.push(status_column);
 
             assert!(output.contains(&format!("{} All", icons.all())));
@@ -285,9 +288,15 @@ mod tests {
                 "{} tool.bin",
                 icons.category(&FileCategory::Program)
             )));
-            assert!(output.contains(&format!(
+            assert!(output.contains(&format!("Main Queue {}", icons.scheduler())));
+            assert!(!output.contains(&format!(
                 "Main Queue {} {}",
-                icons.queue_status(&QueueStatus::Paused),
+                icons.queue_running(),
+                icons.scheduler()
+            )));
+            assert!(running_output.contains(&format!(
+                "Main Queue {} {}",
+                icons.queue_running(),
                 icons.scheduler()
             )));
             assert!(output.contains("Download: checksum mismatch"));
