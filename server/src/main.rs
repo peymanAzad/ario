@@ -45,7 +45,15 @@ async fn main() -> anyhow::Result<()> {
     aria2_process.start().await?;
     let supervisor = tokio::spawn(Arc::clone(&aria2_process).supervise());
 
-    let state = AppState::new(database, aria2_client, server_config, launch.tui_managed);
+    let aria2_global_options = load_aria2_global_options(&aria2_client).await;
+    if aria2_global_options.is_none() {
+        eprintln!(
+            "warning: could not cache aria2 global options during startup; the TUI will use text fallbacks"
+        );
+    }
+
+    let state = AppState::new(database, aria2_client, server_config, launch.tui_managed)
+        .with_aria2_global_options(aria2_global_options);
     tokio::spawn(scheduler::run(state.clone()));
     tokio::spawn(poller::run(state.clone()));
 
@@ -80,6 +88,36 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     Ok(())
+}
+
+async fn load_aria2_global_options(
+    client: &Aria2Client,
+) -> Option<common::finetune::Aria2GlobalOptions> {
+    use std::time::Duration;
+    use tokio::time::{Instant, sleep, timeout};
+
+    const MAX_WAIT: Duration = Duration::from_secs(2);
+    const RETRY_DELAY: Duration = Duration::from_millis(50);
+
+    let deadline = Instant::now() + MAX_WAIT;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return None;
+        }
+
+        match timeout(remaining, client.get_global_options()).await {
+            Ok(Ok(options)) => return Some(options),
+            Ok(Err(_)) => {}
+            Err(_) => return None,
+        }
+
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return None;
+        }
+        sleep(RETRY_DELAY.min(remaining)).await;
+    }
 }
 
 async fn shutdown_signal(shutdown_notify: Arc<tokio::sync::Notify>) {

@@ -46,7 +46,7 @@ pub fn draw_queue_modal(f: &mut Frame, app: &App, modal: &QueueModal) {
 
     draw_queue_modal_tab_bar(f, theme, modal, layout[0]);
     match modal.tab {
-        QueueModalTab::Common => draw_queue_modal_common_tab(f, theme, modal, layout[1]),
+        QueueModalTab::Common => draw_queue_modal_common_tab(f, app, modal, layout[1]),
         QueueModalTab::Scheduler => draw_queue_modal_scheduler_tab(f, theme, modal, layout[1]),
         QueueModalTab::DownloadItems => draw_queue_modal_items_tab(f, theme, modal, layout[1]),
     }
@@ -100,12 +100,8 @@ fn draw_queue_modal_tab_bar(
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn draw_queue_modal_common_tab(
-    f: &mut Frame,
-    theme: &crate::theme::Theme,
-    modal: &QueueModal,
-    area: Rect,
-) {
+fn draw_queue_modal_common_tab(f: &mut Frame, app: &App, modal: &QueueModal, area: Rect) {
+    let theme = &app.theme;
     let name_display = if modal.editing_text && modal.common_cursor == 0 {
         format!("{}▏", modal.text_buffer) // trailing block cursor while editing
     } else {
@@ -113,14 +109,24 @@ fn draw_queue_modal_common_tab(
     };
 
     let alloc_label = match &modal.finetune.alloc_strategy {
-        None => "(aria2 default)".to_string(),
+        None => aria2_global_label(
+            app.aria2_global_options
+                .as_ref()
+                .and_then(|options| options.alloc_strategy.as_ref())
+                .map(alloc_strategy_label),
+        ),
         Some(AllocStrategy::None) => "none".to_string(),
         Some(AllocStrategy::Prealloc) => "prealloc".to_string(),
         Some(AllocStrategy::Falloc) => "falloc".to_string(),
         Some(AllocStrategy::Trunc) => "trunc".to_string(),
     };
     let selector_label = match &modal.finetune.stream_piece_selector {
-        None => "(aria2 default)".to_string(),
+        None => aria2_global_label(
+            app.aria2_global_options
+                .as_ref()
+                .and_then(|options| options.stream_piece_selector.as_ref())
+                .map(stream_piece_selector_label),
+        ),
         Some(StreamPieceSelector::Default) => "default".to_string(),
         Some(StreamPieceSelector::InOrder) => "inorder".to_string(),
         Some(StreamPieceSelector::Random) => "random".to_string(),
@@ -149,7 +155,14 @@ fn draw_queue_modal_common_tab(
                     .finetune
                     .connections_per_download
                     .map(|v| v.to_string())
-                    .unwrap_or_else(|| "(aria2 default)".to_string())
+                    .unwrap_or_else(|| {
+                        aria2_global_label(
+                            app.aria2_global_options
+                                .as_ref()
+                                .and_then(|options| options.connections_per_download)
+                                .map(|value| value.to_string()),
+                        )
+                    })
             ),
         ),
         (
@@ -160,7 +173,14 @@ fn draw_queue_modal_common_tab(
                     .finetune
                     .max_connections_per_server
                     .map(|v| v.to_string())
-                    .unwrap_or_else(|| "(aria2 default)".to_string())
+                    .unwrap_or_else(|| {
+                        aria2_global_label(
+                            app.aria2_global_options
+                                .as_ref()
+                                .and_then(|options| options.max_connections_per_server)
+                                .map(|value| value.to_string()),
+                        )
+                    })
             ),
         ),
         ("File allocation".to_string(), format!("◀ {alloc_label} ▶")),
@@ -190,6 +210,33 @@ fn draw_queue_modal_common_tab(
     );
 
     f.render_widget(list, area);
+}
+
+fn aria2_global_label(value: Option<String>) -> String {
+    value.map_or_else(
+        || "(aria2 global)".to_string(),
+        |value| format!("{value} (aria2 global)"),
+    )
+}
+
+fn alloc_strategy_label(value: &AllocStrategy) -> String {
+    match value {
+        AllocStrategy::None => "none",
+        AllocStrategy::Prealloc => "prealloc",
+        AllocStrategy::Falloc => "falloc",
+        AllocStrategy::Trunc => "trunc",
+    }
+    .to_string()
+}
+
+fn stream_piece_selector_label(value: &StreamPieceSelector) -> String {
+    match value {
+        StreamPieceSelector::Default => "default",
+        StreamPieceSelector::InOrder => "inorder",
+        StreamPieceSelector::Random => "random",
+        StreamPieceSelector::Geom => "geom",
+    }
+    .to_string()
 }
 
 fn draw_queue_modal_scheduler_tab(
@@ -431,4 +478,21 @@ fn draw_queue_modal_buttons(
     ];
 
     f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{alloc_strategy_label, aria2_global_label, stream_piece_selector_label};
+    use common::enums::{AllocStrategy, StreamPieceSelector};
+
+    #[test]
+    fn global_labels_include_effective_value_or_text_fallback() {
+        assert_eq!(aria2_global_label(Some("5".into())), "5 (aria2 global)");
+        assert_eq!(aria2_global_label(None), "(aria2 global)");
+        assert_eq!(alloc_strategy_label(&AllocStrategy::Prealloc), "prealloc");
+        assert_eq!(
+            stream_piece_selector_label(&StreamPieceSelector::InOrder),
+            "inorder"
+        );
+    }
 }

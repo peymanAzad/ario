@@ -2,6 +2,7 @@ use crate::aria2::Aria2Client;
 use crate::config::ServerConfig;
 use crate::db::Database;
 use crate::live_status::LiveStatusMap;
+use common::finetune::Aria2GlobalOptions;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::{Notify, RwLock, RwLockReadGuard};
@@ -12,6 +13,7 @@ pub struct AppState {
     pub aria2: Arc<Aria2Client>,
     pub config: Arc<ServerConfig>,
     pub live_status: LiveStatusMap,
+    pub aria2_global_options: Option<Aria2GlobalOptions>,
     pub tui_managed: bool,
     pub shutdown_notify: Arc<Notify>,
     activity_gate: Arc<RwLock<()>>,
@@ -25,11 +27,17 @@ impl AppState {
             aria2: Arc::new(aria2),
             config: Arc::new(config),
             live_status: crate::live_status::new_map(),
+            aria2_global_options: None,
             tui_managed,
             shutdown_notify: Arc::new(Notify::new()),
             activity_gate: Arc::new(RwLock::new(())),
             stopping: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub fn with_aria2_global_options(mut self, options: Option<Aria2GlobalOptions>) -> Self {
+        self.aria2_global_options = options;
+        self
     }
 
     pub async fn activity_guard(&self) -> Result<RwLockReadGuard<'_, ()>, crate::error::AppError> {

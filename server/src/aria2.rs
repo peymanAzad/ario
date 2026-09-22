@@ -1,6 +1,6 @@
 use common::{
     enums::{AllocStrategy, StreamPieceSelector},
-    finetune::FineTune,
+    finetune::{Aria2GlobalOptions, FineTune},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -158,6 +158,11 @@ impl Aria2Client {
         Ok(())
     }
 
+    pub async fn get_global_options(&self) -> Result<Aria2GlobalOptions, Aria2Error> {
+        let result = self.call("aria2.getGlobalOption", vec![]).await?;
+        parse_global_options(&result)
+    }
+
     pub async fn shutdown(&self) -> Result<(), Aria2Error> {
         self.call("aria2.shutdown", vec![]).await?;
         Ok(())
@@ -180,6 +185,33 @@ impl Aria2Client {
             .await?;
         serde_json::from_value(result).map_err(|e| Aria2Error::UnexpectedResponse(e.to_string()))
     }
+}
+
+fn parse_global_options(value: &Value) -> Result<Aria2GlobalOptions, Aria2Error> {
+    let options = value
+        .as_object()
+        .ok_or_else(|| Aria2Error::UnexpectedResponse("expected global options object".into()))?;
+    let string = |name: &str| options.get(name).and_then(Value::as_str);
+
+    Ok(Aria2GlobalOptions {
+        connections_per_download: string("split").and_then(|value| value.parse().ok()),
+        max_connections_per_server: string("max-connection-per-server")
+            .and_then(|value| value.parse().ok()),
+        alloc_strategy: match string("file-allocation") {
+            Some("none") => Some(AllocStrategy::None),
+            Some("prealloc") => Some(AllocStrategy::Prealloc),
+            Some("falloc") => Some(AllocStrategy::Falloc),
+            Some("trunc") => Some(AllocStrategy::Trunc),
+            _ => None,
+        },
+        stream_piece_selector: match string("stream-piece-selector") {
+            Some("default") => Some(StreamPieceSelector::Default),
+            Some("inorder") => Some(StreamPieceSelector::InOrder),
+            Some("random") => Some(StreamPieceSelector::Random),
+            Some("geom") => Some(StreamPieceSelector::Geom),
+            _ => None,
+        },
+    })
 }
 
 fn finetune_to_options(f: &FineTune, destination_path: &str, mode: Aria2AddMode) -> Value {
@@ -306,7 +338,8 @@ impl Aria2Status {
 
 #[cfg(test)]
 mod tests {
-    use super::{Aria2AddMode, Aria2Status, finetune_to_options};
+    use super::{Aria2AddMode, Aria2Status, finetune_to_options, parse_global_options};
+    use common::enums::{AllocStrategy, StreamPieceSelector};
     use common::finetune::FineTune;
 
     #[test]
@@ -359,6 +392,34 @@ mod tests {
         let defaults = finetune_to_options(&FineTune::default(), "/tmp", Aria2AddMode::Fresh);
         assert_eq!(defaults.get("max-tries"), None);
         assert_eq!(defaults.get("retry-wait"), None);
+    }
+
+    #[test]
+    fn parses_global_options_and_tolerates_bad_individual_values() {
+        let parsed = parse_global_options(&serde_json::json!({
+            "split": "5",
+            "max-connection-per-server": "1",
+            "file-allocation": "prealloc",
+            "stream-piece-selector": "default"
+        }))
+        .unwrap();
+        assert_eq!(parsed.connections_per_download, Some(5));
+        assert_eq!(parsed.max_connections_per_server, Some(1));
+        assert_eq!(parsed.alloc_strategy, Some(AllocStrategy::Prealloc));
+        assert_eq!(
+            parsed.stream_piece_selector,
+            Some(StreamPieceSelector::Default)
+        );
+
+        let parsed = parse_global_options(&serde_json::json!({
+            "split": "invalid",
+            "file-allocation": "unknown"
+        }))
+        .unwrap();
+        assert_eq!(parsed.connections_per_download, None);
+        assert_eq!(parsed.max_connections_per_server, None);
+        assert_eq!(parsed.alloc_strategy, None);
+        assert_eq!(parsed.stream_piece_selector, None);
     }
 
     #[test]
