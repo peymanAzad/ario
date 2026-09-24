@@ -103,8 +103,8 @@ fn main() -> anyhow::Result<()> {
             match tui.events.next()? {
                 Event::Tick => app.refresh(),
                 Event::Key(key_event) => update(&mut app, key_event),
-                Event::Mouse(_) => {}
-                Event::Resize(_, _) => {}
+                Event::Mouse => {}
+                Event::Resize => {}
                 Event::App(AppEvent::Refreshed {
                     downloads,
                     queues,

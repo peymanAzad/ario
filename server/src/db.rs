@@ -173,16 +173,6 @@ impl Database {
         .optional()
     }
 
-    pub fn get_download_by_gid(&self, gid: &str) -> SqlResult<Option<Download>> {
-        let conn = self.conn.lock().unwrap();
-        conn.query_row(
-            "SELECT * FROM downloads WHERE aria2_gid = ?1",
-            params![gid],
-            row_to_download,
-        )
-        .optional()
-    }
-
     pub fn list_downloads(&self, filter: &DownloadFilter) -> SqlResult<Vec<Download>> {
         let conn = self.conn.lock().unwrap();
 
