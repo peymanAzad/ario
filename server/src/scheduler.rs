@@ -28,8 +28,8 @@
 //! is closed. Worth revisiting with a dedicated "catch-up in progress" flag
 //! if this proves annoying in practice.
 
-use crate::aria2::Aria2AddMode;
 use crate::state::AppState;
+use crate::{aria2::Aria2AddMode, routes::downloads::start_in_aria2};
 use chrono::{Datelike, Local, NaiveDate, NaiveTime, Utc, Weekday};
 use common::{
     enums::{DownloadStatus, QueueStatus, Recurrence},
@@ -167,16 +167,7 @@ pub async fn start_eligible_downloads(state: &AppState, queue: &Queue) -> anyhow
                 state.db.set_paused_by_scheduler(download.id, false)?;
             }
             // Never started — hand it to aria2 for the first time now.
-            None => match state
-                .aria2
-                .add_uri(
-                    &download.url,
-                    &download.finetune,
-                    &download.destination_path,
-                    Aria2AddMode::Fresh,
-                )
-                .await
-            {
+            None => match start_in_aria2(state, &download, Aria2AddMode::Fresh).await {
                 Ok(gid) => {
                     state.db.update_download_gid(download.id, &gid)?;
                     state

@@ -4,15 +4,15 @@ use crate::error::AppError;
 use crate::state::AppState;
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
+    extract::{DefaultBodyLimit, Multipart, Path, Query, State},
     response::{IntoResponse, Response},
-    routing::{delete, get},
+    routing::{delete, get, post},
 };
 use chrono::Utc;
 use common::{
     download::{
         AddDownloadInput, AddDownloadsRequest, DeleteDownloadFilesResult, Download, DownloadFilter,
-        DownloadLiveStatus,
+        DownloadLiveStatus, TorrentUploadMetadata,
     },
     enums::{DownloadStatus, FileCategory, SourceType},
     finetune::FineTune,
@@ -20,9 +20,16 @@ use common::{
 };
 use std::{collections::HashSet, fs, io::ErrorKind, path::PathBuf};
 
+const MAX_TORRENT_BYTES: usize = 16 * 1024 * 1024;
+const MAX_TORRENT_REQUEST_BYTES: usize = 17 * 1024 * 1024;
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/downloads", get(list_downloads).post(add_downloads))
+        .route(
+            "/downloads/torrent",
+            post(add_torrent_download).layer(DefaultBodyLimit::max(MAX_TORRENT_REQUEST_BYTES)),
+        )
         .route("/downloads/completed", delete(delete_completed_downloads))
         .route("/downloads/{id}", get(get_download).delete(delete_download))
         .route(
@@ -123,125 +130,204 @@ async fn add_downloads(
         .ok_or_else(|| AppError::BadRequest(format!("queue {} does not exist", req.queue_id)))?;
 
     let finetune = resolve_finetune(&queue.settings, req.finetune_override);
-    let mut next_position = state.db.next_position_in_queue(queue.id)?;
+    let next_position = state.db.next_position_in_queue(queue.id)?;
 
     let mut created = Vec::with_capacity(req.inputs.len());
 
-    for input in req.inputs {
-        let (url, filename, source_type, torrent_b64) = match input {
-            AddDownloadInput::Url(url) => {
-                let filename = url.rsplit('/').next().map(str::to_string);
-                let source_type = if url.starts_with("magnet:") {
-                    SourceType::Magnet
-                } else {
-                    SourceType::Http
-                };
-                (url, filename, source_type, None)
-            }
-            AddDownloadInput::TorrentFile { filename, data } => {
-                use base64::Engine;
-                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-                (
-                    String::new(),
-                    Some(filename),
-                    SourceType::Torrent,
-                    Some(b64),
-                )
-            }
-        };
-
-        let category = filename
-            .as_deref()
-            .map(|f| {
-                FileCategory::infer_from_filename(f, &state.config.settings.category_extensions)
-            })
-            .unwrap_or(FileCategory::Other);
-
-        let configured_path = state
-            .config
-            .settings
-            .category_locations
-            .get(&category)
-            .unwrap_or(&state.config.settings.default_download_location);
-        let destination_path = crate::config::expand_tilde(configured_path)?
-            .to_string_lossy()
-            .to_string();
-
-        let mut download = Download {
-            id: 0, // placeholder — overwritten by the id sqlite assigns
-            aria2_gid: None,
-            url,
-            filename,
-            destination_path: destination_path.clone(),
-            source_type,
-            category,
-            status: DownloadStatus::Pending,
-            paused_by_scheduler: false,
-            manually_started: false,
-            size: None,
-            completed_length: None,
-            queue_id: queue.id,
-            position_in_queue: next_position,
-            finetune: finetune.clone(),
-            created_at: Utc::now(),
-            started_at: None,
-            completed_at: None,
-        };
-        next_position += 1;
-
-        let id = state.db.insert_download(&download)?;
-        download.id = id;
-
-        // Match /resume: start even if the queue is Paused, and mark as
-        // manually started so a concurrent scheduler tick cannot reclaim it.
-        if req.start_immediately {
-            state.db.set_manually_started(id, true)?;
-            state.db.set_paused_by_scheduler(id, false)?;
-
-            let aria2_result = match (&torrent_b64, download.source_type) {
-                (Some(b64), _) => {
-                    state
-                        .aria2
-                        .add_torrent(b64, &download.finetune, &destination_path)
-                        .await
-                }
-                (None, _) => {
-                    state
-                        .aria2
-                        .add_uri(
-                            &download.url,
-                            &download.finetune,
-                            &destination_path,
-                            Aria2AddMode::Fresh,
-                        )
-                        .await
-                }
-            };
-
-            match aria2_result {
-                Ok(gid) => {
-                    state.db.update_download_gid(id, &gid)?;
-                    state
-                        .db
-                        .update_download_status(id, &DownloadStatus::Active)?;
-                }
-                Err(e) => {
-                    state.db.set_manually_started(id, false)?;
-                    state
-                        .db
-                        .update_download_status(id, &DownloadStatus::Error(e.to_string()))?;
-                }
-            }
-        }
-
-        let row = state
-            .db
-            .get_download(id)?
-            .ok_or_else(|| AppError::NotFound(format!("download {id}")))?;
-        created.push(merge_live(&state, row).await);
+    for (position, input) in (next_position..).zip(req.inputs) {
+        let download = create_download(
+            &state,
+            input,
+            queue.id,
+            position,
+            finetune.clone(),
+            req.start_immediately,
+        )
+        .await?;
+        created.push(download);
     }
 
     Ok(Json(created))
+}
+
+async fn add_torrent_download(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> Result<Json<DownloadLiveStatus>, AppError> {
+    let _activity = state.activity_guard().await?;
+    let mut metadata = None;
+    let mut file = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|error| AppError::BadRequest(format!("invalid multipart body: {error}")))?
+    {
+        match field.name() {
+            Some("metadata") => {
+                let bytes = field.bytes().await.map_err(|error| {
+                    AppError::BadRequest(format!("invalid metadata part: {error}"))
+                })?;
+                metadata = Some(
+                    serde_json::from_slice::<TorrentUploadMetadata>(&bytes).map_err(|error| {
+                        AppError::BadRequest(format!("invalid metadata JSON: {error}"))
+                    })?,
+                );
+            }
+            Some("file") => {
+                let filename = field
+                    .file_name()
+                    .and_then(safe_filename)
+                    .ok_or_else(|| AppError::BadRequest("torrent filename is required".into()))?;
+                let bytes = field.bytes().await.map_err(|error| {
+                    AppError::BadRequest(format!("invalid torrent file part: {error}"))
+                })?;
+                if bytes.len() > MAX_TORRENT_BYTES {
+                    return Err(AppError::PayloadTooLarge(format!(
+                        "torrent file exceeds the {MAX_TORRENT_BYTES} byte limit"
+                    )));
+                }
+                file = Some((filename, bytes.to_vec()));
+            }
+            _ => {}
+        }
+    }
+
+    let metadata =
+        metadata.ok_or_else(|| AppError::BadRequest("metadata part is required".into()))?;
+    let (filename, data) =
+        file.ok_or_else(|| AppError::BadRequest("file part is required".into()))?;
+    let queue = state.db.get_queue(metadata.queue_id)?.ok_or_else(|| {
+        AppError::BadRequest(format!("queue {} does not exist", metadata.queue_id))
+    })?;
+    let finetune = resolve_finetune(&queue.settings, metadata.finetune_override);
+    let position = state.db.next_position_in_queue(queue.id)?;
+    let created = create_download(
+        &state,
+        AddDownloadInput::TorrentFile { filename, data },
+        queue.id,
+        position,
+        finetune,
+        metadata.start_immediately,
+    )
+    .await?;
+    Ok(Json(created))
+}
+
+fn safe_filename(filename: &str) -> Option<String> {
+    filename
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|name| !name.is_empty() && *name != "." && *name != "..")
+        .map(str::to_owned)
+}
+
+async fn create_download(
+    state: &AppState,
+    input: AddDownloadInput,
+    queue_id: i64,
+    position: i32,
+    finetune: FineTune,
+    start_immediately: bool,
+) -> Result<DownloadLiveStatus, AppError> {
+    let (url, filename, source_type, torrent_data) = match input {
+        AddDownloadInput::Url(url) => {
+            let filename = url.rsplit('/').next().map(str::to_string);
+            let source_type = if url.starts_with("magnet:") {
+                SourceType::Magnet
+            } else {
+                SourceType::Http
+            };
+            (url, filename, source_type, None)
+        }
+        AddDownloadInput::TorrentFile { filename, data } => {
+            if data.is_empty() {
+                return Err(AppError::BadRequest(
+                    "torrent file must not be empty".into(),
+                ));
+            }
+            if data.len() > MAX_TORRENT_BYTES {
+                return Err(AppError::PayloadTooLarge(format!(
+                    "torrent file exceeds the {MAX_TORRENT_BYTES} byte limit"
+                )));
+            }
+            let filename = safe_filename(&filename)
+                .ok_or_else(|| AppError::BadRequest("torrent filename is required".into()))?;
+            (
+                String::new(),
+                Some(filename),
+                SourceType::Torrent,
+                Some(data),
+            )
+        }
+    };
+
+    let category = filename
+        .as_deref()
+        .map(|filename| {
+            FileCategory::infer_from_filename(filename, &state.config.settings.category_extensions)
+        })
+        .unwrap_or(FileCategory::Other);
+    let configured_path = state
+        .config
+        .settings
+        .category_locations
+        .get(&category)
+        .unwrap_or(&state.config.settings.default_download_location);
+    let destination_path = crate::config::expand_tilde(configured_path)?
+        .to_string_lossy()
+        .to_string();
+    let mut download = Download {
+        id: 0,
+        aria2_gid: None,
+        url,
+        filename,
+        destination_path,
+        source_type,
+        category,
+        status: DownloadStatus::Pending,
+        paused_by_scheduler: false,
+        manually_started: false,
+        size: None,
+        completed_length: None,
+        queue_id,
+        position_in_queue: position,
+        finetune,
+        created_at: Utc::now(),
+        started_at: None,
+        completed_at: None,
+    };
+
+    download.id = match torrent_data.as_deref() {
+        Some(data) => state.db.insert_download_with_torrent(&download, data)?,
+        None => state.db.insert_download(&download)?,
+    };
+
+    if start_immediately {
+        state.db.set_manually_started(download.id, true)?;
+        state.db.set_paused_by_scheduler(download.id, false)?;
+        match start_in_aria2(state, &download, Aria2AddMode::Fresh).await {
+            Ok(gid) => {
+                state.db.update_download_gid(download.id, &gid)?;
+                state
+                    .db
+                    .update_download_status(download.id, &DownloadStatus::Active)?;
+            }
+            Err(error) => {
+                state.db.set_manually_started(download.id, false)?;
+                state.db.update_download_status(
+                    download.id,
+                    &DownloadStatus::Error(error.to_string()),
+                )?;
+            }
+        }
+    }
+
+    let row = state
+        .db
+        .get_download(download.id)?
+        .ok_or_else(|| AppError::NotFound(format!("download {}", download.id)))?;
+    Ok(merge_live(state, row).await)
 }
 
 #[derive(Default, serde::Deserialize)]
@@ -528,17 +614,33 @@ async fn pause_download(
     Ok(Json(merge_live(&state, updated).await))
 }
 
-async fn start_in_aria2(
+pub(crate) async fn start_in_aria2(
     state: &AppState,
     download: &Download,
     mode: Aria2AddMode,
 ) -> Result<String, AppError> {
     match download.source_type {
-        SourceType::Torrent => Err(AppError::BadRequest(
-            "torrent files cannot be resumed, retried, or restarted because the .torrent \
-             data is not stored; they can only be started immediately (\"Start Now\")."
-                .into(),
-        )),
+        SourceType::Torrent => {
+            use base64::Engine;
+            let data = state
+                .db
+                .get_download_torrent_data(download.id)?
+                .ok_or_else(|| {
+                    AppError::BadRequest(
+                        "torrent metainfo is unavailable; add the .torrent file again".into(),
+                    )
+                })?;
+            let encoded = base64::engine::general_purpose::STANDARD.encode(data);
+            Ok(state
+                .aria2
+                .add_torrent(
+                    &encoded,
+                    &download.finetune,
+                    &download.destination_path,
+                    mode,
+                )
+                .await?)
+        }
         SourceType::Http | SourceType::Magnet => Ok(state
             .aria2
             .add_uri(
@@ -972,5 +1074,219 @@ mod finetune_resolution_tests {
         assert_eq!(resolved.max_connections_per_server, Some(2));
         assert_eq!(resolved.max_retries, Some(0));
         assert_eq!(resolved.retry_wait_seconds, Some(5));
+    }
+}
+
+#[cfg(test)]
+mod torrent_creation_tests {
+    use super::*;
+    use crate::{aria2::Aria2Client, config::ServerConfig, db::Database};
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode, header::CONTENT_TYPE},
+    };
+    use http_body_util::BodyExt;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+    use tower::ServiceExt;
+
+    fn state() -> AppState {
+        state_with_rpc("http://127.0.0.1:1/jsonrpc")
+    }
+
+    fn state_with_rpc(rpc_url: &str) -> AppState {
+        AppState::new(
+            Database::open(":memory:").unwrap(),
+            Aria2Client::new(rpc_url, None),
+            ServerConfig::default(),
+            false,
+        )
+    }
+
+    #[tokio::test]
+    async fn saved_torrent_persists_metainfo_without_contacting_aria2() {
+        let state = state();
+        let created = create_download(
+            &state,
+            AddDownloadInput::TorrentFile {
+                filename: "../sample.torrent".into(),
+                data: b"metainfo".to_vec(),
+            },
+            1,
+            0,
+            FineTune::default(),
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(created.download.filename.as_deref(), Some("sample.torrent"));
+        assert_eq!(created.download.status, DownloadStatus::Pending);
+        assert_eq!(
+            state
+                .db
+                .get_download_torrent_data(created.download.id)
+                .unwrap(),
+            Some(b"metainfo".to_vec())
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_torrent_without_metainfo_has_an_actionable_error() {
+        let state = state();
+        let mut download = Download {
+            id: 0,
+            aria2_gid: None,
+            url: String::new(),
+            filename: Some("legacy.torrent".into()),
+            destination_path: "/tmp".into(),
+            source_type: SourceType::Torrent,
+            category: FileCategory::Other,
+            status: DownloadStatus::Pending,
+            paused_by_scheduler: false,
+            manually_started: false,
+            size: None,
+            completed_length: None,
+            queue_id: 1,
+            position_in_queue: 0,
+            finetune: FineTune::default(),
+            created_at: Utc::now(),
+            started_at: None,
+            completed_at: None,
+        };
+        download.id = state.db.insert_download(&download).unwrap();
+
+        let error = start_in_aria2(&state, &download, Aria2AddMode::Fresh)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("add the .torrent file again"));
+    }
+
+    #[tokio::test]
+    async fn persisted_torrent_is_readded_with_the_requested_mode() {
+        async fn rpc(
+            State(requests): State<Arc<Mutex<Vec<serde_json::Value>>>>,
+            Json(request): Json<serde_json::Value>,
+        ) -> Json<serde_json::Value> {
+            requests.lock().await.push(request);
+            Json(serde_json::json!({"jsonrpc": "2.0", "id": "ario", "result": "gid"}))
+        }
+
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let rpc_app = Router::new()
+            .route("/jsonrpc", post(rpc))
+            .with_state(Arc::clone(&requests));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, rpc_app).await.unwrap();
+        });
+        let state = state_with_rpc(&format!("http://{address}/jsonrpc"));
+        let created = create_download(
+            &state,
+            AddDownloadInput::TorrentFile {
+                filename: "sample.torrent".into(),
+                data: b"metainfo".to_vec(),
+            },
+            1,
+            0,
+            FineTune::default(),
+            false,
+        )
+        .await
+        .unwrap();
+
+        let gid = start_in_aria2(&state, &created.download, Aria2AddMode::Retry)
+            .await
+            .unwrap();
+        assert_eq!(gid, "gid");
+        let requests = requests.lock().await;
+        assert_eq!(requests[0]["method"], "aria2.addTorrent");
+        assert_eq!(requests[0]["params"][0], "bWV0YWluZm8=");
+        assert_eq!(requests[0]["params"][2]["continue"], "true");
+        server.abort();
+    }
+
+    #[test]
+    fn multipart_filenames_are_reduced_to_a_basename() {
+        assert_eq!(
+            safe_filename("../../sample.torrent").as_deref(),
+            Some("sample.torrent")
+        );
+        assert_eq!(
+            safe_filename(r"C:\Downloads\sample.torrent").as_deref(),
+            Some("sample.torrent")
+        );
+        assert_eq!(safe_filename(""), None);
+    }
+
+    #[tokio::test]
+    async fn multipart_endpoint_creates_a_saved_torrent() {
+        let state = state();
+        let app = router().with_state(state.clone());
+        let metadata = serde_json::to_string(&TorrentUploadMetadata {
+            queue_id: 1,
+            finetune_override: None,
+            start_immediately: false,
+        })
+        .unwrap();
+        let boundary = "ario-test-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"metadata\"\r\nContent-Type: application/json\r\n\r\n{metadata}\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"sample.torrent\"\r\nContent-Type: application/x-bittorrent\r\n\r\nmetainfo\r\n--{boundary}--\r\n"
+        );
+        let response = app
+            .oneshot(
+                Request::post("/downloads/torrent")
+                    .header(
+                        CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let created: DownloadLiveStatus = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(created.download.status, DownloadStatus::Pending);
+        assert_eq!(
+            state
+                .db
+                .get_download_torrent_data(created.download.id)
+                .unwrap(),
+            Some(b"metainfo".to_vec())
+        );
+    }
+
+    #[tokio::test]
+    async fn multipart_endpoint_rejects_a_missing_file() {
+        let state = state();
+        let app = router().with_state(state);
+        let metadata = serde_json::to_string(&TorrentUploadMetadata {
+            queue_id: 1,
+            finetune_override: None,
+            start_immediately: false,
+        })
+        .unwrap();
+        let boundary = "ario-test-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{metadata}\r\n--{boundary}--\r\n"
+        );
+        let response = app
+            .oneshot(
+                Request::post("/downloads/torrent")
+                    .header(
+                        CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }

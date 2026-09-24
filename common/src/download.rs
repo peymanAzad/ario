@@ -60,6 +60,16 @@ pub struct AddDownloadsRequest {
     pub start_immediately: bool,
 }
 
+/// Metadata sent alongside a raw `.torrent` file in the multipart upload API.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct TorrentUploadMetadata {
+    pub queue_id: i64,
+    /// `None` = use the queue's `default_finetune` as-is.
+    pub finetune_override: Option<FineTune>,
+    #[serde(default = "default_start_immediately")]
+    pub start_immediately: bool,
+}
+
 fn default_start_immediately() -> bool {
     true
 }

@@ -2,6 +2,7 @@ use crate::app::App;
 use crate::event::EventHandler;
 use crate::ui;
 use crossterm::{
+    event::{DisableBracketedPaste, EnableBracketedPaste},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -23,7 +24,7 @@ impl Tui {
 
     pub fn enter(&mut self) -> anyhow::Result<()> {
         enable_raw_mode()?;
-        execute!(io::stderr(), EnterAlternateScreen)?;
+        execute!(io::stderr(), EnterAlternateScreen, EnableBracketedPaste)?;
 
         let panic_hook = panic::take_hook();
         panic::set_hook(Box::new(move |info| {
@@ -38,7 +39,7 @@ impl Tui {
 
     fn reset() -> anyhow::Result<()> {
         disable_raw_mode()?;
-        execute!(io::stderr(), LeaveAlternateScreen)?;
+        execute!(io::stderr(), DisableBracketedPaste, LeaveAlternateScreen)?;
         Ok(())
     }
 

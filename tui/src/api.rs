@@ -59,6 +59,27 @@ pub fn add_downloads(
     Ok(resp.json()?)
 }
 
+pub fn add_torrent(
+    base: &str,
+    filename: &str,
+    data: Vec<u8>,
+    metadata: &common::download::TorrentUploadMetadata,
+) -> anyhow::Result<common::download::DownloadLiveStatus> {
+    let metadata = serde_json::to_string(metadata)?;
+    let file = reqwest::blocking::multipart::Part::bytes(data)
+        .file_name(filename.to_string())
+        .mime_str("application/x-bittorrent")?;
+    let form = reqwest::blocking::multipart::Form::new()
+        .text("metadata", metadata)
+        .part("file", file);
+    let resp = client()
+        .post(format!("{base}/downloads/torrent"))
+        .multipart(form)
+        .send()?
+        .error_for_status()?;
+    Ok(resp.json()?)
+}
+
 pub fn list_queues(base: &str) -> anyhow::Result<Vec<Queue>> {
     let resp = client()
         .get(format!("{base}/queues"))

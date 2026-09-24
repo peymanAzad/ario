@@ -25,6 +25,11 @@ pub fn update(app: &mut App, key_event: KeyEvent) {
         return;
     }
 
+    if app.torrent_modal.is_some() {
+        handle_torrent_modal_key(app, key_event);
+        return;
+    }
+
     if app.modal.is_some() {
         handle_clipboard_modal_key(app, key_event);
         return;
@@ -68,6 +73,10 @@ pub fn update(app: &mut App, key_event: KeyEvent) {
             app.open_clipboard_import();
             return;
         }
+        KeyCode::Char('a') => {
+            app.open_torrent_file_modal();
+            return;
+        }
         _ => {}
     }
 
@@ -109,6 +118,70 @@ pub fn update(app: &mut App, key_event: KeyEvent) {
             KeyCode::Char('d') => app.delete_selected(),
             _ => {}
         },
+    }
+}
+
+pub fn paste(app: &mut App, text: &str) {
+    if app.torrent_modal.is_some() {
+        app.paste_torrent_path(text);
+    } else if app
+        .queue_modal
+        .as_ref()
+        .is_some_and(|modal| modal.editing_text)
+    {
+        for character in text.chars().filter(|character| !character.is_control()) {
+            app.queue_modal_text_input(character);
+        }
+    } else if let Some(modal) = &mut app.help_modal
+        && modal.editing_search
+    {
+        modal
+            .query
+            .extend(text.chars().filter(|character| !character.is_control()));
+        modal.scroll = 0;
+    }
+}
+
+fn handle_torrent_modal_key(app: &mut App, key_event: KeyEvent) {
+    let editing = app
+        .torrent_modal
+        .as_ref()
+        .is_some_and(|modal| modal.editing_path);
+    if editing {
+        match key_event.code {
+            KeyCode::Esc => app.torrent_modal_stop_path_editing(),
+            KeyCode::Tab | KeyCode::BackTab => app.torrent_modal_next_tab(),
+            KeyCode::Enter => app.torrent_modal_commit_path(),
+            KeyCode::Backspace => app.torrent_modal_text_backspace(),
+            KeyCode::Char(character)
+                if !key_event
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                app.torrent_modal_text_input(character)
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    match key_event.code {
+        KeyCode::Esc | KeyCode::Char('c') => app.cancel_torrent_file_modal(),
+        KeyCode::Tab | KeyCode::BackTab => app.torrent_modal_next_tab(),
+        KeyCode::Enter
+            if app.torrent_modal.as_ref().is_some_and(|modal| {
+                modal.tab == crate::app::torrent_file_modal::TorrentFileModalTab::Torrent
+            }) =>
+        {
+            app.torrent_modal_commit_path()
+        }
+        KeyCode::Char('s') => app.start_torrent_now(),
+        KeyCode::Char('w') => app.save_torrent_for_later(),
+        KeyCode::Down | KeyCode::Char('j') => app.torrent_modal_move_down(),
+        KeyCode::Up | KeyCode::Char('k') => app.torrent_modal_move_up(),
+        KeyCode::Left | KeyCode::Char('h') => app.torrent_modal_adjust_left(),
+        KeyCode::Right | KeyCode::Char('l') => app.torrent_modal_adjust_right(),
+        _ => {}
     }
 }
 
@@ -309,6 +382,7 @@ mod tests {
                     KeyCode::Char('1'),
                     KeyCode::Tab,
                     KeyCode::Char('n'),
+                    KeyCode::Char('a'),
                     KeyCode::Char('v'),
                     KeyCode::Char('d'),
                     KeyCode::Char('D'),
@@ -323,12 +397,57 @@ mod tests {
                 assert!(app.queue_modal.is_none());
                 assert!(app.confirmation_modal.is_none());
                 assert!(app.modal.is_none());
+                assert!(app.torrent_modal.is_none());
                 assert!(app.toasts.is_empty());
                 press(&mut app, close);
                 assert!(app.help_modal.is_none());
                 assert!(!app.should_quit);
             }
         }
+    }
+
+    #[test]
+    fn add_shortcut_opens_torrent_modal_and_accepts_paste() {
+        let mut app = test_app();
+        press(&mut app, KeyCode::Char('a'));
+        assert!(app.torrent_modal.as_ref().unwrap().editing_path);
+
+        paste(&mut app, "  ~/Downloads/example.torrent  ");
+        assert_eq!(
+            app.torrent_modal.as_ref().unwrap().path_input,
+            "~/Downloads/example.torrent"
+        );
+
+        press(&mut app, KeyCode::Esc);
+        assert!(app.torrent_modal.is_some());
+        assert!(!app.torrent_modal.as_ref().unwrap().editing_path);
+        press(&mut app, KeyCode::Esc);
+        assert!(app.torrent_modal.is_none());
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn torrent_path_focus_can_move_to_tabs_and_back_without_validation() {
+        use crate::app::torrent_file_modal::TorrentFileModalTab;
+
+        let mut app = test_app();
+        press(&mut app, KeyCode::Char('a'));
+
+        press(&mut app, KeyCode::Tab);
+        let modal = app.torrent_modal.as_ref().unwrap();
+        assert!(!modal.editing_path);
+        assert_eq!(modal.tab, TorrentFileModalTab::FineTuning);
+
+        press(&mut app, KeyCode::BackTab);
+        let modal = app.torrent_modal.as_ref().unwrap();
+        assert!(!modal.editing_path);
+        assert_eq!(modal.tab, TorrentFileModalTab::Torrent);
+
+        press(&mut app, KeyCode::Enter);
+        assert!(app.torrent_modal.as_ref().unwrap().editing_path);
+        press(&mut app, KeyCode::Esc);
+        assert!(app.torrent_modal.is_some());
+        assert!(!app.torrent_modal.as_ref().unwrap().editing_path);
     }
 
     #[test]
