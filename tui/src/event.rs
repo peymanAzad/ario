@@ -4,14 +4,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossterm::event::{self, Event as CrosstermEvent, KeyEvent, MouseEvent};
+use crossterm::event::{self, Event as CrosstermEvent, KeyEvent};
 
 #[derive(Debug)]
 pub enum Event {
     Tick,
     Key(KeyEvent),
-    Mouse(MouseEvent),
-    Resize(u16, u16),
+    Mouse,
+    Resize,
     App(crate::app::AppEvent),
 }
 
@@ -45,8 +45,8 @@ impl EventHandler {
                                     Ok(())
                                 }
                             }
-                            CrosstermEvent::Mouse(e) => sender.send(Event::Mouse(e)),
-                            CrosstermEvent::Resize(w, h) => sender.send(Event::Resize(w, h)),
+                            CrosstermEvent::Mouse(_) => sender.send(Event::Mouse),
+                            CrosstermEvent::Resize(_, _) => sender.send(Event::Resize),
                             _ => Ok(()),
                         };
 

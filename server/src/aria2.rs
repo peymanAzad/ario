@@ -170,7 +170,6 @@ impl Aria2Client {
 
     pub async fn tell_status(&self, gid: &str) -> Result<Aria2Status, Aria2Error> {
         let keys = json!([
-            "gid",
             "status",
             "totalLength",
             "completedLength",
@@ -270,7 +269,6 @@ fn finetune_to_options(f: &FineTune, destination_path: &str, mode: Aria2AddMode)
 
 #[derive(Debug, Deserialize)]
 pub struct Aria2Status {
-    pub gid: String,
     /// "active" | "waiting" | "paused" | "error" | "complete" | "removed"
     pub status: String,
     #[serde(rename = "totalLength")]
