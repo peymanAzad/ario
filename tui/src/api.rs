@@ -23,6 +23,8 @@ pub struct HealthResponse {
     #[serde(default)]
     pub download_speed: u64,
     #[serde(default)]
+    pub active_downloads: u64,
+    #[serde(default)]
     pub aria2_global_options: Option<Aria2GlobalOptions>,
 }
 
@@ -250,5 +252,6 @@ mod tests {
         .unwrap();
 
         assert!(response.aria2_global_options.is_none());
+        assert_eq!(response.active_downloads, 0);
     }
 }

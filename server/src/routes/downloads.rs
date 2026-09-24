@@ -53,7 +53,11 @@ async fn merge_live(state: &AppState, download: Download) -> DownloadLiveStatus 
         ),
         None => download.completed_length.unwrap_or(0),
     };
-    let download_speed = live.map(|stats| stats.download_speed).unwrap_or(0);
+    let download_speed = if download.status == DownloadStatus::Active {
+        live.map(|stats| stats.download_speed).unwrap_or(0)
+    } else {
+        0
+    };
 
     let eta_seconds = match (download.size, download_speed) {
         (Some(total), speed) if speed > 0 && total > completed_length => {
@@ -876,7 +880,8 @@ mod merge_live_tests {
     #[tokio::test]
     async fn live_map_overrides_persisted_completed_length() {
         let state = state();
-        let download = insert_download(&state, Some(42));
+        let mut download = insert_download(&state, Some(42));
+        download.status = DownloadStatus::Active;
         state.live_status.write().await.insert(
             download.id,
             LiveStats {
@@ -889,6 +894,24 @@ mod merge_live_tests {
         assert_eq!(live.completed_length, 80);
         assert_eq!(live.download_speed, 10);
         assert_eq!(live.eta_seconds, Some(2));
+    }
+
+    #[tokio::test]
+    async fn paused_download_suppresses_stale_transfer_metrics() {
+        let state = state();
+        let download = insert_download(&state, Some(42));
+        state.live_status.write().await.insert(
+            download.id,
+            LiveStats {
+                completed_length: 80,
+                download_speed: 10,
+            },
+        );
+
+        let live = merge_live(&state, download).await;
+        assert_eq!(live.completed_length, 80);
+        assert_eq!(live.download_speed, 0);
+        assert_eq!(live.eta_seconds, None);
     }
 
     #[tokio::test]
