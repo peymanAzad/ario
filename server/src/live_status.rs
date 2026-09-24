@@ -15,8 +15,15 @@ pub fn new_map() -> LiveStatusMap {
     Arc::new(RwLock::new(HashMap::new()))
 }
 
-pub fn total_download_speed(stats: &HashMap<i64, LiveStats>) -> u64 {
-    stats.values().map(|s| s.download_speed).sum()
+pub fn total_download_speed(
+    stats: &HashMap<i64, LiveStats>,
+    active_download_ids: impl IntoIterator<Item = i64>,
+) -> u64 {
+    active_download_ids
+        .into_iter()
+        .filter_map(|id| stats.get(&id))
+        .map(|stats| stats.download_speed)
+        .sum()
 }
 
 /// aria2 often reports `completedLength=0` for a few seconds after session
@@ -45,7 +52,7 @@ mod tests {
     #[test]
     fn total_download_speed_sums_active_entries() {
         let mut stats = HashMap::new();
-        assert_eq!(total_download_speed(&stats), 0);
+        assert_eq!(total_download_speed(&stats, []), 0);
         stats.insert(
             1,
             LiveStats {
@@ -60,6 +67,8 @@ mod tests {
                 download_speed: 250,
             },
         );
-        assert_eq!(total_download_speed(&stats), 350);
+        assert_eq!(total_download_speed(&stats, [1, 2]), 350);
+        assert_eq!(total_download_speed(&stats, [1]), 100);
+        assert_eq!(total_download_speed(&stats, [3]), 0);
     }
 }

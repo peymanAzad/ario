@@ -127,7 +127,7 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn has_download_activity(app: &App) -> bool {
-    app.total_download_speed > 0 || app.speed_history.iter().any(|&speed| speed > 0)
+    app.active_downloads > 0
 }
 
 fn sparkline_bars(history: impl IntoIterator<Item = u64>) -> Vec<Option<u64>> {
@@ -259,6 +259,7 @@ mod tests {
             false,
             false,
             0,
+            0,
             None,
             3, // Retrying, Failed, then Connected.
         );
@@ -288,7 +289,7 @@ mod tests {
         let mut app = app_with_glyphs(true, GlyphMode::Unicode);
         app.apply_lifecycle(LifecycleState::Connected);
         app.last_error = Some("can't reach server: connection refused".into());
-        app.speed_history.extend([0, 0, 0]);
+        app.speed_history.extend([1024, 512, 0]);
         let rendered = rendered_status_bar(&app);
         assert!(rendered.contains("can't reach server: connection refused"));
         assert!(!rendered.contains("0.0 B/s"));
@@ -301,6 +302,7 @@ mod tests {
         let mut app = app_with_glyphs(true, GlyphMode::Unicode);
         app.apply_lifecycle(LifecycleState::Connected);
         app.total_download_speed = 1024;
+        app.active_downloads = 1;
         app.speed_history.extend([1, 2, 4, 8, 16, 12, 10, 14]);
         let rendered = rendered_status_bar(&app);
         assert!(rendered.contains("1.0 KB/s"));
@@ -325,6 +327,7 @@ mod tests {
     fn zero_speed_samples_draw_a_baseline() {
         let mut app = app_with_glyphs(true, GlyphMode::Unicode);
         app.apply_lifecycle(LifecycleState::Connected);
+        app.active_downloads = 1;
         app.speed_history.extend([100, 0]);
         let rendered = rendered_status_bar(&app);
         assert!(rendered.contains("▁"));
@@ -343,6 +346,7 @@ mod tests {
     fn unsampled_history_is_blank_while_zero_samples_draw_a_baseline() {
         let mut app = app_with_glyphs(true, GlyphMode::Unicode);
         app.total_download_speed = 100;
+        app.active_downloads = 1;
         app.speed_history.push_back(0);
         let rendered = rendered_status_bar(&app);
         let graph_start = rendered.find('▁').unwrap();

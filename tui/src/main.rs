@@ -111,6 +111,7 @@ fn main() -> anyhow::Result<()> {
                     server_reachable,
                     aria2_reachable,
                     download_speed,
+                    active_downloads,
                     aria2_global_options,
                     lifecycle_revision,
                 }) => app.apply_refresh(
@@ -119,6 +120,7 @@ fn main() -> anyhow::Result<()> {
                     server_reachable,
                     aria2_reachable,
                     download_speed,
+                    active_downloads,
                     aria2_global_options,
                     lifecycle_revision,
                 ),

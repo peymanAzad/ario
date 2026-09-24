@@ -6,6 +6,7 @@ use axum::{
 use common::finetune::Aria2GlobalOptions;
 use common::lifecycle::ShutdownIfIdleResponse;
 use common::settings::Settings;
+use common::{download::DownloadFilter, enums::DownloadStatus};
 use serde::Serialize;
 
 use crate::state::AppState;
@@ -28,20 +29,31 @@ struct HealthResponse {
     aria2_reachable: bool,
     tui_managed: bool,
     download_speed: u64,
+    active_downloads: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     aria2_global_options: Option<Aria2GlobalOptions>,
 }
 
-async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
+async fn health(
+    State(state): State<AppState>,
+) -> Result<Json<HealthResponse>, crate::error::AppError> {
     let aria2_reachable = state.aria2.get_version().await.is_ok();
-    let download_speed = crate::live_status::total_download_speed(&*state.live_status.read().await);
-    Json(HealthResponse {
+    let active_downloads = state.db.list_downloads(&DownloadFilter {
+        status: Some(DownloadStatus::Active),
+        ..DownloadFilter::default()
+    })?;
+    let download_speed = crate::live_status::total_download_speed(
+        &*state.live_status.read().await,
+        active_downloads.iter().map(|download| download.id),
+    );
+    Ok(Json(HealthResponse {
         server: "ok",
         aria2_reachable,
         tui_managed: state.tui_managed,
         download_speed,
+        active_downloads: active_downloads.len() as u64,
         aria2_global_options: state.aria2_global_options.clone(),
-    })
+    }))
 }
 
 async fn shutdown_if_idle(
@@ -77,8 +89,9 @@ mod tests {
         )
         .with_aria2_global_options(Some(options.clone()));
 
-        let Json(response) = health(State(state)).await;
+        let Json(response) = health(State(state)).await.unwrap();
 
         assert_eq!(response.aria2_global_options, Some(options));
+        assert_eq!(response.active_downloads, 0);
     }
 }
