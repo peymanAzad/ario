@@ -12,6 +12,7 @@ pub enum AppError {
     NotFound(String),
     Database(rusqlite::Error),
     BadRequest(String),
+    PayloadTooLarge(String),
     Conflict(String),
     Unavailable(String),
     Aria2(Aria2Error),
@@ -24,6 +25,7 @@ impl std::fmt::Display for AppError {
             AppError::NotFound(msg) => write!(f, "not found: {msg}"),
             AppError::Database(e) => write!(f, "database error: {e}"),
             AppError::BadRequest(msg) => write!(f, "bad request: {msg}"),
+            AppError::PayloadTooLarge(msg) => write!(f, "payload too large: {msg}"),
             AppError::Conflict(msg) => write!(f, "conflict: {msg}"),
             AppError::Unavailable(msg) => write!(f, "service unavailable: {msg}"),
             AppError::Aria2(e) => write!(f, "aria2 error: {e}"),
@@ -60,6 +62,7 @@ impl IntoResponse for AppError {
         let (status, message) = match &self {
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            AppError::PayloadTooLarge(msg) => (StatusCode::PAYLOAD_TOO_LARGE, msg.clone()),
             AppError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
             AppError::Unavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg.clone()),
             AppError::Database(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),

@@ -38,7 +38,9 @@ pub fn draw_clipboard_import_modal(f: &mut Frame, app: &App, modal: &ClipboardIm
     draw_modal_tab_bar(f, app, modal, layout[0]);
     match modal.tab {
         ModalTab::Urls => draw_modal_urls_tab(f, app, modal, layout[1]),
-        ModalTab::FineTuning => draw_modal_finetuning_tab(f, app, modal, layout[1]),
+        ModalTab::FineTuning => {
+            draw_finetuning_fields(f, app, &modal.finetune, modal.finetune_cursor, layout[1])
+        }
     }
     draw_modal_buttons(f, app, layout[2]);
 }
@@ -145,17 +147,23 @@ fn draw_modal_urls_tab(f: &mut Frame, app: &App, modal: &ClipboardImportModal, a
     );
 }
 
-fn draw_modal_finetuning_tab(f: &mut Frame, app: &App, modal: &ClipboardImportModal, area: Rect) {
+pub(crate) fn draw_finetuning_fields(
+    f: &mut Frame,
+    app: &App,
+    finetune: &common::finetune::FineTune,
+    finetune_cursor: usize,
+    area: Rect,
+) {
     let theme = &app.theme;
 
-    let alloc_label = match &modal.finetune.alloc_strategy {
+    let alloc_label = match &finetune.alloc_strategy {
         None => "(queue default)".to_string(),
         Some(AllocStrategy::None) => "none".to_string(),
         Some(AllocStrategy::Prealloc) => "prealloc".to_string(),
         Some(AllocStrategy::Falloc) => "falloc".to_string(),
         Some(AllocStrategy::Trunc) => "trunc".to_string(),
     };
-    let selector_label = match &modal.finetune.stream_piece_selector {
+    let selector_label = match &finetune.stream_piece_selector {
         None => "(queue default)".to_string(),
         Some(StreamPieceSelector::Default) => "default".to_string(),
         Some(StreamPieceSelector::InOrder) => "inorder".to_string(),
@@ -166,16 +174,14 @@ fn draw_modal_finetuning_tab(f: &mut Frame, app: &App, modal: &ClipboardImportMo
     let fields: [(&str, String); 6] = [
         (
             "Connections per download",
-            modal
-                .finetune
+            finetune
                 .connections_per_download
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "(queue default)".to_string()),
         ),
         (
             "Max connections per server",
-            modal
-                .finetune
+            finetune
                 .max_connections_per_server
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "(queue default)".to_string()),
@@ -184,16 +190,14 @@ fn draw_modal_finetuning_tab(f: &mut Frame, app: &App, modal: &ClipboardImportMo
         ("Stream piece selector", selector_label),
         (
             "Max retries",
-            modal
-                .finetune
+            finetune
                 .max_retries
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "(queue default)".to_string()),
         ),
         (
             "Retry wait (seconds)",
-            modal
-                .finetune
+            finetune
                 .retry_wait_seconds
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "(queue default)".to_string()),
@@ -204,7 +208,7 @@ fn draw_modal_finetuning_tab(f: &mut Frame, app: &App, modal: &ClipboardImportMo
         .iter()
         .enumerate()
         .map(|(i, (label, value))| {
-            let style = if i == modal.finetune_cursor {
+            let style = if i == finetune_cursor {
                 Style::default()
                     .bg(theme.selected_bg)
                     .fg(theme.selected_fg)

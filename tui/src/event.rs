@@ -10,6 +10,7 @@ use crossterm::event::{self, Event as CrosstermEvent, KeyEvent};
 pub enum Event {
     Tick,
     Key(KeyEvent),
+    Paste(String),
     Mouse,
     Resize,
     App(crate::app::AppEvent),
@@ -47,6 +48,7 @@ impl EventHandler {
                             }
                             CrosstermEvent::Mouse(_) => sender.send(Event::Mouse),
                             CrosstermEvent::Resize(_, _) => sender.send(Event::Resize),
+                            CrosstermEvent::Paste(text) => sender.send(Event::Paste(text)),
                             _ => Ok(()),
                         };
 

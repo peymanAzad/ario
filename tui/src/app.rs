@@ -6,6 +6,7 @@ pub mod downloads_table;
 pub mod help_modal;
 pub mod queue_list;
 pub mod queue_modal;
+pub mod torrent_file_modal;
 
 use std::{
     collections::VecDeque,
@@ -18,6 +19,7 @@ use crate::app::clipboard_import_modal::ClipboardImportModal;
 use crate::app::confirmation_modal::ConfirmationModal;
 use crate::app::download_edit_modal::DownloadEditModal;
 use crate::app::queue_modal::QueueModal;
+use crate::app::torrent_file_modal::TorrentFileModal;
 use crate::icons::IconSet;
 use crate::theme::Theme;
 pub use crate::toast::ToastLevel;
@@ -51,6 +53,7 @@ pub enum AppEvent {
         level: ToastLevel,
     },
     DownloadFilesDeleted(anyhow::Result<common::download::DeleteDownloadFilesResult>),
+    TorrentAdded(anyhow::Result<DownloadLiveStatus>),
     QueueDeleteResolved {
         queue_id: i64,
         queue_name: String,
@@ -149,6 +152,7 @@ pub struct App {
     pub theme: Theme,
     pub icons: IconSet,
     pub modal: Option<ClipboardImportModal>,
+    pub torrent_modal: Option<TorrentFileModal>,
     pub queue_modal: Option<QueueModal>,
     pub download_modal: Option<DownloadEditModal>,
     pub confirmation_modal: Option<ConfirmationModal>,
@@ -193,6 +197,7 @@ impl App {
             theme,
             icons,
             modal: None,
+            torrent_modal: None,
             queue_modal: None,
             download_modal: None,
             confirmation_modal: None,
@@ -209,6 +214,7 @@ impl App {
 
     pub fn has_open_modal(&self) -> bool {
         self.modal.is_some()
+            || self.torrent_modal.is_some()
             || self.queue_modal.is_some()
             || self.download_modal.is_some()
             || self.confirmation_modal.is_some()
@@ -478,9 +484,32 @@ impl App {
         }
         self.refresh();
     }
+
+    pub fn apply_torrent_added(&mut self, result: anyhow::Result<DownloadLiveStatus>) {
+        match result {
+            Ok(result) if matches!(result.download.status, DownloadStatus::Error(_)) => {
+                let DownloadStatus::Error(message) = result.download.status else {
+                    unreachable!()
+                };
+                self.toasts.push(
+                    format!("torrent was added but could not start: {message}"),
+                    ToastLevel::Error,
+                );
+            }
+            Ok(result) => self.toasts.push(
+                format!(
+                    "added {}",
+                    result.download.filename.as_deref().unwrap_or("torrent")
+                ),
+                ToastLevel::Success,
+            ),
+            Err(error) => self.toasts.push(error.to_string(), ToastLevel::Error),
+        }
+        self.refresh();
+    }
 }
 
-fn adjust_finetune_field(f: &mut FineTune, cursor: usize, forward: bool) {
+pub(crate) fn adjust_finetune_field(f: &mut FineTune, cursor: usize, forward: bool) {
     match cursor {
         0 => f.connections_per_download = adjust_opt_u32(f.connections_per_download, forward, 16),
         1 => {

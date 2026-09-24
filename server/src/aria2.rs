@@ -118,8 +118,9 @@ impl Aria2Client {
         torrent_b64: &str,
         finetune: &FineTune,
         destination_path: &str,
+        mode: Aria2AddMode,
     ) -> Result<String, Aria2Error> {
-        let options = finetune_to_options(finetune, destination_path, Aria2AddMode::Fresh);
+        let options = finetune_to_options(finetune, destination_path, mode);
         let result = self
             .call(
                 "aria2.addTorrent",

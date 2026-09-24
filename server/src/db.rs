@@ -130,37 +130,29 @@ impl Database {
 
     pub fn insert_download(&self, d: &Download) -> SqlResult<i64> {
         let conn = self.conn.lock().unwrap();
-        let finetune_json = serde_json::to_string(&d.finetune).unwrap();
-        let (status_str, status_err) = status_to_str(&d.status);
+        insert_download_on(&conn, d)
+    }
 
-        conn.execute(
-            "INSERT INTO downloads (aria2_gid, url, filename, destination_path, source_type,
-                                     category, status, status_error, paused_by_scheduler, manually_started,
-                                     size, completed_length, queue_id, position_in_queue, finetune, created_at,
-                                     started_at, completed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
-            params![
-                d.aria2_gid,
-                d.url,
-                d.filename,
-                d.destination_path,
-                source_to_str(&d.source_type),
-                category_to_str(&d.category),
-                status_str,
-                status_err,
-                d.paused_by_scheduler as i64,
-                d.manually_started as i64,
-                d.size.map(|v| v as i64),
-                d.completed_length.map(|v| v as i64),
-                d.queue_id,
-                d.position_in_queue,
-                finetune_json,
-                d.created_at,
-                d.started_at,
-                d.completed_at,
-            ],
+    pub fn insert_download_with_torrent(&self, d: &Download, data: &[u8]) -> SqlResult<i64> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let id = insert_download_on(&tx, d)?;
+        tx.execute(
+            "INSERT INTO download_torrent_data (download_id, data) VALUES (?1, ?2)",
+            params![id, data],
         )?;
-        Ok(conn.last_insert_rowid())
+        tx.commit()?;
+        Ok(id)
+    }
+
+    pub fn get_download_torrent_data(&self, download_id: i64) -> SqlResult<Option<Vec<u8>>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT data FROM download_torrent_data WHERE download_id = ?1",
+            params![download_id],
+            |row| row.get(0),
+        )
+        .optional()
     }
 
     pub fn get_download(&self, id: i64) -> SqlResult<Option<Download>> {
@@ -489,6 +481,40 @@ impl Database {
         )?;
         Ok(())
     }
+}
+
+fn insert_download_on(conn: &Connection, d: &Download) -> SqlResult<i64> {
+    let finetune_json = serde_json::to_string(&d.finetune).unwrap();
+    let (status_str, status_err) = status_to_str(&d.status);
+
+    conn.execute(
+        "INSERT INTO downloads (aria2_gid, url, filename, destination_path, source_type,
+                                 category, status, status_error, paused_by_scheduler, manually_started,
+                                 size, completed_length, queue_id, position_in_queue, finetune, created_at,
+                                 started_at, completed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+        params![
+            d.aria2_gid,
+            d.url,
+            d.filename,
+            d.destination_path,
+            source_to_str(&d.source_type),
+            category_to_str(&d.category),
+            status_str,
+            status_err,
+            d.paused_by_scheduler as i64,
+            d.manually_started as i64,
+            d.size.map(|v| v as i64),
+            d.completed_length.map(|v| v as i64),
+            d.queue_id,
+            d.position_in_queue,
+            finetune_json,
+            d.created_at,
+            d.started_at,
+            d.completed_at,
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
 }
 
 fn run_migrations(conn: &Connection) -> SqlResult<()> {
@@ -961,6 +987,75 @@ mod tests {
 
         db.delete_download(id).unwrap();
         assert!(db.list_download_artifacts(id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn torrent_metainfo_round_trips_and_cascades_with_download() {
+        let db = Database::open(":memory:").unwrap();
+        let template_id = insert_download_with_status(&db, 1, "Pending");
+        let mut download = db.get_download(template_id).unwrap().unwrap();
+        download.id = 0;
+        download.url.clear();
+        download.filename = Some("sample.torrent".into());
+        download.source_type = SourceType::Torrent;
+        download.position_in_queue = 1;
+
+        let id = db
+            .insert_download_with_torrent(&download, b"metainfo")
+            .unwrap();
+        assert_eq!(
+            db.get_download_torrent_data(id).unwrap(),
+            Some(b"metainfo".to_vec())
+        );
+
+        db.delete_download(id).unwrap();
+        assert_eq!(db.get_download_torrent_data(id).unwrap(), None);
+    }
+
+    #[test]
+    fn torrent_metainfo_survives_database_reopen() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "ario-torrent-reopen-{}-{nonce}.sqlite",
+            std::process::id()
+        ));
+        let id = {
+            let db = Database::open(path.to_str().unwrap()).unwrap();
+            let template_id = insert_download_with_status(&db, 1, "Pending");
+            let mut download = db.get_download(template_id).unwrap().unwrap();
+            download.id = 0;
+            download.url.clear();
+            download.filename = Some("persisted.torrent".into());
+            download.source_type = SourceType::Torrent;
+            db.insert_download_with_torrent(&download, b"persistent metainfo")
+                .unwrap()
+        };
+
+        let reopened = Database::open(path.to_str().unwrap()).unwrap();
+        assert_eq!(
+            reopened.get_download_torrent_data(id).unwrap(),
+            Some(b"persistent metainfo".to_vec())
+        );
+        drop(reopened);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn empty_torrent_metainfo_rolls_back_download_insert() {
+        let db = Database::open(":memory:").unwrap();
+        let template_id = insert_download_with_status(&db, 1, "Pending");
+        let mut download = db.get_download(template_id).unwrap().unwrap();
+        download.id = 0;
+        download.url.clear();
+        download.filename = Some("empty.torrent".into());
+        download.source_type = SourceType::Torrent;
+
+        assert!(db.insert_download_with_torrent(&download, b"").is_err());
+        let downloads = db.list_downloads(&DownloadFilter::default()).unwrap();
+        assert_eq!(downloads.len(), 1);
     }
 
     #[test]

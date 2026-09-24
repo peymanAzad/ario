@@ -21,7 +21,7 @@ use server_process::{
 };
 use theme::Theme;
 use tui::Tui;
-use update::update;
+use update::{paste, update};
 
 use crate::app::AppEvent;
 use crate::config::{ManagedExitAction, StopManagedDaemon};
@@ -103,6 +103,7 @@ fn main() -> anyhow::Result<()> {
             match tui.events.next()? {
                 Event::Tick => app.refresh(),
                 Event::Key(key_event) => update(&mut app, key_event),
+                Event::Paste(text) => paste(&mut app, &text),
                 Event::Mouse => {}
                 Event::Resize => {}
                 Event::App(AppEvent::Refreshed {
@@ -133,6 +134,7 @@ fn main() -> anyhow::Result<()> {
                 Event::App(AppEvent::DownloadFilesDeleted(result)) => {
                     app.apply_download_files_deleted(result)
                 }
+                Event::App(AppEvent::TorrentAdded(result)) => app.apply_torrent_added(result),
                 Event::App(AppEvent::QueueDeleteResolved {
                     queue_id,
                     queue_name,

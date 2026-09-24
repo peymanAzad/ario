@@ -9,6 +9,7 @@ mod queue_list;
 mod queue_modal;
 mod status_bar;
 mod toast_popup;
+mod torrent_file_modal;
 
 use crate::{
     app::App,
@@ -17,6 +18,7 @@ use crate::{
         confirmation_modal::draw_confirmation_modal, download_edit_modal::draw_download_modal,
         downloads_table::draw_downloads_table, footer::draw_footer, queue_list::draw_queues_list,
         queue_modal::draw_queue_modal, status_bar::draw_status_bar, toast_popup::draw_toasts,
+        torrent_file_modal::draw_torrent_file_modal,
     },
 };
 use common::enums::FileCategory;
@@ -55,6 +57,8 @@ pub fn render(app: &mut App, f: &mut Frame) {
         draw_queue_modal(f, app, modal);
     } else if let Some(modal) = &app.download_modal {
         draw_download_modal(f, app, modal);
+    } else if let Some(modal) = &app.torrent_modal {
+        draw_torrent_file_modal(f, app, modal);
     } else if let Some(modal) = &app.modal {
         draw_clipboard_import_modal(f, app, modal);
     }

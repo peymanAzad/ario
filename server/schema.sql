@@ -85,3 +85,10 @@ CREATE TABLE IF NOT EXISTS download_artifacts (
 
 CREATE INDEX IF NOT EXISTS idx_download_artifacts_download_id
     ON download_artifacts(download_id);
+
+-- Original metainfo is retained so queued torrents can be started after a
+-- restart and failed/completed torrents can be retried or restarted.
+CREATE TABLE IF NOT EXISTS download_torrent_data (
+    download_id INTEGER PRIMARY KEY REFERENCES downloads(id) ON DELETE CASCADE,
+    data        BLOB NOT NULL CHECK(length(data) > 0)
+);
