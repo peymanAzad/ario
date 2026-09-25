@@ -135,6 +135,10 @@ fn main() -> anyhow::Result<()> {
                     app.apply_download_files_deleted(result)
                 }
                 Event::App(AppEvent::TorrentAdded(result)) => app.apply_torrent_added(result),
+                Event::App(AppEvent::DownloadPaused {
+                    download_id,
+                    result,
+                }) => app.apply_download_paused(download_id, result),
                 Event::App(AppEvent::QueueDeleteResolved {
                     queue_id,
                     queue_name,

@@ -194,11 +194,20 @@ pub fn draw_downloads_table(f: &mut Frame, app: &App, area: Rect) {
                     middle_truncate(download_name(d), name_width - prefix.width(), ellipsis)
                 )
             };
-            let mut status = vec![Span::styled(
-                app.icons.download_status(&d.download.status),
-                Style::default().fg(app.icons.download_status_color(&d.download.status, theme)),
-            )];
-            if let Some(percent) = progress(d) {
+            let pausing = app.is_download_pausing(d.download.id);
+            let mut status = if pausing {
+                let marker = app.icons.ellipsis().chars().next().unwrap_or('.');
+                vec![Span::styled(
+                    format!("pausing{marker}"),
+                    Style::default().fg(theme.status_warning),
+                )]
+            } else {
+                vec![Span::styled(
+                    app.icons.download_status(&d.download.status),
+                    Style::default().fg(app.icons.download_status_color(&d.download.status, theme)),
+                )]
+            };
+            if !pausing && let Some(percent) = progress(d) {
                 status.push(Span::raw(format!(" {percent}")));
             }
             let completed = d.download.status == DownloadStatus::Completed;
@@ -367,6 +376,21 @@ mod tests {
                     assert_ne!(buffer[(x, 2)].fg, buffer[(x + 2, 2)].fg);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn pausing_indicator_renders_in_every_glyph_mode() {
+        for mode in [GlyphMode::Ascii, GlyphMode::Unicode, GlyphMode::NerdFont] {
+            let mut app = app(mode);
+            app.pause_selected();
+
+            let buffer = render(&app, 100, 12);
+            let widths = column_widths(98);
+            let status_x = 1 + widths[0] + 1;
+            let marker = app.icons.ellipsis().chars().next().unwrap_or('.');
+            let expected = format!("pausing{marker}");
+            assert_eq!(cell_text(&buffer, status_x, 10, 2), expected);
         }
     }
 
