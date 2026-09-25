@@ -9,7 +9,7 @@ pub mod queue_modal;
 pub mod torrent_file_modal;
 
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     sync::mpsc::Sender,
     thread,
     time::{Duration, Instant},
@@ -54,6 +54,10 @@ pub enum AppEvent {
     },
     DownloadFilesDeleted(anyhow::Result<common::download::DeleteDownloadFilesResult>),
     TorrentAdded(anyhow::Result<DownloadLiveStatus>),
+    DownloadPaused {
+        download_id: i64,
+        result: anyhow::Result<DownloadLiveStatus>,
+    },
     QueueDeleteResolved {
         queue_id: i64,
         queue_name: String,
@@ -164,6 +168,7 @@ pub struct App {
     refresh_in_flight: bool,
     lifecycle_revision: u64,
     pending_confirmation_action: Option<PendingConfirmationAction>,
+    pausing_downloads: HashSet<i64>,
     last_speed_sample_at: Option<Instant>,
 }
 
@@ -207,6 +212,7 @@ impl App {
             refresh_in_flight: false,
             lifecycle_revision: 0,
             pending_confirmation_action: None,
+            pausing_downloads: HashSet::new(),
             last_speed_sample_at: None,
             toasts: ToastStack::new(),
         }
@@ -352,6 +358,12 @@ impl App {
 
         match downloads {
             Ok(downloads) => {
+                self.pausing_downloads.retain(|download_id| {
+                    downloads
+                        .iter()
+                        .find(|download| download.download.id == *download_id)
+                        .is_none_or(|download| download.download.status == DownloadStatus::Active)
+                });
                 self.downloads = downloads;
                 if !self.downloads.is_empty() {
                     self.selected_download = self.selected_download.min(self.downloads.len() - 1);
@@ -506,6 +518,47 @@ impl App {
             Err(error) => self.toasts.push(error.to_string(), ToastLevel::Error),
         }
         self.refresh();
+    }
+
+    pub fn apply_download_paused(
+        &mut self,
+        download_id: i64,
+        result: anyhow::Result<DownloadLiveStatus>,
+    ) {
+        match result {
+            Ok(download) => {
+                let pause_finished = download.download.status != DownloadStatus::Active;
+                if pause_finished {
+                    self.pausing_downloads.remove(&download_id);
+                }
+                if let Some(existing) = self
+                    .downloads
+                    .iter_mut()
+                    .find(|download| download.download.id == download_id)
+                {
+                    let was_active = existing.download.status == DownloadStatus::Active;
+                    let previous_speed = existing.download_speed;
+                    *existing = download;
+                    if was_active && pause_finished {
+                        self.active_downloads = self.active_downloads.saturating_sub(1);
+                        self.total_download_speed = if self.active_downloads == 0 {
+                            0
+                        } else {
+                            self.total_download_speed.saturating_sub(previous_speed)
+                        };
+                        self.smoothed_download_speed = Some(if self.active_downloads == 0 {
+                            0
+                        } else {
+                            self.total_download_speed
+                        });
+                    }
+                }
+            }
+            Err(error) => {
+                self.pausing_downloads.remove(&download_id);
+                self.toasts.push(error.to_string(), ToastLevel::Error);
+            }
+        }
     }
 }
 

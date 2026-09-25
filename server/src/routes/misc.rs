@@ -71,8 +71,14 @@ async fn shutdown(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{aria2::Aria2Client, config::ServerConfig, db::Database};
+    use crate::{aria2::Aria2Client, config::ServerConfig, db::Database, live_status::LiveStats};
+    use chrono::Utc;
     use common::finetune::Aria2GlobalOptions;
+    use common::{
+        download::Download,
+        enums::{FileCategory, SourceType},
+        finetune::FineTune,
+    };
 
     #[tokio::test]
     async fn health_returns_the_cached_global_options_snapshot() {
@@ -93,5 +99,48 @@ mod tests {
 
         assert_eq!(response.aria2_global_options, Some(options));
         assert_eq!(response.active_downloads, 0);
+    }
+
+    #[tokio::test]
+    async fn health_excludes_stale_live_speed_for_paused_downloads() {
+        let state = AppState::new(
+            Database::open(":memory:").unwrap(),
+            Aria2Client::new("http://127.0.0.1:1/jsonrpc", None),
+            ServerConfig::default(),
+            false,
+        );
+        let mut download = Download {
+            id: 0,
+            aria2_gid: Some("gid".into()),
+            url: "https://example.test/file.bin".into(),
+            filename: Some("file.bin".into()),
+            destination_path: "/tmp".into(),
+            source_type: SourceType::Http,
+            category: FileCategory::Other,
+            status: DownloadStatus::Paused,
+            paused_by_scheduler: false,
+            manually_started: false,
+            size: Some(100),
+            completed_length: Some(20),
+            queue_id: 1,
+            position_in_queue: 0,
+            finetune: FineTune::default(),
+            created_at: Utc::now(),
+            started_at: None,
+            completed_at: None,
+        };
+        download.id = state.db.insert_download(&download).unwrap();
+        state.live_status.write().await.insert(
+            download.id,
+            LiveStats {
+                completed_length: 20,
+                download_speed: 50,
+            },
+        );
+
+        let Json(response) = health(State(state)).await.unwrap();
+
+        assert_eq!(response.active_downloads, 0);
+        assert_eq!(response.download_speed, 0);
     }
 }

@@ -601,9 +601,6 @@ async fn pause_download(
         .ok_or_else(|| AppError::BadRequest("download has not been started in aria2 yet".into()))?;
 
     state.aria2.pause(&gid).await?;
-    state
-        .db
-        .update_download_status(id, &DownloadStatus::Paused)?;
     state.db.set_paused_by_scheduler(id, false)?;
     state.db.set_manually_started(id, false)?;
 
@@ -685,6 +682,12 @@ async fn resume_download(
         .get_download(id)?
         .ok_or_else(|| AppError::NotFound(format!("download {id}")))?;
 
+    if download.status == DownloadStatus::Active {
+        return Err(AppError::Conflict(
+            "download is active or still finishing a pause".into(),
+        ));
+    }
+
     // Mark this before talking to aria2 so a concurrent scheduler tick cannot
     // reclaim and pause the item after it becomes active.
     state.db.set_manually_started(id, true)?;
@@ -745,6 +748,166 @@ async fn reorder_queue(
     let _activity = state.activity_guard().await?;
     state.db.reorder_queue(queue_id, &req.ordered_ids)?;
     Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod pause_tests {
+    use super::*;
+    use crate::{aria2::Aria2Client, config::ServerConfig, db::Database, live_status::LiveStats};
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    fn insert_active_download(state: &AppState) -> Download {
+        let mut download = Download {
+            id: 0,
+            aria2_gid: Some("gid".into()),
+            url: "https://example.test/file.bin".into(),
+            filename: Some("file.bin".into()),
+            destination_path: "/tmp".into(),
+            source_type: SourceType::Http,
+            category: FileCategory::Other,
+            status: DownloadStatus::Active,
+            paused_by_scheduler: true,
+            manually_started: true,
+            size: Some(100),
+            completed_length: Some(20),
+            queue_id: 1,
+            position_in_queue: 0,
+            finetune: FineTune::default(),
+            created_at: Utc::now(),
+            started_at: None,
+            completed_at: None,
+        };
+        download.id = state.db.insert_download(&download).unwrap();
+        download
+    }
+
+    async fn rpc_state(
+        response: serde_json::Value,
+    ) -> (
+        AppState,
+        Arc<Mutex<Vec<serde_json::Value>>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        async fn rpc(
+            State((requests, response)): State<(
+                Arc<Mutex<Vec<serde_json::Value>>>,
+                serde_json::Value,
+            )>,
+            Json(request): Json<serde_json::Value>,
+        ) -> Json<serde_json::Value> {
+            requests.lock().await.push(request);
+            Json(response)
+        }
+
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let rpc_app = Router::new()
+            .route("/jsonrpc", post(rpc))
+            .with_state((Arc::clone(&requests), response));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, rpc_app).await.unwrap();
+        });
+        let state = AppState::new(
+            Database::open(":memory:").unwrap(),
+            Aria2Client::new(format!("http://{address}/jsonrpc"), None),
+            ServerConfig::default(),
+            false,
+        );
+        (state, requests, server)
+    }
+
+    #[tokio::test]
+    async fn successful_pause_stays_active_until_poller_confirms_it() {
+        let (state, requests, server) = rpc_state(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "ario",
+            "result": "OK"
+        }))
+        .await;
+        let download = insert_active_download(&state);
+        state.live_status.write().await.insert(
+            download.id,
+            LiveStats {
+                completed_length: 20,
+                download_speed: 50,
+            },
+        );
+
+        let Json(response) = pause_download(State(state.clone()), Path(download.id))
+            .await
+            .unwrap();
+
+        assert_eq!(requests.lock().await[0]["method"], "aria2.pause");
+        assert_eq!(response.download.status, DownloadStatus::Active);
+        assert_eq!(response.download_speed, 50);
+        assert!(!response.download.paused_by_scheduler);
+        assert!(!response.download.manually_started);
+        assert!(state.live_status.read().await.contains_key(&download.id));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn failed_pause_leaves_database_and_live_state_unchanged() {
+        let (state, _requests, server) = rpc_state(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "ario",
+            "error": {"code": 1, "message": "pause failed"}
+        }))
+        .await;
+        let download = insert_active_download(&state);
+        state.live_status.write().await.insert(
+            download.id,
+            LiveStats {
+                completed_length: 20,
+                download_speed: 50,
+            },
+        );
+
+        assert!(
+            pause_download(State(state.clone()), Path(download.id))
+                .await
+                .is_err()
+        );
+
+        let retained = state.db.get_download(download.id).unwrap().unwrap();
+        assert_eq!(retained.status, DownloadStatus::Active);
+        assert!(retained.paused_by_scheduler);
+        assert!(retained.manually_started);
+        assert_eq!(
+            state.live_status.read().await[&download.id].download_speed,
+            50
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn resume_rejects_an_active_or_still_pausing_download_without_calling_aria2() {
+        let (state, requests, server) = rpc_state(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "ario",
+            "result": "gid"
+        }))
+        .await;
+        let download = insert_active_download(&state);
+
+        let error = resume_download(State(state.clone()), Path(download.id))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, AppError::Conflict(_)));
+        assert!(requests.lock().await.is_empty());
+        assert!(
+            state
+                .db
+                .get_download(download.id)
+                .unwrap()
+                .unwrap()
+                .manually_started
+        );
+        server.abort();
+    }
 }
 
 #[cfg(test)]

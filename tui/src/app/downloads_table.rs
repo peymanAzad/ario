@@ -56,7 +56,12 @@ impl App {
 
     pub fn current_download_action(&self) -> Option<DownloadAction> {
         self.current_download()
+            .filter(|download| !self.pausing_downloads.contains(&download.download.id))
             .map(|download| download_action(&download.download.status))
+    }
+
+    pub(crate) fn is_download_pausing(&self, download_id: i64) -> bool {
+        self.pausing_downloads.contains(&download_id)
     }
 
     pub fn pause_selected(&mut self) {
@@ -67,15 +72,15 @@ impl App {
             return;
         };
         let id = download.download.id;
+        self.pausing_downloads.insert(id);
         let api_base = self.api_base.clone();
         let sender = self.event_sender.clone();
         thread::spawn(move || {
-            if let Err(e) = api::pause_download(&api_base, id) {
-                let _ = sender.send(Event::App(AppEvent::Toast {
-                    message: e.to_string(),
-                    level: ToastLevel::Error,
-                }));
-            }
+            let result = api::pause_download(&api_base, id);
+            let _ = sender.send(Event::App(AppEvent::DownloadPaused {
+                download_id: id,
+                result,
+            }));
         });
     }
 
@@ -240,6 +245,101 @@ mod tests {
             app.pause_selected();
             assert!(receiver.recv_timeout(Duration::from_millis(50)).is_err());
         }
+    }
+
+    #[test]
+    fn pause_is_marked_pending_and_duplicate_requests_are_suppressed() {
+        let (mut app, receiver) = app_with_status(DownloadStatus::Active);
+
+        app.pause_selected();
+        assert!(app.is_download_pausing(1));
+        assert_eq!(app.current_download_action(), None);
+        app.pause_selected();
+
+        let event = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(matches!(
+            event,
+            Event::App(AppEvent::DownloadPaused { download_id: 1, .. })
+        ));
+        assert!(receiver.recv_timeout(Duration::from_millis(100)).is_err());
+    }
+
+    #[test]
+    fn successful_pause_result_replaces_row_and_updates_totals() {
+        let (mut app, _receiver) = app_with_status(DownloadStatus::Active);
+        app.pausing_downloads.insert(1);
+        app.downloads[0].download_speed = 60;
+        app.downloads[0].eta_seconds = Some(1);
+        app.active_downloads = 1;
+        app.total_download_speed = 60;
+        app.smoothed_download_speed = Some(60);
+        let mut paused = app.downloads[0].clone();
+        paused.download.status = DownloadStatus::Paused;
+        paused.download_speed = 0;
+        paused.eta_seconds = None;
+
+        app.apply_download_paused(1, Ok(paused));
+
+        assert!(!app.is_download_pausing(1));
+        assert_eq!(app.downloads[0].download.status, DownloadStatus::Paused);
+        assert_eq!(app.downloads[0].download_speed, 0);
+        assert_eq!(app.downloads[0].eta_seconds, None);
+        assert_eq!(app.active_downloads, 0);
+        assert_eq!(app.total_download_speed, 0);
+        assert_eq!(app.displayed_download_speed(), 0);
+    }
+
+    #[test]
+    fn accepted_pause_remains_pending_while_server_still_reports_active() {
+        let (mut app, _receiver) = app_with_status(DownloadStatus::Active);
+        app.pausing_downloads.insert(1);
+        app.downloads[0].download_speed = 60;
+        app.active_downloads = 1;
+        app.total_download_speed = 60;
+        let active = app.downloads[0].clone();
+
+        app.apply_download_paused(1, Ok(active));
+
+        assert!(app.is_download_pausing(1));
+        assert_eq!(app.current_download_action(), None);
+        assert_eq!(app.active_downloads, 1);
+        assert_eq!(app.total_download_speed, 60);
+    }
+
+    #[test]
+    fn refresh_unlocks_resume_only_after_server_reports_paused() {
+        let (mut app, _receiver) = app_with_status(DownloadStatus::Active);
+        app.pausing_downloads.insert(1);
+        let mut paused = app.downloads[0].clone();
+        paused.download.status = DownloadStatus::Paused;
+
+        app.apply_refresh(
+            Ok(vec![paused]),
+            Err(anyhow::anyhow!("queues unavailable")),
+            true,
+            true,
+            0,
+            0,
+            None,
+            0,
+        );
+
+        assert!(!app.is_download_pausing(1));
+        assert_eq!(app.current_download_action(), Some(DownloadAction::Resume));
+    }
+
+    #[test]
+    fn failed_pause_result_restores_actions_and_reports_error() {
+        let (mut app, _receiver) = app_with_status(DownloadStatus::Active);
+        app.pausing_downloads.insert(1);
+
+        app.apply_download_paused(1, Err(anyhow::anyhow!("pause failed")));
+
+        assert!(!app.is_download_pausing(1));
+        assert_eq!(app.current_download_action(), Some(DownloadAction::Pause));
+        let toast = app.toasts.iter().last().unwrap();
+        assert_eq!(toast.level, ToastLevel::Error);
+        assert!(toast.message.contains("pause failed"));
     }
 
     #[test]
