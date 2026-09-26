@@ -54,7 +54,6 @@ async fn main() -> anyhow::Result<()> {
 
     let state = AppState::new(database, aria2_client, server_config, launch.tui_managed)
         .with_aria2_global_options(aria2_global_options);
-    tokio::spawn(scheduler::run(state.clone()));
     tokio::spawn(poller::run(state.clone()));
 
     let cors = CorsLayer::new()

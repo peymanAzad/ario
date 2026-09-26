@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS queues (
     scheduler_suppressed_occurrence TEXT,                   -- current occurrence key skipped by a manual pause
     scheduler_active_occurrence TEXT,                       -- occurrence that most recently started this queue
 
+    scheduled_stop_at           TEXT, -- UTC deadline, retained until stop succeeds
     status                      TEXT NOT NULL DEFAULT 'Paused', -- 'Paused'|'Active'
     created_at                  TEXT NOT NULL               -- RFC3339 UTC
 );
@@ -53,7 +54,7 @@ CREATE TABLE IF NOT EXISTS downloads (
     status              TEXT NOT NULL DEFAULT 'Pending', -- 'Pending'|'Active'|'Paused'|'Completed'|'Error'|'Removed'
     status_error        TEXT,                      -- populated only when status = 'Error'
     paused_by_scheduler INTEGER NOT NULL DEFAULT 0, -- 0/1 boolean
-    manually_started    INTEGER NOT NULL DEFAULT 0, -- user-started item bypasses queue pause/schedule until terminal
+    manually_started    INTEGER NOT NULL DEFAULT 0, -- user-started item bypasses manual queue pause, but not scheduled stop
 
     size                INTEGER,                   -- bytes; NULL until aria2 reports it
     completed_length    INTEGER,                   -- last-known bytes completed; NULL until aria2 reports it

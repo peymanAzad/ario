@@ -11,17 +11,25 @@ const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 pub async fn run(state: AppState) {
     loop {
-        tokio::time::sleep(POLL_INTERVAL).await;
+        let Ok(_activity) = state.activity_guard().await else {
+            return;
+        };
 
         let downloads = match state.db.list_downloads(&DownloadFilter::default()) {
             Ok(d) => d,
             Err(e) => {
                 eprintln!("poller: failed to list downloads: {e}");
+                drop(_activity);
+                tokio::time::sleep(POLL_INTERVAL).await;
                 continue;
             }
         };
 
-        for download in downloads {
+        for snapshot in downloads {
+            let _control = state.control.lock().await;
+            let Ok(Some(download)) = state.db.get_download(snapshot.id) else {
+                continue;
+            };
             let Some(gid) = download.aria2_gid.clone() else {
                 continue; // never started in aria2 — nothing to poll
             };
@@ -120,10 +128,27 @@ pub async fn run(state: AppState) {
                 }
             }
         }
+        {
+            let _control = state.control.lock().await;
+            match state.db.list_queues() {
+                Ok(queues) => {
+                    for queue in queues {
+                        if let Err(error) =
+                            crate::scheduler::reconcile_queue(&state, queue.id, state.now()).await
+                        {
+                            eprintln!("queue {}: reconciliation failed: {error}", queue.id);
+                        }
+                    }
+                }
+                Err(error) => eprintln!("poller: failed to list queues: {error}"),
+            }
+        }
+        drop(_activity);
+        tokio::time::sleep(POLL_INTERVAL).await;
     }
 }
 
-async fn reconcile_transfer_state(
+pub(crate) async fn reconcile_transfer_state(
     state: &AppState,
     download: &Download,
     aria2_status: &str,
@@ -131,6 +156,16 @@ async fn reconcile_transfer_state(
     download_speed: u64,
     error_message: Option<&str>,
 ) {
+    // Use current intent; the RPC snapshot may predate a serialized control operation.
+    let Ok(Some(current)) = state.db.get_download(download.id) else {
+        return;
+    };
+    if matches!(
+        current.status,
+        DownloadStatus::Completed | DownloadStatus::Error(_) | DownloadStatus::Removed
+    ) {
+        return;
+    }
     match aria2_status {
         "active" => {
             // Re-read the persisted intent because this tellStatus request may have

@@ -3,6 +3,17 @@ use crate::app::{PendingConfirmationAction, confirmation_modal::ConfirmationModa
 
 const MAIN_QUEUE_ID: i64 = 1;
 
+fn queue_start_message(stop: Option<chrono::DateTime<chrono::Utc>>) -> String {
+    stop.map(|stop| {
+        format!(
+            "Queue started. Will pause at {}",
+            stop.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M %Z")
+        )
+    })
+    .unwrap_or_else(|| "Queue started".into())
+}
+
 impl App {
     pub fn select_next_queue(&mut self) {
         let len = self.queues.len() + 1; // +1 for "All"
@@ -117,11 +128,22 @@ impl App {
         if let Some(id) = self.current_queue().map(|d| d.id) {
             let api_base = self.api_base.clone();
             let sender = self.event_sender.clone();
-            thread::spawn(move || {
-                if let Err(e) = api::resume_queue(&api_base, id) {
+            thread::spawn(move || match api::resume_queue(&api_base, id) {
+                Err(e) => {
                     let _ = sender.send(Event::App(AppEvent::Toast {
                         message: e.to_string(),
                         level: ToastLevel::Error,
+                    }));
+                }
+                Ok(()) => {
+                    let stop = api::list_queues(&api_base)
+                        .ok()
+                        .and_then(|queues| queues.into_iter().find(|q| q.id == id))
+                        .and_then(|q| q.scheduled_stop_at);
+                    let message = queue_start_message(stop);
+                    let _ = sender.send(Event::App(AppEvent::Toast {
+                        message,
+                        level: ToastLevel::Success,
                     }));
                 }
             });
@@ -186,6 +208,7 @@ mod tests {
 
     fn queue(id: i64, name: &str) -> Queue {
         Queue {
+            scheduled_stop_at: None,
             id,
             name: name.into(),
             position: id as i32,
@@ -206,6 +229,24 @@ mod tests {
             status: QueueStatus::Paused,
             created_at: Utc::now(),
         }
+    }
+
+    #[test]
+    fn start_message_includes_local_stop_date_and_time() {
+        let stop = chrono::DateTime::parse_from_rfc3339("2030-01-07T17:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let message = queue_start_message(Some(stop));
+        assert!(
+            message.contains(
+                &stop
+                    .with_timezone(&chrono::Local)
+                    .format("%Y-%m-%d %H:%M")
+                    .to_string()
+            )
+        );
+        assert!(message.starts_with("Queue started. Will pause at "));
+        assert_eq!(queue_start_message(None), "Queue started");
     }
 
     fn app() -> (App, mpsc::Receiver<Event>) {

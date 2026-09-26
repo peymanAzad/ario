@@ -25,6 +25,9 @@ pub struct QueueSettings {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Queue {
+    /// Scheduled boundary for the current manual or automatic run.
+    #[serde(default)]
+    pub scheduled_stop_at: Option<chrono::DateTime<chrono::Utc>>,
     pub id: i64,
     pub name: String,
     pub position: i32,
@@ -65,6 +68,17 @@ pub struct UpdateQueueRequest {
 #[cfg(test)]
 mod tests {
     use super::{DEFAULT_RETRY_WAIT_SECONDS, QueueSettings};
+
+    #[test]
+    fn old_queue_response_without_stop_deadline_is_compatible() {
+        let queue: super::Queue = serde_json::from_str(r#"{
+            "id":1,"name":"Main","position":0,
+            "settings":{"max_concurrent_downloads":1,"max_retries":3,"default_finetune":{}},
+            "scheduler":{"enabled":false,"recurrence":{"Weekly":{"days":[],"start_time":"00:00:00","end_time":"00:00:00"}},"run_missed_on_startup":false},
+            "created_at":"2026-09-26T00:00:00Z","status":"Paused"
+        }"#).unwrap();
+        assert!(queue.scheduled_stop_at.is_none());
+    }
 
     #[test]
     fn missing_retry_wait_uses_compatible_default() {

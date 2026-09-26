@@ -364,6 +364,14 @@ impl Database {
         }
     }
 
+    pub fn set_scheduled_stop(&self, id: i64, stop: Option<DateTime<Utc>>) -> SqlResult<()> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE queues SET scheduled_stop_at = ?1 WHERE id = ?2",
+            params![stop, id],
+        )?;
+        Ok(())
+    }
+
     pub fn count_active_downloads_in_queue(&self, queue_id: i64) -> SqlResult<i64> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
@@ -388,20 +396,24 @@ impl Database {
         Ok((active as u64, scheduled as u64))
     }
 
-    pub fn list_startable_downloads(&self, queue_id: i64) -> SqlResult<Vec<Download>> {
+    pub fn list_startable_downloads(
+        &self,
+        queue_id: i64,
+        explicit: bool,
+    ) -> SqlResult<Vec<Download>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT * FROM downloads
              WHERE queue_id = ?1
-               AND (status = 'Pending' OR status = 'Paused')
+               AND (status = 'Pending' OR (status = 'Paused' AND (?2 OR paused_by_scheduler = 1)))
              ORDER BY position_in_queue ASC",
         )?;
-        let rows = stmt.query_map(params![queue_id], row_to_download)?;
+        let rows = stmt.query_map(params![queue_id, explicit], row_to_download)?;
         rows.collect()
     }
 
     /// Active downloads still controlled by their queue. An item explicitly
-    /// resumed by the user has priority over queue/scheduler pause decisions.
+    /// resumed by the user has priority over manual queue pauses.
     pub fn list_queue_controlled_active_downloads(
         &self,
         queue_id: i64,
@@ -518,6 +530,14 @@ fn insert_download_on(conn: &Connection, d: &Download) -> SqlResult<i64> {
 }
 
 fn run_migrations(conn: &Connection) -> SqlResult<()> {
+    let has_stop: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('queues') WHERE name = 'scheduled_stop_at')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_stop {
+        conn.execute("ALTER TABLE queues ADD COLUMN scheduled_stop_at TEXT", [])?;
+    }
     let has_queue_status: bool = conn.query_row(
         "SELECT EXISTS(
              SELECT 1 FROM pragma_table_info('queues') WHERE name = 'status'
@@ -726,6 +746,7 @@ fn row_to_queue(row: &Row) -> SqlResult<Queue> {
     let status: String = row.get("status")?;
 
     Ok(Queue {
+        scheduled_stop_at: row.get("scheduled_stop_at")?,
         id: row.get("id")?,
         name: row.get("name")?,
         position: row.get("position")?,
@@ -842,6 +863,30 @@ mod tests {
 
         run_migrations(&conn).unwrap();
         run_migrations(&conn).unwrap();
+
+        let stop: Option<DateTime<Utc>> = conn
+            .query_row(
+                "SELECT scheduled_stop_at FROM queues WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(stop.is_none());
+        let saved_stop = Utc::now();
+        conn.execute(
+            "UPDATE queues SET scheduled_stop_at = ?1 WHERE id = 1",
+            [saved_stop],
+        )
+        .unwrap();
+        run_migrations(&conn).unwrap();
+        let restored: DateTime<Utc> = conn
+            .query_row(
+                "SELECT scheduled_stop_at FROM queues WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(restored, saved_stop);
 
         let status: String = conn
             .query_row("SELECT status FROM queues WHERE id = 1", [], |row| {

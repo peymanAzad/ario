@@ -230,6 +230,7 @@ mod tests {
             eta_seconds: None,
         });
         app.queues.push(Queue {
+            scheduled_stop_at: None,
             id: 1,
             name: "Main Queue".into(),
             position: 0,
