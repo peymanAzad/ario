@@ -60,10 +60,12 @@ pub async fn prepare_start(
     let stop = if queue.scheduler.enabled {
         Some(
             next_stop(&queue.scheduler.recurrence, now, &Local).ok_or_else(|| {
-                crate::error::AppError::BadRequest(
-                    "schedule has no future stop; disable or edit the schedule before starting"
-                        .into(),
-                )
+                let message = match &queue.scheduler.recurrence {
+                    Recurrence::Once { end, .. } if *end <= now =>
+                        "This queue’s schedule has ended. Disable the scheduler or update its end time before starting.",
+                    _ => "This queue has no upcoming scheduled stop. Update its schedule or disable the scheduler before starting.",
+                };
+                crate::error::AppError::BadRequest(message.into())
             })?,
         )
     } else {
@@ -129,7 +131,18 @@ pub async fn reconcile_queue(state: &AppState, id: i64, now: DateTime<Utc>) -> a
             if queue.scheduled_stop_at.is_none() {
                 prepare_start(state, &queue, now).await?;
             }
-            start_eligible_downloads(state, &queue, false).await?;
+            let first_start = match occurrence.as_deref() {
+                Some(current) => {
+                    state.db.get_queue_started_occurrence(id)?.as_deref() != Some(current)
+                }
+                None => false,
+            };
+            start_eligible_downloads(state, &queue, first_start).await?;
+            if first_start {
+                state
+                    .db
+                    .set_queue_started_occurrence(id, occurrence.as_deref())?;
+            }
         }
         ScheduleDecision::StayPaused => pause_downloads(state, &queue, false).await?,
         ScheduleDecision::CloseWindow => {
@@ -414,6 +427,7 @@ mod tests {
 
     struct Fixture {
         state: AppState,
+        rpc_url: String,
         clock: Arc<Mutex<DateTime<Utc>>>,
         calls: Arc<Mutex<Vec<serde_json::Value>>>,
         fail_pause: Arc<AtomicBool>,
@@ -427,6 +441,10 @@ mod tests {
     }
 
     async fn fixture() -> Fixture {
+        fixture_in(":memory:").await
+    }
+
+    async fn fixture_in(path: &str) -> Fixture {
         use axum::{Json, Router, extract::State, routing::post};
         type RpcState = (Arc<Mutex<Vec<serde_json::Value>>>, Arc<AtomicBool>);
         async fn rpc(
@@ -459,14 +477,15 @@ mod tests {
         ));
         let clock_reader = clock.clone();
         let state = AppState::new(
-            Database::open(":memory:").unwrap(),
-            Aria2Client::new(url, None),
+            Database::open(path).unwrap(),
+            Aria2Client::new(url.clone(), None),
             ServerConfig::default(),
             false,
         )
         .with_clock(move || *clock_reader.lock().unwrap());
         Fixture {
             state,
+            rpc_url: url,
             clock,
             calls,
             fail_pause,
@@ -702,8 +721,25 @@ mod tests {
                 .await
                 .unwrap_err()
                 .to_string()
-                .contains("disable or edit")
+                .contains("Disable the scheduler or update its end time")
         );
+    }
+
+    #[tokio::test]
+    async fn unusable_schedule_has_distinct_start_error() {
+        let f = fixture().await;
+        let mut queue = configure(&f.state, true, QueueStatus::Paused, 1);
+        queue.scheduler.recurrence = Recurrence::Weekly {
+            days: vec![],
+            start_time: time(9, 0),
+            end_time: time(17, 0),
+        };
+        let error = prepare_start(&f.state, &queue, f.state.now())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("no upcoming scheduled stop"));
+        assert!(!error.contains("has ended"));
     }
 
     #[tokio::test]
@@ -718,10 +754,22 @@ mod tests {
         f.state.db.update_queue(&queue).unwrap();
         reconcile_queue(&f.state, 1, f.state.now()).await.unwrap();
         let pending = item(&f.state, 0, DownloadStatus::Pending);
+        let paused = item(&f.state, 1, DownloadStatus::Paused);
         reconcile_queue(&f.state, 1, f.state.now()).await.unwrap();
         assert_eq!(
             f.state.db.get_download(pending.id).unwrap().unwrap().status,
             DownloadStatus::Pending
+        );
+        assert_eq!(
+            f.state.db.get_download(paused.id).unwrap().unwrap().status,
+            DownloadStatus::Paused
+        );
+        assert!(
+            f.state
+                .db
+                .get_queue_started_occurrence(1)
+                .unwrap()
+                .is_none()
         );
         configure(&f.state, false, QueueStatus::Active, 1);
         f.state
@@ -833,7 +881,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn next_window_resumes_queue_paused_items_but_not_individually_paused_items() {
+    async fn next_window_resumes_all_paused_items() {
         let f = fixture().await;
         let mut queue = configure(&f.state, true, QueueStatus::Paused, 2);
         let active = item(&f.state, 0, DownloadStatus::Active);
@@ -862,8 +910,162 @@ mod tests {
         );
         assert_eq!(
             f.state.db.get_download(paused.id).unwrap().unwrap().status,
+            DownloadStatus::Active
+        );
+    }
+
+    #[tokio::test]
+    async fn scheduled_start_authorizes_all_paused_items_in_order_beyond_capacity() {
+        let f = fixture().await;
+        let queue = configure(&f.state, true, QueueStatus::Paused, 1);
+        let first = item(&f.state, 0, DownloadStatus::Paused);
+        let second = item(&f.state, 1, DownloadStatus::Paused);
+        f.state
+            .db
+            .update_download_gid(first.id, "paused-first")
+            .unwrap();
+        let pending = item(&f.state, 2, DownloadStatus::Pending);
+        reconcile_queue(&f.state, 1, f.state.now()).await.unwrap();
+        assert_eq!(
+            f.state.db.get_download(first.id).unwrap().unwrap().status,
+            DownloadStatus::Active
+        );
+        assert!(
+            f.state
+                .db
+                .get_download(second.id)
+                .unwrap()
+                .unwrap()
+                .paused_by_scheduler
+        );
+        assert_eq!(f.calls.lock().unwrap()[0]["method"], "aria2.unpause");
+        assert_eq!(f.calls.lock().unwrap()[0]["params"][0], "paused-first");
+        assert_eq!(
+            f.state.db.get_queue_started_occurrence(1).unwrap(),
+            schedule_occurrence(&queue.scheduler.recurrence, f.state.now())
+        );
+
+        f.state
+            .db
+            .update_download_status(first.id, &DownloadStatus::Completed)
+            .unwrap();
+        reconcile_queue(&f.state, 1, f.state.now()).await.unwrap();
+        assert_eq!(
+            f.state.db.get_download(second.id).unwrap().unwrap().status,
+            DownloadStatus::Active
+        );
+        assert_eq!(
+            f.state.db.get_download(pending.id).unwrap().unwrap().status,
+            DownloadStatus::Pending
+        );
+    }
+
+    #[tokio::test]
+    async fn pause_during_scheduled_run_survives_refills_and_restart_until_next_window() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "ario-started-occurrence-{}-{unique}.sqlite",
+            std::process::id()
+        ));
+        let f = fixture_in(path.to_str().unwrap()).await;
+        let mut queue = configure(&f.state, true, QueueStatus::Paused, 1);
+        let first = item(&f.state, 0, DownloadStatus::Paused);
+        let second = item(&f.state, 1, DownloadStatus::Paused);
+        reconcile_queue(&f.state, 1, f.state.now()).await.unwrap();
+        // Simulate a user pause confirmed by the poller.
+        f.state
+            .db
+            .update_download_status(first.id, &DownloadStatus::Paused)
+            .unwrap();
+        f.state.db.set_paused_by_scheduler(first.id, false).unwrap();
+        reconcile_queue(&f.state, 1, f.state.now()).await.unwrap();
+        assert_eq!(
+            f.state.db.get_download(first.id).unwrap().unwrap().status,
             DownloadStatus::Paused
         );
+        assert_eq!(
+            f.state.db.get_download(second.id).unwrap().unwrap().status,
+            DownloadStatus::Active
+        );
+
+        // Reopen persisted state with a fresh controller, as on daemon restart.
+        let clock = f.clock.clone();
+        let resumed = AppState::new(
+            Database::open(path.to_str().unwrap()).unwrap(),
+            Aria2Client::new(f.rpc_url.clone(), None),
+            ServerConfig::default(),
+            false,
+        )
+        .with_clock(move || *clock.lock().unwrap());
+
+        resumed
+            .db
+            .update_download_status(second.id, &DownloadStatus::Completed)
+            .unwrap();
+        reconcile_queue(&resumed, 1, resumed.now()).await.unwrap();
+        assert_eq!(
+            resumed.db.get_download(first.id).unwrap().unwrap().status,
+            DownloadStatus::Paused
+        );
+        *f.clock.lock().unwrap() += chrono::Duration::days(1);
+        queue.scheduler.recurrence = Recurrence::Once {
+            start: f.state.now() - chrono::Duration::minutes(1),
+            end: f.state.now() + chrono::Duration::minutes(1),
+        };
+        resumed.db.update_queue(&queue).unwrap();
+        reconcile_queue(&resumed, 1, resumed.now()).await.unwrap();
+        assert_eq!(
+            resumed.db.get_download(first.id).unwrap().unwrap().status,
+            DownloadStatus::Active
+        );
+        drop(resumed);
+        drop(f);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn explicit_start_inside_window_prevents_a_second_scheduled_start() {
+        use axum::{body::Body, http::Request};
+        use tower::ServiceExt;
+        let f = fixture().await;
+        let queue = configure(&f.state, true, QueueStatus::Paused, 1);
+        let download = item(&f.state, 0, DownloadStatus::Paused);
+        let app = crate::routes::queues::router().with_state(f.state.clone());
+        let response = app
+            .oneshot(
+                Request::post("/queues/1/resume")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(response.status().is_success());
+        assert_eq!(
+            f.state.db.get_queue_started_occurrence(1).unwrap(),
+            schedule_occurrence(&queue.scheduler.recurrence, f.state.now())
+        );
+        f.state
+            .db
+            .update_download_status(download.id, &DownloadStatus::Paused)
+            .unwrap();
+        f.state
+            .db
+            .set_paused_by_scheduler(download.id, false)
+            .unwrap();
+        reconcile_queue(&f.state, 1, f.state.now()).await.unwrap();
+        assert_eq!(
+            f.state
+                .db
+                .get_download(download.id)
+                .unwrap()
+                .unwrap()
+                .status,
+            DownloadStatus::Paused
+        );
+        assert_eq!(f.calls.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

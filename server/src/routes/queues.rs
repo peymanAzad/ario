@@ -150,6 +150,7 @@ async fn update_queue(
         // Occurrence keys belong to the old schedule definition and must not
         // suppress or claim ownership of a newly edited schedule.
         state.db.set_queue_scheduler_suppression(id, None)?;
+        state.db.set_queue_started_occurrence(id, None)?;
         state.db.set_scheduled_stop(id, None)?;
         if queue.scheduler.enabled
             && (queue.status == common::enums::QueueStatus::Active
@@ -235,6 +236,14 @@ async fn resume_queue(
         .db
         .update_queue_status(id, common::enums::QueueStatus::Active)?;
     start_eligible_downloads(&state, &queue, true).await?;
+    let occurrence = queue
+        .scheduler
+        .enabled
+        .then(|| current_schedule_occurrence(&queue.scheduler.recurrence, state.now()))
+        .flatten();
+    state
+        .db
+        .set_queue_started_occurrence(id, occurrence.as_deref())?;
     Ok(axum::http::StatusCode::OK)
 }
 
@@ -346,6 +355,8 @@ mod control_tests {
 
     #[tokio::test]
     async fn expired_schedule_rejects_queue_individual_and_immediate_add_starts() {
+        use http_body_util::BodyExt;
+        let expected = "This queue’s schedule has ended. Disable the scheduler or update its end time before starting.";
         let state = state();
         expired_queue(&state);
         let id = download(&state);
@@ -362,6 +373,11 @@ mod control_tests {
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let body: common::api::ApiResponse<()> = serde_json::from_slice(&bytes).unwrap();
+            assert!(
+                matches!(body, common::api::ApiResponse::Error { message } if message == expected)
+            );
         }
         let body = serde_json::to_vec(&AddDownloadsRequest {
             inputs: vec![AddDownloadInput::Url("https://example.test/new".into())],
@@ -380,6 +396,9 @@ mod control_tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body: common::api::ApiResponse<()> = serde_json::from_slice(&bytes).unwrap();
+        assert!(matches!(body, common::api::ApiResponse::Error { message } if message == expected));
         assert_eq!(
             state
                 .db
@@ -400,6 +419,10 @@ mod control_tests {
         let mut queue = state.db.get_queue(1).unwrap().unwrap();
         state
             .db
+            .set_queue_started_occurrence(1, Some("old-definition"))
+            .unwrap();
+        state
+            .db
             .update_queue_status(1, QueueStatus::Active)
             .unwrap();
         queue.scheduler.enabled = true;
@@ -415,6 +438,10 @@ mod control_tests {
             Some(state.now() + Duration::hours(1))
         );
         assert_eq!(updated.status, QueueStatus::Active);
+        assert_eq!(
+            state.db.get_queue_started_occurrence(1).unwrap(),
+            current_schedule_occurrence(&queue.scheduler.recurrence, state.now())
+        );
 
         queue.scheduler.recurrence = Recurrence::Once {
             start: state.now() - Duration::hours(1),
@@ -434,6 +461,7 @@ mod control_tests {
             .unwrap();
         assert!(updated.scheduled_stop_at.is_none());
         assert_eq!(updated.status, QueueStatus::Active);
+        assert!(state.db.get_queue_started_occurrence(1).unwrap().is_none());
 
         queue.scheduler.enabled = true;
         queue.scheduler.recurrence = Recurrence::Once {

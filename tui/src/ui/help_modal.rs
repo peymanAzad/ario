@@ -14,7 +14,7 @@ use unicode_width::UnicodeWidthStr;
 
 /// Pre-wrap into physical lines so navigation and resize clamping use exactly
 /// the same line count as rendering, including narrow terminal layouts.
-fn wrap_text(text: &str, width: usize) -> Vec<String> {
+pub(super) fn wrap_text(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return Vec::new();
     }

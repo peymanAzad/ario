@@ -8,7 +8,7 @@ fn queue_start_message(stop: Option<chrono::DateTime<chrono::Utc>>) -> String {
         format!(
             "Queue started. Will pause at {}",
             stop.with_timezone(&chrono::Local)
-                .format("%Y-%m-%d %H:%M %Z")
+                .format("%Y-%m-%d %H:%M")
         )
     })
     .unwrap_or_else(|| "Queue started".into())
