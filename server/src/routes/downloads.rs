@@ -120,6 +120,7 @@ async fn add_downloads(
     Json(req): Json<AddDownloadsRequest>,
 ) -> Result<Json<Vec<DownloadLiveStatus>>, AppError> {
     let _activity = state.activity_guard().await?;
+    let _control = state.control.lock().await;
     if req.inputs.is_empty() {
         return Err(AppError::BadRequest("inputs must not be empty".into()));
     }
@@ -155,6 +156,7 @@ async fn add_torrent_download(
     mut multipart: Multipart,
 ) -> Result<Json<DownloadLiveStatus>, AppError> {
     let _activity = state.activity_guard().await?;
+    let _control = state.control.lock().await;
     let mut metadata = None;
     let mut file = None;
 
@@ -298,6 +300,14 @@ async fn create_download(
         completed_at: None,
     };
 
+    if start_immediately {
+        let queue = state
+            .db
+            .get_queue(queue_id)?
+            .ok_or_else(|| AppError::NotFound(format!("queue {queue_id}")))?;
+        crate::scheduler::prepare_start(state, &queue, state.now()).await?;
+    }
+
     download.id = match torrent_data.as_deref() {
         Some(data) => state.db.insert_download_with_torrent(&download, data)?,
         None => state.db.insert_download(&download)?,
@@ -342,6 +352,7 @@ async fn delete_download(
     Query(query): Query<DeleteDownloadQuery>,
 ) -> Result<Response, AppError> {
     let _activity = state.activity_guard().await?;
+    let _control = state.control.lock().await;
     let download = state
         .db
         .get_download(id)?
@@ -510,6 +521,7 @@ async fn delete_completed_downloads(
     Query(query): Query<DeleteCompletedQuery>,
 ) -> Result<axum::http::StatusCode, AppError> {
     let _activity = state.activity_guard().await?;
+    let _control = state.control.lock().await;
     let filter = DownloadFilter {
         queue_id: query.queue_id,
         status: Some(DownloadStatus::Completed),
@@ -538,6 +550,7 @@ async fn update_finetune(
     Json(finetune): Json<FineTune>,
 ) -> Result<Json<DownloadLiveStatus>, AppError> {
     let _activity = state.activity_guard().await?;
+    let _control = state.control.lock().await;
     let download = state
         .db
         .get_download(id)?
@@ -566,6 +579,7 @@ async fn update_download_queue(
     Json(req): Json<UpdateDownloadQueueRequest>,
 ) -> Result<Json<DownloadLiveStatus>, AppError> {
     let _activity = state.activity_guard().await?;
+    let _control = state.control.lock().await;
     let download = state
         .db
         .get_download(id)?
@@ -592,6 +606,7 @@ async fn pause_download(
     Path(id): Path<i64>,
 ) -> Result<Json<DownloadLiveStatus>, AppError> {
     let _activity = state.activity_guard().await?;
+    let _control = state.control.lock().await;
     let download = state
         .db
         .get_download(id)?
@@ -677,6 +692,7 @@ async fn resume_download(
     Path(id): Path<i64>,
 ) -> Result<Json<DownloadLiveStatus>, AppError> {
     let _activity = state.activity_guard().await?;
+    let _control = state.control.lock().await;
     let download = state
         .db
         .get_download(id)?
@@ -688,8 +704,13 @@ async fn resume_download(
         ));
     }
 
-    // Mark this before talking to aria2 so a concurrent scheduler tick cannot
-    // reclaim and pause the item after it becomes active.
+    let queue = state
+        .db
+        .get_queue(download.queue_id)?
+        .ok_or_else(|| AppError::NotFound(format!("queue {}", download.queue_id)))?;
+    crate::scheduler::prepare_start(&state, &queue, state.now()).await?;
+
+    // Individual runs bypass manual queue pauses; scheduled deadlines still apply.
     state.db.set_manually_started(id, true)?;
     state.db.set_paused_by_scheduler(id, false)?;
 
@@ -746,6 +767,7 @@ async fn reorder_queue(
     Json(req): Json<ReorderRequest>,
 ) -> Result<axum::http::StatusCode, AppError> {
     let _activity = state.activity_guard().await?;
+    let _control = state.control.lock().await;
     state.db.reorder_queue(queue_id, &req.ordered_ids)?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }

@@ -6,6 +6,6 @@ use crate::enums::Recurrence;
 pub struct Scheduler {
     pub enabled: bool,
     pub recurrence: Recurrence,
-    /// If a scheduled window was missed while the daemon was off, run it on next startup.
+    /// Compatibility setting: startup catch-up only runs in an open window; closed windows are skipped.
     pub run_missed_on_startup: bool,
 }

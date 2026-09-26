@@ -325,7 +325,7 @@ fn draw_weekly_fields(f: &mut Frame, theme: &crate::theme::Theme, modal: &QueueM
         Line::from(""),
         Line::from(Span::styled(
             format!(
-                "Run missed on startup ◀ {} ▶",
+                "Catch up in open window ◀ {} ▶",
                 if modal.run_missed_on_startup {
                     "yes"
                 } else {

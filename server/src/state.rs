@@ -16,6 +16,9 @@ pub struct AppState {
     pub aria2_global_options: Option<Aria2GlobalOptions>,
     pub tui_managed: bool,
     pub shutdown_notify: Arc<Notify>,
+    /// Acquire after the activity gate to serialize transfer and queue mutations.
+    pub control: Arc<tokio::sync::Mutex<()>>,
+    clock: Arc<dyn Fn() -> chrono::DateTime<chrono::Utc> + Send + Sync>,
     activity_gate: Arc<RwLock<()>>,
     stopping: Arc<AtomicBool>,
 }
@@ -30,9 +33,24 @@ impl AppState {
             aria2_global_options: None,
             tui_managed,
             shutdown_notify: Arc::new(Notify::new()),
+            control: Arc::new(tokio::sync::Mutex::new(())),
+            clock: Arc::new(chrono::Utc::now),
             activity_gate: Arc::new(RwLock::new(())),
             stopping: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub fn now(&self) -> chrono::DateTime<chrono::Utc> {
+        (self.clock)()
+    }
+
+    #[cfg(test)]
+    pub fn with_clock(
+        mut self,
+        clock: impl Fn() -> chrono::DateTime<chrono::Utc> + Send + Sync + 'static,
+    ) -> Self {
+        self.clock = Arc::new(clock);
+        self
     }
 
     pub fn with_aria2_global_options(mut self, options: Option<Aria2GlobalOptions>) -> Self {
