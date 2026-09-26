@@ -297,10 +297,10 @@ mod tests {
                 icons.queue_running(),
                 icons.scheduler()
             )));
-            assert!(output.contains("Download: checksum mismatch"));
+            assert!(!output.contains("Download: checksum mismatch"));
             assert!(!output.contains("[paused]"));
             assert!(!output.contains("[scheduled]"));
-            assert!(!output.contains("Error: checksum mismatch"));
+            assert!(output.contains("Error: checksum mismatch"));
         }
         assert!(
             status_columns

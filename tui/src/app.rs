@@ -104,7 +104,7 @@ impl Focus {
     }
 }
 
-pub const SPEED_HISTORY_LEN: usize = 15;
+pub const MAX_SPEED_HISTORY_SAMPLES: usize = 150;
 pub(crate) const SPEED_SAMPLE_INTERVAL: Duration = Duration::from_secs(2);
 
 fn speed_scale_target(history: impl IntoIterator<Item = u64>) -> u64 {
@@ -388,6 +388,9 @@ impl App {
         if server_reachable {
             self.aria2_global_options = aria2_global_options;
         }
+        if !server_reachable || active_downloads == 0 {
+            self.clear_speed_history();
+        }
         self.total_download_speed = if active_downloads == 0 {
             0
         } else {
@@ -419,7 +422,7 @@ impl App {
     }
 
     pub(crate) fn push_speed_sample(&mut self, speed: u64) {
-        if self.speed_history.len() == SPEED_HISTORY_LEN {
+        if self.speed_history.len() == MAX_SPEED_HISTORY_SAMPLES {
             self.speed_history.pop_front();
         }
         self.speed_history.push_back(speed);
@@ -443,6 +446,12 @@ impl App {
             .max(speed_scale_target(self.speed_history.iter().copied()))
     }
 
+    fn clear_speed_history(&mut self) {
+        self.speed_history.clear();
+        self.last_speed_sample_at = None;
+        self.speed_chart_max = 1;
+    }
+
     pub fn apply_lifecycle(&mut self, state: LifecycleState) {
         self.lifecycle_revision += 1;
         if matches!(
@@ -457,6 +466,7 @@ impl App {
         if matches!(state, LifecycleState::Connected) {
             self.server_reachable = true;
         } else {
+            self.clear_speed_history();
             self.server_reachable = false;
             self.aria2_reachable = false;
         }
@@ -551,6 +561,9 @@ impl App {
                         } else {
                             self.total_download_speed
                         });
+                        if self.active_downloads == 0 {
+                            self.clear_speed_history();
+                        }
                     }
                 }
             }
@@ -746,7 +759,7 @@ mod tests {
     }
 
     #[test]
-    fn reachable_refresh_records_speed_history_and_caps_it() {
+    fn speed_history_resets_on_connection_loss_and_caps_retained_samples() {
         let mut app = app();
         app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 100, 1, None, 0);
         assert_eq!(app.total_download_speed, 100);
@@ -754,20 +767,25 @@ mod tests {
 
         app.apply_refresh(Ok(vec![]), Ok(vec![]), false, false, 50, 0, None, 0);
         assert_eq!(app.total_download_speed, 0);
-        assert_eq!(app.speed_history.iter().copied().collect::<Vec<_>>(), [100]);
+        assert!(app.speed_history.is_empty());
+        assert!(app.last_speed_sample_at.is_none());
+        assert_eq!(app.speed_chart_max(), 1);
 
-        for speed in 1..=SPEED_HISTORY_LEN as u64 {
+        for speed in 1..=MAX_SPEED_HISTORY_SAMPLES as u64 {
             app.push_speed_sample(speed);
         }
-        assert_eq!(app.speed_history.len(), SPEED_HISTORY_LEN);
+        assert_eq!(app.speed_history.len(), MAX_SPEED_HISTORY_SAMPLES);
         assert_eq!(app.speed_history.front(), Some(&1));
-        assert_eq!(app.speed_history.back(), Some(&(SPEED_HISTORY_LEN as u64)));
-        app.push_speed_sample(SPEED_HISTORY_LEN as u64 + 1);
-        assert_eq!(app.speed_history.len(), SPEED_HISTORY_LEN);
+        assert_eq!(
+            app.speed_history.back(),
+            Some(&(MAX_SPEED_HISTORY_SAMPLES as u64))
+        );
+        app.push_speed_sample(MAX_SPEED_HISTORY_SAMPLES as u64 + 1);
+        assert_eq!(app.speed_history.len(), MAX_SPEED_HISTORY_SAMPLES);
         assert_eq!(app.speed_history.front(), Some(&2));
         assert_eq!(
             app.speed_history.back(),
-            Some(&(SPEED_HISTORY_LEN as u64 + 1))
+            Some(&(MAX_SPEED_HISTORY_SAMPLES as u64 + 1))
         );
     }
 
@@ -825,6 +843,8 @@ mod tests {
         assert_eq!(app.total_download_speed, 0);
         assert_eq!(app.displayed_download_speed(), 0);
         assert_eq!(app.active_downloads, 0);
+        assert!(app.speed_history.is_empty());
+        assert!(app.last_speed_sample_at.is_none());
     }
 
     #[test]
