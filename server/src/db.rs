@@ -445,6 +445,26 @@ impl Database {
         )
     }
 
+    pub fn get_queue_started_occurrence(&self, queue_id: i64) -> SqlResult<Option<String>> {
+        self.conn.lock().unwrap().query_row(
+            "SELECT scheduler_active_occurrence FROM queues WHERE id = ?1",
+            params![queue_id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn set_queue_started_occurrence(
+        &self,
+        queue_id: i64,
+        occurrence: Option<&str>,
+    ) -> SqlResult<()> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE queues SET scheduler_active_occurrence = ?1 WHERE id = ?2",
+            params![occurrence, queue_id],
+        )?;
+        Ok(())
+    }
+
     pub fn set_queue_scheduler_suppression(
         &self,
         queue_id: i64,
@@ -530,6 +550,16 @@ fn insert_download_on(conn: &Connection, d: &Download) -> SqlResult<i64> {
 }
 
 fn run_migrations(conn: &Connection) -> SqlResult<()> {
+    let has_started_occurrence: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('queues') WHERE name = 'scheduler_active_occurrence')",
+        [], |row| row.get(0),
+    )?;
+    if !has_started_occurrence {
+        conn.execute(
+            "ALTER TABLE queues ADD COLUMN scheduler_active_occurrence TEXT",
+            [],
+        )?;
+    }
     let has_stop: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('queues') WHERE name = 'scheduled_stop_at')",
         [],
@@ -863,6 +893,29 @@ mod tests {
 
         run_migrations(&conn).unwrap();
         run_migrations(&conn).unwrap();
+
+        let occurrence: Option<String> = conn
+            .query_row(
+                "SELECT scheduler_active_occurrence FROM queues WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(occurrence.is_none());
+        conn.execute(
+            "UPDATE queues SET scheduler_active_occurrence = 'started' WHERE id = 1",
+            [],
+        )
+        .unwrap();
+        run_migrations(&conn).unwrap();
+        let restored_occurrence: String = conn
+            .query_row(
+                "SELECT scheduler_active_occurrence FROM queues WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(restored_occurrence, "started");
 
         let stop: Option<DateTime<Utc>> = conn
             .query_row(
