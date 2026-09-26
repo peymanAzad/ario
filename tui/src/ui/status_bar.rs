@@ -1,6 +1,5 @@
-use crate::app::{ALL_CATEGORIES, App, LifecycleState, SPEED_HISTORY_LEN};
+use crate::app::{App, LifecycleState};
 use crate::icons::GlyphMode;
-use common::enums::DownloadStatus;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -17,30 +16,10 @@ const SPARKLINE_BARS: symbols::bar::Set = symbols::bar::Set {
 
 pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
-    let show_speed_cluster = has_download_activity(app);
+    let show_speed_cluster = app.last_error.is_none() && has_download_activity(app);
     let show_sparkline = show_speed_cluster && app.icons.glyph_mode() != GlyphMode::Ascii;
     let speed_label_text = format!("{}/s ", super::format_bytes(app.displayed_download_speed()));
     let speed_label_width = speed_label_text.len() as u16 + u16::from(show_sparkline);
-    let chunks = if show_sparkline {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Min(0),
-                Constraint::Length(SPEED_HISTORY_LEN as u16),
-                Constraint::Length(speed_label_width),
-            ])
-            .split(area)
-    } else if show_speed_cluster {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(0), Constraint::Length(speed_label_width)])
-            .split(area)
-    } else {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(0)])
-            .split(area)
-    };
 
     let status = server_status(app);
     let server_background = match status {
@@ -65,7 +44,7 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         )
     };
 
-    let mut spans = vec![
+    let status_line = Line::from(vec![
         Span::styled(
             " Ario ",
             Style::default()
@@ -74,36 +53,24 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         ),
         server_indicator,
         aria2_indicator,
-    ];
-
-    if let Some(label) = filter_indicator_label(app) {
-        spans.push(Span::styled(
-            format!(" {label} "),
-            Style::default().fg(theme.selected_fg).bg(theme.accent),
-        ));
-    }
+    ]);
+    let status_width = status_line.width().min(u16::MAX as usize) as u16;
 
     if let Some(err) = &app.last_error {
-        spans.push(Span::styled(
-            format!("  {err}"),
-            Style::default().fg(theme.status_error),
-        ));
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(status_width), Constraint::Min(0)])
+            .split(area);
+        f.render_widget(Paragraph::new(status_line), chunks[0]);
+        f.render_widget(
+            Paragraph::new(format!("  {err}")).style(Style::default().fg(theme.status_error)),
+            chunks[1],
+        );
+        return;
     }
-
-    if let Some(DownloadStatus::Error(message)) = app
-        .downloads
-        .get(app.selected_download)
-        .map(|download| &download.download.status)
-    {
-        spans.push(Span::styled(
-            format!("  Download: {message}"),
-            Style::default().fg(theme.status_error),
-        ));
-    }
-
-    f.render_widget(Paragraph::new(Line::from(spans)), chunks[0]);
 
     if !show_speed_cluster {
+        f.render_widget(Paragraph::new(status_line), area);
         return;
     }
 
@@ -112,8 +79,20 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         .right_aligned();
 
     if show_sparkline {
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(status_width),
+                Constraint::Min(0),
+                Constraint::Length(speed_label_width),
+            ])
+            .split(area);
+        f.render_widget(Paragraph::new(status_line), chunks[0]);
         let sparkline = Sparkline::default()
-            .data(sparkline_bars(app.speed_history.iter().copied()))
+            .data(sparkline_bars(
+                app.speed_history.iter().copied(),
+                chunks[1].width as usize,
+            ))
             .max(app.speed_chart_max())
             .bar_set(SPARKLINE_BARS)
             .absent_value_symbol(" ")
@@ -122,19 +101,26 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         f.render_widget(sparkline, chunks[1]);
         f.render_widget(speed_label, chunks[2]);
     } else {
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(0), Constraint::Length(speed_label_width)])
+            .split(area);
+        f.render_widget(Paragraph::new(status_line), chunks[0]);
         f.render_widget(speed_label, chunks[1]);
     }
 }
 
 fn has_download_activity(app: &App) -> bool {
-    app.active_downloads > 0
+    app.server_reachable && app.active_downloads > 0
 }
 
-fn sparkline_bars(history: impl IntoIterator<Item = u64>) -> Vec<Option<u64>> {
+fn sparkline_bars(history: impl IntoIterator<Item = u64>, width: usize) -> Vec<Option<u64>> {
     let samples: Vec<u64> = history.into_iter().collect();
-    let pad = SPEED_HISTORY_LEN.saturating_sub(samples.len());
+    let visible_start = samples.len().saturating_sub(width);
+    let visible = &samples[visible_start..];
+    let pad = width.saturating_sub(visible.len());
     std::iter::repeat_n(None, pad)
-        .chain(samples.into_iter().map(Some))
+        .chain(visible.iter().copied().map(Some))
         .collect()
 }
 
@@ -177,31 +163,6 @@ fn server_status(app: &App) -> ServerStatus {
     }
 }
 
-fn filter_indicator_label(app: &App) -> Option<String> {
-    let queue_part = if app.selected_queue != 0 {
-        app.queues
-            .get(app.selected_queue - 1)
-            .map(|q| q.name.clone())
-    } else {
-        None
-    };
-
-    let category_part = if app.selected_category != 0 {
-        ALL_CATEGORIES
-            .get(app.selected_category - 1)
-            .map(super::category_label)
-    } else {
-        None
-    };
-
-    match (queue_part, category_part) {
-        (None, None) => None,
-        (Some(q), None) => Some(format!("Filter: {q}")),
-        (None, Some(c)) => Some(format!("Filter: {c}")),
-        (Some(q), Some(c)) => Some(format!("Filter: {q} · {c}")),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,7 +189,11 @@ mod tests {
     }
 
     fn rendered_status_bar(app: &App) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
+        rendered_status_bar_at_width(app, 80)
+    }
+
+    fn rendered_status_bar_at_width(app: &App, width: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, 1)).unwrap();
         terminal
             .draw(|frame| draw_status_bar(frame, app, frame.area()))
             .unwrap();
@@ -285,16 +250,39 @@ mod tests {
     }
 
     #[test]
-    fn idle_status_bar_hides_speed_cluster_so_errors_use_the_full_width() {
+    fn application_error_takes_priority_over_active_speed_cluster() {
         let mut app = app_with_glyphs(true, GlyphMode::Unicode);
         app.apply_lifecycle(LifecycleState::Connected);
         app.last_error = Some("can't reach server: connection refused".into());
+        app.total_download_speed = 1024;
+        app.active_downloads = 1;
         app.speed_history.extend([1024, 512, 0]);
         let rendered = rendered_status_bar(&app);
         assert!(rendered.contains("can't reach server: connection refused"));
-        assert!(!rendered.contains("0.0 B/s"));
+        assert!(!rendered.contains("1.0 KB/s"));
         assert!(!rendered.contains("▁"));
         assert!(!rendered.contains("█"));
+    }
+
+    #[test]
+    fn unreachable_lifecycle_hides_stale_speed_state() {
+        let mut app = app_with_glyphs(true, GlyphMode::Unicode);
+        app.apply_lifecycle(LifecycleState::Connected);
+        app.total_download_speed = 1024;
+        app.active_downloads = 1;
+        app.apply_lifecycle(LifecycleState::Retrying);
+
+        let rendered = rendered_status_bar(&app);
+        assert!(rendered.contains("server: retrying"));
+        assert!(!rendered.contains("1.0 KB/s"));
+        assert!(!rendered.contains("▁"));
+    }
+
+    #[test]
+    fn status_bar_does_not_repeat_sidebar_filters() {
+        let mut app = app(true);
+        app.selected_category = 1;
+        assert!(!rendered_status_bar(&app).contains("Filter:"));
     }
 
     #[test]
@@ -335,16 +323,37 @@ mod tests {
 
     #[test]
     fn sparkline_bars_pad_on_the_left_so_newest_sits_on_the_right() {
-        let bars = sparkline_bars([1, 2]);
-        assert_eq!(bars.len(), SPEED_HISTORY_LEN);
-        assert!(bars.iter().take(SPEED_HISTORY_LEN - 2).all(Option::is_none));
-        assert_eq!(bars[SPEED_HISTORY_LEN - 2], Some(1));
-        assert_eq!(bars[SPEED_HISTORY_LEN - 1], Some(2));
+        let bars = sparkline_bars([1, 2], 5);
+        assert_eq!(bars, [None, None, None, Some(1), Some(2)]);
+    }
+
+    #[test]
+    fn sparkline_bars_keep_only_the_newest_samples_that_fit() {
+        assert_eq!(
+            sparkline_bars([1, 2, 3, 4, 5], 3),
+            [Some(3), Some(4), Some(5)]
+        );
+        assert!(sparkline_bars([1, 2, 3], 0).is_empty());
+    }
+
+    #[test]
+    fn sparkline_expands_and_contracts_with_available_width() {
+        let mut app = app_with_glyphs(true, GlyphMode::Unicode);
+        app.apply_lifecycle(LifecycleState::Connected);
+        app.active_downloads = 1;
+        app.speed_history.extend(1..=150);
+
+        let narrow = rendered_status_bar_at_width(&app, 60);
+        let wide = rendered_status_bar_at_width(&app, 100);
+        let narrow_bars = narrow.chars().filter(|c| "▁▂▃▄▅▆▇█".contains(*c)).count();
+        let wide_bars = wide.chars().filter(|c| "▁▂▃▄▅▆▇█".contains(*c)).count();
+        assert!(wide_bars > narrow_bars);
     }
 
     #[test]
     fn unsampled_history_is_blank_while_zero_samples_draw_a_baseline() {
         let mut app = app_with_glyphs(true, GlyphMode::Unicode);
+        app.apply_lifecycle(LifecycleState::Connected);
         app.total_download_speed = 100;
         app.active_downloads = 1;
         app.speed_history.push_back(0);

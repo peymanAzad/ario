@@ -273,6 +273,7 @@ mod tests {
         app.active_downloads = 1;
         app.total_download_speed = 60;
         app.smoothed_download_speed = Some(60);
+        app.push_speed_sample(60);
         let mut paused = app.downloads[0].clone();
         paused.download.status = DownloadStatus::Paused;
         paused.download_speed = 0;
@@ -287,6 +288,7 @@ mod tests {
         assert_eq!(app.active_downloads, 0);
         assert_eq!(app.total_download_speed, 0);
         assert_eq!(app.displayed_download_speed(), 0);
+        assert!(app.speed_history.is_empty());
     }
 
     #[test]

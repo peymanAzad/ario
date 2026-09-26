@@ -120,6 +120,33 @@ fn detail_lines(text: &str, width: usize, height: usize, ellipsis: &str) -> Vec<
     }
 }
 
+fn download_detail_lines(
+    download: &DownloadLiveStatus,
+    width: usize,
+    height: usize,
+    ellipsis: &str,
+) -> (Vec<String>, Vec<String>) {
+    if height == 0 {
+        return (Vec::new(), Vec::new());
+    }
+
+    let error = match &download.download.status {
+        DownloadStatus::Error(message) if height >= 2 => Some(format!("Error: {message}")),
+        _ => None,
+    };
+    let filename_height = height.saturating_sub(usize::from(error.is_some()));
+    let filename = detail_lines(download_name(download), width, filename_height, ellipsis);
+    let error_height = height.saturating_sub(filename.len());
+    let error = error.map_or_else(Vec::new, |message| {
+        super::help_modal::wrap_text(&message, width)
+            .into_iter()
+            .take(error_height)
+            .collect()
+    });
+
+    (filename, error)
+}
+
 pub fn draw_downloads_table(f: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
     let focused = app.focus == Focus::Downloads;
@@ -135,15 +162,18 @@ pub fn draw_downloads_table(f: &mut Frame, app: &App, area: Rect) {
 
     let ellipsis = app.icons.ellipsis();
     let max_detail_height = (inner.height / 3).min(inner.height.saturating_sub(3));
-    let details = app.current_download().map_or_else(Vec::new, |d| {
-        detail_lines(
-            download_name(d),
-            inner.width as usize,
-            max_detail_height as usize,
-            ellipsis,
-        )
-    });
-    let detail_height = details.len() as u16;
+    let (filename_details, error_details) = app.current_download().map_or_else(
+        || (Vec::new(), Vec::new()),
+        |download| {
+            download_detail_lines(
+                download,
+                inner.width as usize,
+                max_detail_height as usize,
+                ellipsis,
+            )
+        },
+    );
+    let detail_height = (filename_details.len() + error_details.len()) as u16;
     let table_area = Rect {
         height: inner.height.saturating_sub(if detail_height > 0 {
             detail_height + 1
@@ -162,11 +192,16 @@ pub fn draw_downloads_table(f: &mut Frame, app: &App, area: Rect) {
             divider,
         );
         let detail_area = Rect::new(inner.x, divider.bottom(), inner.width, detail_height);
-        f.render_widget(
-            Paragraph::new(details.into_iter().map(Line::from).collect::<Vec<_>>())
-                .style(Style::default().fg(theme.text_muted)),
-            detail_area,
-        );
+        let details = filename_details
+            .into_iter()
+            .map(|line| Line::from(line).style(Style::default().fg(theme.text_muted)))
+            .chain(
+                error_details
+                    .into_iter()
+                    .map(|line| Line::from(line).style(Style::default().fg(theme.status_error))),
+            )
+            .collect::<Vec<_>>();
+        f.render_widget(Paragraph::new(details), detail_area);
     }
 
     let widths = column_widths(inner.width);
@@ -447,6 +482,47 @@ mod tests {
         app.downloads.clear();
         let empty = render(&app, 100, 12);
         assert!(line(&empty, 10).trim_matches('│').trim().is_empty());
+    }
+
+    #[test]
+    fn selected_download_error_wraps_beneath_filename_with_error_style() {
+        let mut app = app(GlyphMode::Unicode);
+        app.downloads[0].download.status = DownloadStatus::Error(
+            "connection closed unexpectedly while receiving the archive from the remote server"
+                .into(),
+        );
+
+        let buffer = render(&app, 60, 12);
+        assert_eq!(cell_text(&buffer, 1, 58, 8), "archive.part03.rar");
+        assert!(line(&buffer, 9).contains("Error: connection closed unexpectedly"));
+        assert!(line(&buffer, 10).contains("remote server"));
+        assert_eq!(buffer[(1, 9)].fg, app.theme.status_error);
+    }
+
+    #[test]
+    fn selected_download_error_follows_selection_and_yields_to_tiny_layouts() {
+        let mut app = app(GlyphMode::Unicode);
+        app.downloads[0].download.status = DownloadStatus::Error("failed".into());
+        app.downloads.push(app.downloads[0].clone());
+        app.downloads[1].download.filename = Some("healthy.iso".into());
+        app.downloads[1].download.status = DownloadStatus::Active;
+
+        let errored = render(&app, 100, 12);
+        assert!(line(&errored, 10).contains("Error: failed"));
+
+        app.selected_download = 1;
+        let healthy = render(&app, 100, 12);
+        assert!(line(&healthy, 10).contains("healthy.iso"));
+        let healthy_text = (0..12)
+            .map(|y| line(&healthy, y))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!healthy_text.contains("Error: failed"));
+
+        app.selected_download = 0;
+        let tiny = render(&app, 100, 6);
+        assert!(line(&tiny, 4).contains("archive.part03.rar"));
+        assert!(!line(&tiny, 4).contains("Error:"));
     }
 
     #[test]
