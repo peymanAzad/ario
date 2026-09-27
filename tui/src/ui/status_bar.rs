@@ -22,26 +22,15 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     let speed_label_width = speed_label_text.len() as u16 + u16::from(show_sparkline);
 
     let status = server_status(app);
-    let server_background = match status {
+    let server_color = match status {
         ServerStatus::Up => theme.status_ok,
         ServerStatus::Starting | ServerStatus::Retrying => theme.status_warning,
         ServerStatus::Down | ServerStatus::Failed => theme.status_error,
     };
-    let server_indicator = Span::styled(
-        format!(" server: {} ", status.label()),
-        Style::default().fg(theme.selected_fg).bg(server_background),
-    );
-
-    let aria2_indicator = if app.aria2_reachable {
-        Span::styled(
-            " aria2: up ",
-            Style::default().fg(theme.selected_fg).bg(theme.status_ok),
-        )
+    let (aria2_status, aria2_color) = if app.aria2_reachable {
+        ("up", theme.status_ok)
     } else {
-        Span::styled(
-            " aria2: down ",
-            Style::default().fg(theme.foreground).bg(theme.status_error),
-        )
+        ("down", theme.status_error)
     };
 
     let status_line = Line::from(vec![
@@ -51,8 +40,11 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         ),
-        server_indicator,
-        aria2_indicator,
+        Span::styled(" server:", Style::default().fg(theme.foreground)),
+        Span::styled(status.label(), Style::default().fg(server_color)),
+        Span::styled(" aria2:", Style::default().fg(theme.foreground)),
+        Span::styled(aria2_status, Style::default().fg(aria2_color)),
+        Span::raw(" "),
     ]);
     let status_width = status_line.width().min(u16::MAX as usize) as u16;
 
@@ -170,7 +162,7 @@ mod tests {
         icons::{GlyphMode, IconSet},
         theme::Theme,
     };
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{Terminal, backend::TestBackend, style::Color};
     use std::sync::mpsc;
 
     fn app(managed: bool) -> App {
@@ -241,12 +233,36 @@ mod tests {
         let mut managed = app(true);
         managed.apply_lifecycle(LifecycleState::Connected);
         let rendered = rendered_status_bar(&managed);
-        assert!(rendered.contains("server: up"));
-        assert!(rendered.contains("aria2: down"));
+        assert!(rendered.contains("server:up"));
+        assert!(rendered.contains("aria2:down"));
         assert!(!rendered.contains("connected"));
         assert!(!rendered.contains("0.0 B/s"));
         assert!(!rendered.contains("▁"));
         assert!(!rendered.contains("█"));
+    }
+
+    #[test]
+    fn status_values_use_semantic_foregrounds_without_backgrounds() {
+        let mut app = app(true);
+        app.apply_lifecycle(LifecycleState::Connected);
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
+        terminal
+            .draw(|frame| draw_status_bar(frame, &app, frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let rendered: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
+        let server_status_start = rendered.find("server:up").unwrap() + "server:".len();
+        let aria2_status_start = rendered.find("aria2:down").unwrap() + "aria2:".len();
+
+        for x in server_status_start..server_status_start + "up".len() {
+            assert_eq!(buffer[(x as u16, 0)].fg, app.theme.status_ok);
+            assert_eq!(buffer[(x as u16, 0)].bg, Color::Reset);
+        }
+        for x in aria2_status_start..aria2_status_start + "down".len() {
+            assert_eq!(buffer[(x as u16, 0)].fg, app.theme.status_error);
+            assert_eq!(buffer[(x as u16, 0)].bg, Color::Reset);
+        }
     }
 
     #[test]
@@ -273,7 +289,7 @@ mod tests {
         app.apply_lifecycle(LifecycleState::Retrying);
 
         let rendered = rendered_status_bar(&app);
-        assert!(rendered.contains("server: retrying"));
+        assert!(rendered.contains("server:retrying"));
         assert!(!rendered.contains("1.0 KB/s"));
         assert!(!rendered.contains("▁"));
     }
