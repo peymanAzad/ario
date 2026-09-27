@@ -17,16 +17,6 @@ impl DownloadAction {
             Self::Start | Self::Resume | Self::Retry | Self::Restart => 'r',
         }
     }
-
-    pub fn hint(self) -> &'static str {
-        match self {
-            Self::Start => "   r: start",
-            Self::Resume => "   r: resume",
-            Self::Pause => "   p: pause",
-            Self::Retry => "   r: retry",
-            Self::Restart => "   r: restart",
-        }
-    }
 }
 
 pub fn download_action(status: &DownloadStatus) -> DownloadAction {

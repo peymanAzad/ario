@@ -20,6 +20,22 @@ pub const KEYBINDINGS: &[KeybindingSection] = &[
         ],
     },
     KeybindingSection {
+        title: "Downloads",
+        bindings: &[
+            ("j / Down", "Select next download"),
+            ("k / Up", "Select previous download"),
+            ("Enter", "Open completed file; edit other downloads"),
+            ("f", "Open folder of completed download"),
+            ("p", "Pause active download"),
+            (
+                "r",
+                "Start pending, resume paused, retry failed/removed, or restart completed download",
+            ),
+            ("d", "Delete download, keeping downloaded files"),
+            ("D", "Delete download and files after confirmation"),
+        ],
+    },
+    KeybindingSection {
         title: "Queues",
         bindings: &[
             ("j / Down", "Select next queue"),
@@ -42,22 +58,6 @@ pub const KEYBINDINGS: &[KeybindingSection] = &[
         bindings: &[
             ("j / Down", "Select next category"),
             ("k / Up", "Select previous category"),
-        ],
-    },
-    KeybindingSection {
-        title: "Downloads",
-        bindings: &[
-            ("j / Down", "Select next download"),
-            ("k / Up", "Select previous download"),
-            ("Enter", "Open completed file; edit other downloads"),
-            ("f", "Open folder of completed download"),
-            ("p", "Pause active download"),
-            (
-                "r",
-                "Start pending, resume paused, retry failed/removed, or restart completed download",
-            ),
-            ("d", "Delete download, keeping downloaded files"),
-            ("D", "Delete download and files after confirmation"),
         ],
     },
     KeybindingSection {
@@ -214,12 +214,20 @@ mod tests {
     #[test]
     fn search_matches_keys_descriptions_and_whole_sections() {
         assert_eq!(filtered_sections("").len(), KEYBINDINGS.len());
+        assert_eq!(
+            KEYBINDINGS
+                .iter()
+                .take(4)
+                .map(|section| section.title)
+                .collect::<Vec<_>>(),
+            ["Main Navigation", "Downloads", "Queues", "Categories"]
+        );
         let sections = filtered_sections("cAtEgOrIeS");
         let category = sections
             .iter()
             .find(|(title, _)| *title == "Categories")
             .unwrap();
-        assert_eq!(category.1, KEYBINDINGS[2].bindings);
+        assert_eq!(category.1, KEYBINDINGS[3].bindings);
         assert!(
             filtered_sections("backspace")
                 .iter()
