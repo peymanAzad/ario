@@ -3,7 +3,7 @@ use crate::app::{App, Focus};
 use common::{download::DownloadLiveStatus, enums::DownloadStatus};
 use ratatui::{
     Frame,
-    layout::{Constraint, Rect},
+    layout::{Alignment, Constraint, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
@@ -147,6 +147,78 @@ fn download_detail_lines(
     (filename, error)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EmptyDownloadsState {
+    Unfiltered,
+    Filtered,
+    Unavailable,
+}
+
+fn empty_downloads_state(app: &App) -> EmptyDownloadsState {
+    if app.last_error.is_some() {
+        EmptyDownloadsState::Unavailable
+    } else if app.selected_queue > 0 || app.selected_category > 0 {
+        EmptyDownloadsState::Filtered
+    } else {
+        EmptyDownloadsState::Unfiltered
+    }
+}
+
+fn draw_empty_downloads(f: &mut Frame, app: &App, table_area: Rect) {
+    // The table header owns the first row. Empty-state content may only use what remains.
+    let body = Rect::new(
+        table_area.x,
+        table_area.y.saturating_add(1),
+        table_area.width,
+        table_area.height.saturating_sub(1),
+    );
+    if body.is_empty() {
+        return;
+    }
+
+    let state = empty_downloads_state(app);
+    let primary = match state {
+        EmptyDownloadsState::Unfiltered => "No downloads yet",
+        EmptyDownloadsState::Filtered => "No downloads match this view",
+        EmptyDownloadsState::Unavailable => "Downloads unavailable",
+    };
+    let primary_color = if state == EmptyDownloadsState::Unavailable {
+        app.theme.status_error
+    } else {
+        app.theme.foreground
+    };
+    let mut lines = vec![Line::styled(primary, Style::default().fg(primary_color))];
+
+    if body.height >= 2 {
+        let muted = Style::default().fg(app.theme.text_muted);
+        match state {
+            EmptyDownloadsState::Unfiltered => lines.push(Line::from(vec![
+                Span::styled("v", Style::default().fg(app.theme.accent)),
+                Span::styled(":Import Clipboard or ", muted),
+                Span::styled("a", Style::default().fg(app.theme.accent)),
+                Span::styled(":Import Torrent File", muted),
+            ])),
+            EmptyDownloadsState::Filtered => lines.push(Line::styled(
+                "Select All queues and categories to view everything",
+                muted,
+            )),
+            EmptyDownloadsState::Unavailable => {}
+        }
+    }
+
+    let height = lines.len() as u16;
+    let message_area = Rect::new(
+        body.x,
+        body.y + body.height.saturating_sub(height) / 2,
+        body.width,
+        height.min(body.height),
+    );
+    f.render_widget(
+        Paragraph::new(lines).alignment(Alignment::Center),
+        message_area,
+    );
+}
+
 pub fn draw_downloads_table(f: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
     let focused = app.focus == Focus::Downloads;
@@ -282,6 +354,9 @@ pub fn draw_downloads_table(f: &mut Frame, app: &App, area: Rect) {
         .header(header)
         .row_highlight_style(highlight_style(theme, focused));
     f.render_stateful_widget(table, table_area, &mut state);
+    if app.downloads.is_empty() {
+        draw_empty_downloads(f, app, table_area);
+    }
 }
 
 #[cfg(test)]
@@ -353,6 +428,23 @@ mod tests {
             .collect::<String>()
             .trim()
             .to_owned()
+    }
+
+    fn text(buffer: &Buffer) -> String {
+        (0..buffer.area.height)
+            .map(|y| line(buffer, y))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn find_text(buffer: &Buffer, needle: &str) -> (u16, u16) {
+        (0..buffer.area.height)
+            .find_map(|y| {
+                let row = line(buffer, y);
+                row.find(needle)
+                    .map(|x| (row[..x].chars().count() as u16, y))
+            })
+            .unwrap_or_else(|| panic!("{needle:?} not found in rendered buffer"))
     }
 
     #[test]
@@ -482,6 +574,110 @@ mod tests {
         app.downloads.clear();
         let empty = render(&app, 100, 12);
         assert!(line(&empty, 10).trim_matches('│').trim().is_empty());
+    }
+
+    #[test]
+    fn empty_download_messages_follow_queue_and_category_filters() {
+        let mut app = app(GlyphMode::Unicode);
+        app.downloads.clear();
+
+        let unfiltered = text(&render(&app, 80, 10));
+        assert!(unfiltered.contains("Name"));
+        assert!(unfiltered.contains("No downloads yet"));
+        assert!(unfiltered.contains("v:Import Clipboard or a:Import Torrent File"));
+
+        app.selected_queue = 1;
+        let queue_filtered = text(&render(&app, 80, 10));
+        assert!(queue_filtered.contains("No downloads match this view"));
+        assert!(queue_filtered.contains("Select All queues and categories to view everything"));
+
+        app.selected_queue = 0;
+        app.selected_category = 1;
+        let category_filtered = text(&render(&app, 80, 10));
+        assert!(category_filtered.contains("No downloads match this view"));
+
+        app.selected_queue = 1;
+        let combined_filtered = text(&render(&app, 80, 10));
+        assert!(combined_filtered.contains("No downloads match this view"));
+        assert!(!combined_filtered.contains("v:Import Clipboard"));
+    }
+
+    #[test]
+    fn application_error_takes_precedence_in_an_empty_table() {
+        let mut app = app(GlyphMode::Unicode);
+        app.downloads.clear();
+        app.selected_queue = 1;
+        app.selected_category = 1;
+        app.last_error = Some("can't reach server".into());
+
+        let buffer = render(&app, 80, 10);
+        let output = text(&buffer);
+        assert!(output.contains("Downloads unavailable"));
+        assert!(!output.contains("No downloads match this view"));
+        assert!(!output.contains("Select All queues"));
+        let (x, y) = find_text(&buffer, "Downloads unavailable");
+        assert_eq!(buffer[(x, y)].fg, app.theme.status_error);
+    }
+
+    #[test]
+    fn download_rows_suppress_empty_state_even_when_an_error_is_present() {
+        let mut app = app(GlyphMode::Unicode);
+        app.last_error = Some("stale application error".into());
+
+        let output = text(&render(&app, 80, 10));
+        assert!(output.contains("archive.part03.rar"));
+        assert!(!output.contains("No downloads"));
+        assert!(!output.contains("Downloads unavailable"));
+    }
+
+    #[test]
+    fn empty_state_preserves_the_header_and_yields_explanation_on_short_panes() {
+        let mut app = app(GlyphMode::Unicode);
+        app.downloads.clear();
+
+        let short = render(&app, 40, 4);
+        assert!(line(&short, 1).contains("Name"));
+        assert!(line(&short, 2).contains("No downloads yet"));
+        assert!(!text(&short).contains("Import Clipboard"));
+
+        for width in [1, 2, 5, 10, 20, 40] {
+            for height in [1, 2, 3, 4, 5] {
+                let buffer = render(&app, width, height);
+                assert_eq!(buffer.area.width, width);
+                assert_eq!(buffer.area.height, height);
+            }
+        }
+    }
+
+    #[test]
+    fn empty_state_shortcut_colors_match_the_footer() {
+        let mut app = app(GlyphMode::Unicode);
+        app.downloads.clear();
+        let empty = render(&app, 80, 10);
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::footer::draw_footer(frame, &app, frame.area()))
+            .unwrap();
+        let footer = terminal.backend().buffer();
+
+        let (empty_v, empty_y) = find_text(&empty, "v:Import Clipboard");
+        let (footer_v, footer_y) = find_text(footer, "v:Import Clipboard");
+        assert_eq!(
+            empty[(empty_v, empty_y)].fg,
+            footer[(footer_v, footer_y)].fg
+        );
+        assert_eq!(
+            empty[(empty_v + 1, empty_y)].fg,
+            footer[(footer_v + 1, footer_y)].fg
+        );
+
+        let (empty_a, empty_a_y) = find_text(&empty, "a:Import Torrent File");
+        let (footer_a, footer_a_y) = find_text(footer, "a:Torrent");
+        assert_eq!(
+            empty[(empty_a, empty_a_y)].fg,
+            footer[(footer_a, footer_a_y)].fg
+        );
     }
 
     #[test]
