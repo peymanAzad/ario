@@ -47,42 +47,116 @@ impl FileCategory {
         let mut map = HashMap::new();
         map.insert(
             FileCategory::Video,
-            vec!["mp4", "mkv", "avi", "mov", "webm", "flv", "m4v"]
-                .into_iter()
-                .map(String::from)
-                .collect(),
+            vec![
+                "mp4", "mkv", "avi", "mov", "webm", "flv", "m4v", "wmv", "mpg", "mpeg", "m2v",
+                "3gp", "3g2", "ogv", "ts", "mts", "m2ts", "vob", "asf",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
         );
         map.insert(
             FileCategory::Music,
-            vec!["mp3", "flac", "wav", "aac", "ogg", "m4a", "opus"]
-                .into_iter()
-                .map(String::from)
-                .collect(),
+            vec![
+                "mp3", "flac", "wav", "aac", "ogg", "m4a", "opus", "wma", "aiff", "aif", "alac",
+                "ape", "amr", "oga", "mka", "mid", "midi",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
         );
         map.insert(
             FileCategory::Document,
-            vec!["pdf", "doc", "docx", "txt", "epub", "odt", "rtf"]
-                .into_iter()
-                .map(String::from)
-                .collect(),
+            vec![
+                "pdf", "doc", "docx", "txt", "epub", "odt", "rtf", "xls", "xlsx", "ods", "csv",
+                "ppt", "pptx", "odp", "html", "htm", "md", "tex", "mobi", "azw", "azw3", "djvu",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
         );
         map.insert(
             FileCategory::Archive,
-            vec!["zip", "rar", "7z", "tar", "gz", "xz", "bz2"]
-                .into_iter()
-                .map(String::from)
-                .collect(),
+            vec![
+                "zip", "zipx", "rar", "7z", "tar", "gz", "xz", "bz2", "tgz", "tbz", "tbz2", "txz",
+                "zst", "cab", "iso",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
         );
         map.insert(
             FileCategory::Program,
             vec![
-                "exe", "msi", "apk", "deb", "rpm", "app", "dmg", "pkg", "bin", "run", "com", "jar",
+                "exe",
+                "msi",
+                "apk",
+                "deb",
+                "rpm",
+                "app",
+                "dmg",
+                "pkg",
+                "bin",
+                "run",
+                "com",
+                "jar",
+                "appimage",
+                "ipa",
+                "appx",
+                "msix",
+                "msixbundle",
+                "flatpak",
+                "snap",
+                "sh",
+                "bat",
+                "cmd",
+                "ps1",
             ]
             .into_iter()
             .map(String::from)
             .collect(),
         );
         map
+    }
+}
+
+#[cfg(test)]
+mod file_category_tests {
+    use super::FileCategory;
+
+    #[test]
+    fn common_extensions_are_inferred_from_the_defaults() {
+        let extensions = FileCategory::default_extensions();
+
+        for (filename, expected) in [
+            ("movie.MKV", FileCategory::Video),
+            ("recording.m2ts", FileCategory::Video),
+            ("album.aiff", FileCategory::Music),
+            ("spreadsheet.xlsx", FileCategory::Document),
+            ("slides.pptx", FileCategory::Document),
+            ("backup.tgz", FileCategory::Archive),
+            ("package.AppImage", FileCategory::Program),
+        ] {
+            assert_eq!(
+                FileCategory::infer_from_filename(filename, &extensions),
+                expected,
+                "unexpected category for {filename}"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_or_missing_extensions_remain_other() {
+        let extensions = FileCategory::default_extensions();
+
+        assert_eq!(
+            FileCategory::infer_from_filename("README", &extensions),
+            FileCategory::Other
+        );
+        assert_eq!(
+            FileCategory::infer_from_filename("image.png", &extensions),
+            FileCategory::Other
+        );
     }
 }
 
