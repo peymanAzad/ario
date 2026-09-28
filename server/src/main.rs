@@ -17,6 +17,7 @@ mod error;
 mod live_status;
 mod poller;
 mod routes;
+mod routing;
 mod scheduler;
 mod state;
 
