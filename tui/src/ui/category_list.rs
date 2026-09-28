@@ -30,13 +30,13 @@ pub fn draw_categories_list(f: &mut Frame, app: &App, area: Rect) {
     let list = List::new(items)
         .style(Style::default().fg(theme.foreground))
         .highlight_style(highlight_style(theme, focused))
-        .highlight_symbol("> ")
+        .highlight_symbol(LIST_SELECTION_MARKER)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(border_style(theme, focused))
                 .title(Span::styled(
-                    " [2] Categories ",
+                    CATEGORIES_TITLE,
                     Style::default().fg(theme.foreground),
                 )),
         );
