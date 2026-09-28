@@ -1,9 +1,9 @@
 use crate::db::{DownloadArtifact, DownloadArtifactKind};
+use crate::routing::{candidates_from_aria_files, route_for_candidates};
 use crate::state::AppState;
 use common::{
     download::{Download, DownloadFilter},
-    enums::DownloadStatus,
-    enums::FileCategory,
+    enums::{DownloadStatus, SourceType},
 };
 use std::time::Duration;
 
@@ -44,6 +44,19 @@ pub async fn run(state: AppState) {
 
             match state.aria2.tell_status(&gid).await {
                 Ok(status) => {
+                    if download.source_type == SourceType::Magnet && !status.followed_by.is_empty()
+                    {
+                        match adopt_magnet_child(&state, &download, &gid, &status.followed_by).await
+                        {
+                            Ok(()) => {}
+                            Err(error) => eprintln!(
+                                "poller: failed to prepare magnet payload for download {}: {error}",
+                                download.id
+                            ),
+                        }
+                        continue;
+                    }
+
                     let (payloads, controls) = status.artifact_paths();
                     if !payloads.is_empty() {
                         let artifacts: Vec<DownloadArtifact> = payloads
@@ -84,30 +97,17 @@ pub async fn run(state: AppState) {
                         );
                     }
 
-                    if let Some(file) = status.files.first() {
-                        if !file.path.is_empty() {
-                            let filename = file
-                                .path
-                                .rsplit('/')
-                                .next()
-                                .unwrap_or(&file.path)
-                                .to_string();
-                            let category = FileCategory::infer_from_filename(
-                                &filename,
-                                &state.config.settings.category_extensions,
-                            );
-                            let size = if total_length > 0 {
-                                Some(total_length)
-                            } else {
-                                None
-                            };
-                            let _ = state.db.update_download_resolved_info(
-                                download.id,
-                                &filename,
-                                size,
-                                &category,
-                            );
-                        }
+                    let candidates = candidates_from_aria_files(&status.files);
+                    if !candidates.is_empty()
+                        && let Ok(route) = route_for_candidates(&state.config.settings, &candidates)
+                    {
+                        let size = (total_length > 0).then_some(total_length);
+                        let _ = state.db.update_download_resolved_info(
+                            download.id,
+                            &route.filename,
+                            size,
+                            &route.category,
+                        );
                     }
 
                     reconcile_transfer_state(
@@ -146,6 +146,80 @@ pub async fn run(state: AppState) {
         drop(_activity);
         tokio::time::sleep(POLL_INTERVAL).await;
     }
+}
+
+async fn adopt_magnet_child(
+    state: &AppState,
+    download: &Download,
+    parent_gid: &str,
+    followed_by: &[String],
+) -> Result<(), String> {
+    let child_gid = followed_by
+        .first()
+        .ok_or_else(|| "metadata result did not contain a child GID".to_string())?;
+    for unexpected_gid in followed_by.iter().skip(1) {
+        let _ = state.aria2.remove(unexpected_gid).await;
+        let _ = state.aria2.remove_download_result(unexpected_gid).await;
+    }
+
+    let child = state
+        .aria2
+        .tell_status(child_gid)
+        .await
+        .map_err(|error| error.to_string())?;
+    let candidates = candidates_from_aria_files(&child.files);
+    if candidates.is_empty() {
+        return Err("resolved magnet has no payload files yet".into());
+    }
+    let route = route_for_candidates(&state.config.settings, &candidates)
+        .map_err(|error| error.to_string())?;
+    let completed_length = child.completed_length.parse::<u64>().unwrap_or(0);
+    let total_length = child.total_length.parse::<u64>().unwrap_or(0);
+    let can_route = child.status == "paused" && completed_length == 0;
+    let destination_path = if can_route {
+        if let Err(error) = state
+            .aria2
+            .change_dir(child_gid, &route.destination_path)
+            .await
+        {
+            let _ = state.db.update_download_gid(download.id, child_gid);
+            let _ = state.db.update_download_status(
+                download.id,
+                &DownloadStatus::Error(format!("failed to route magnet payload: {error}")),
+            );
+            let _ = state.aria2.remove_download_result(parent_gid).await;
+            return Ok(());
+        }
+        route.destination_path.clone()
+    } else if child.dir.is_empty() {
+        download.destination_path.clone()
+    } else {
+        child.dir.clone()
+    };
+
+    state
+        .db
+        .adopt_resolved_download(
+            download.id,
+            child_gid,
+            &route.filename,
+            (total_length > 0).then_some(total_length),
+            &route.category,
+            &destination_path,
+        )
+        .map_err(|error| error.to_string())?;
+    let _ = state.aria2.remove_download_result(parent_gid).await;
+
+    if download.status == DownloadStatus::Active
+        && child.status == "paused"
+        && let Err(error) = state.aria2.unpause(child_gid).await
+    {
+        let _ = state.db.update_download_status(
+            download.id,
+            &DownloadStatus::Error(format!("failed to start magnet payload: {error}")),
+        );
+    }
+    Ok(())
 }
 
 pub(crate) async fn reconcile_transfer_state(

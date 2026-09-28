@@ -103,7 +103,7 @@ impl Aria2Client {
         destination_path: &str,
         mode: Aria2AddMode,
     ) -> Result<String, Aria2Error> {
-        let options = finetune_to_options(finetune, destination_path, mode);
+        let options = uri_options(url, finetune, destination_path, mode);
         let result = self
             .call("aria2.addUri", vec![json!([url]), options])
             .await?;
@@ -143,6 +143,15 @@ impl Aria2Client {
         Ok(())
     }
 
+    pub async fn change_dir(&self, gid: &str, destination_path: &str) -> Result<(), Aria2Error> {
+        self.call(
+            "aria2.changeOption",
+            vec![json!(gid), json!({ "dir": destination_path })],
+        )
+        .await?;
+        Ok(())
+    }
+
     pub async fn remove(&self, gid: &str) -> Result<(), Aria2Error> {
         self.call("aria2.remove", vec![json!(gid)]).await?;
         Ok(())
@@ -178,13 +187,27 @@ impl Aria2Client {
             "errorMessage",
             "files",
             "dir",
-            "bittorrent"
+            "bittorrent",
+            "followedBy"
         ]);
         let result = self
             .call("aria2.tellStatus", vec![json!(gid), keys])
             .await?;
         serde_json::from_value(result).map_err(|e| Aria2Error::UnexpectedResponse(e.to_string()))
     }
+}
+
+fn uri_options(
+    url: &str,
+    finetune: &FineTune,
+    destination_path: &str,
+    mode: Aria2AddMode,
+) -> Value {
+    let mut options = finetune_to_options(finetune, destination_path, mode);
+    if url.starts_with("magnet:") {
+        options["pause-metadata"] = json!("true");
+    }
+    options
 }
 
 fn parse_global_options(value: &Value) -> Result<Aria2GlobalOptions, Aria2Error> {
@@ -285,11 +308,17 @@ pub struct Aria2Status {
     #[serde(default)]
     pub dir: String,
     pub bittorrent: Option<Aria2BitTorrent>,
+    #[serde(default, rename = "followedBy")]
+    pub followed_by: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct Aria2File {
     pub path: String,
+    #[serde(default)]
+    pub length: String,
+    #[serde(default)]
+    pub selected: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -337,7 +366,9 @@ impl Aria2Status {
 
 #[cfg(test)]
 mod tests {
-    use super::{Aria2AddMode, Aria2Status, finetune_to_options, parse_global_options};
+    use super::{
+        Aria2AddMode, Aria2Status, finetune_to_options, parse_global_options, uri_options,
+    };
     use common::enums::{AllocStrategy, StreamPieceSelector};
     use common::finetune::FineTune;
 
@@ -359,6 +390,30 @@ mod tests {
             Some("true")
         );
         assert_eq!(restart.get("continue"), None);
+    }
+
+    #[test]
+    fn magnet_downloads_pause_the_payload_created_from_metadata() {
+        let magnet = uri_options(
+            "magnet:?xt=urn:btih:test",
+            &FineTune::default(),
+            "/downloads",
+            Aria2AddMode::Fresh,
+        );
+        assert_eq!(
+            magnet
+                .get("pause-metadata")
+                .and_then(|value| value.as_str()),
+            Some("true")
+        );
+
+        let http = uri_options(
+            "https://example.test/movie.mkv",
+            &FineTune::default(),
+            "/downloads",
+            Aria2AddMode::Fresh,
+        );
+        assert_eq!(http.get("pause-metadata"), None);
     }
 
     #[test]
@@ -429,12 +484,19 @@ mod tests {
             "totalLength": "2",
             "completedLength": "1",
             "downloadSpeed": "1",
-            "files": [{"path": "/downloads/set/a"}, {"path": "/downloads/set/b"}],
+            "files": [
+                {"path": "/downloads/set/a", "length": "10", "selected": "false"},
+                {"path": "/downloads/set/b", "length": "20", "selected": "true"}
+            ],
             "dir": "/downloads",
-            "bittorrent": {"info": {"name": "set"}}
+            "bittorrent": {"info": {"name": "set"}},
+            "followedBy": ["child"]
         }))
         .unwrap();
 
+        assert_eq!(status.followed_by, vec!["child"]);
+        assert_eq!(status.files[1].length, "20");
+        assert_eq!(status.files[1].selected.as_deref(), Some("true"));
         let (payloads, controls) = status.artifact_paths();
         assert_eq!(payloads, vec!["/downloads/set/a", "/downloads/set/b"]);
         assert_eq!(controls, vec!["/downloads/set.aria2"]);

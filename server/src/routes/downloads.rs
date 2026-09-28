@@ -1,6 +1,7 @@
 use crate::aria2::Aria2AddMode;
 use crate::db::{DownloadArtifact, DownloadArtifactKind};
 use crate::error::AppError;
+use crate::routing::{candidate_from_http_url, candidates_from_torrent, route_for_candidates};
 use crate::state::AppState;
 use axum::{
     Json, Router,
@@ -9,12 +10,14 @@ use axum::{
     routing::{delete, get, post},
 };
 use chrono::Utc;
+#[cfg(test)]
+use common::enums::FileCategory;
 use common::{
     download::{
         AddDownloadInput, AddDownloadsRequest, DeleteDownloadFilesResult, Download, DownloadFilter,
         DownloadLiveStatus, TorrentUploadMetadata,
     },
-    enums::{DownloadStatus, FileCategory, SourceType},
+    enums::{DownloadStatus, SourceType},
     finetune::FineTune,
     queue::QueueSettings,
 };
@@ -232,15 +235,15 @@ async fn create_download(
     finetune: FineTune,
     start_immediately: bool,
 ) -> Result<DownloadLiveStatus, AppError> {
-    let (url, filename, source_type, torrent_data) = match input {
+    let (url, source_type, torrent_data, candidates) = match input {
         AddDownloadInput::Url(url) => {
-            let filename = url.rsplit('/').next().map(str::to_string);
             let source_type = if url.starts_with("magnet:") {
                 SourceType::Magnet
             } else {
                 SourceType::Http
             };
-            (url, filename, source_type, None)
+            let candidates = candidate_from_http_url(&url).into_iter().collect();
+            (url, source_type, None, candidates)
         }
         AddDownloadInput::TorrentFile { filename, data } => {
             if data.is_empty() {
@@ -253,40 +256,23 @@ async fn create_download(
                     "torrent file exceeds the {MAX_TORRENT_BYTES} byte limit"
                 )));
             }
-            let filename = safe_filename(&filename)
+            safe_filename(&filename)
                 .ok_or_else(|| AppError::BadRequest("torrent filename is required".into()))?;
-            (
-                String::new(),
-                Some(filename),
-                SourceType::Torrent,
-                Some(data),
-            )
+            let candidates = candidates_from_torrent(&data).map_err(AppError::BadRequest)?;
+            (String::new(), SourceType::Torrent, Some(data), candidates)
         }
     };
 
-    let category = filename
-        .as_deref()
-        .map(|filename| {
-            FileCategory::infer_from_filename(filename, &state.config.settings.category_extensions)
-        })
-        .unwrap_or(FileCategory::Other);
-    let configured_path = state
-        .config
-        .settings
-        .category_locations
-        .get(&category)
-        .unwrap_or(&state.config.settings.default_download_location);
-    let destination_path = crate::config::expand_tilde(configured_path)?
-        .to_string_lossy()
-        .to_string();
+    let route = route_for_candidates(&state.config.settings, &candidates)?;
+    let filename = (!route.filename.is_empty()).then_some(route.filename);
     let mut download = Download {
         id: 0,
         aria2_gid: None,
         url,
         filename,
-        destination_path,
+        destination_path: route.destination_path,
         source_type,
-        category,
+        category: route.category,
         status: DownloadStatus::Pending,
         paused_by_scheduler: false,
         manually_started: false,
@@ -1270,20 +1256,32 @@ mod torrent_creation_tests {
         body::Body,
         http::{Request, StatusCode, header::CONTENT_TYPE},
     };
+    use base64::Engine;
     use http_body_util::BodyExt;
     use std::sync::Arc;
     use tokio::sync::Mutex;
     use tower::ServiceExt;
+
+    const SAMPLE_TORRENT: &[u8] = b"d4:infod6:lengthi42e4:name9:movie.mkv12:piece lengthi16384e6:pieces20:00000000000000000000ee";
 
     fn state() -> AppState {
         state_with_rpc("http://127.0.0.1:1/jsonrpc")
     }
 
     fn state_with_rpc(rpc_url: &str) -> AppState {
+        let mut config = ServerConfig::default();
+        config.settings.default_download_location = "/tmp/ario-download-tests".into();
+        for path in config.settings.category_locations.values_mut() {
+            *path = "/tmp/ario-download-tests".into();
+        }
+        config.settings.category_locations.insert(
+            FileCategory::Video,
+            "/tmp/ario-download-tests/Videos".into(),
+        );
         AppState::new(
             Database::open(":memory:").unwrap(),
             Aria2Client::new(rpc_url, None),
-            ServerConfig::default(),
+            config,
             false,
         )
     }
@@ -1295,7 +1293,7 @@ mod torrent_creation_tests {
             &state,
             AddDownloadInput::TorrentFile {
                 filename: "../sample.torrent".into(),
-                data: b"metainfo".to_vec(),
+                data: SAMPLE_TORRENT.to_vec(),
             },
             1,
             0,
@@ -1305,14 +1303,68 @@ mod torrent_creation_tests {
         .await
         .unwrap();
 
-        assert_eq!(created.download.filename.as_deref(), Some("sample.torrent"));
+        assert_eq!(created.download.filename.as_deref(), Some("movie.mkv"));
+        assert_eq!(created.download.category, FileCategory::Video);
+        assert_eq!(
+            created.download.destination_path,
+            "/tmp/ario-download-tests/Videos"
+        );
         assert_eq!(created.download.status, DownloadStatus::Pending);
         assert_eq!(
             state
                 .db
                 .get_download_torrent_data(created.download.id)
                 .unwrap(),
-            Some(b"metainfo".to_vec())
+            Some(SAMPLE_TORRENT.to_vec())
+        );
+    }
+
+    #[tokio::test]
+    async fn signed_http_url_routes_to_video_before_start() {
+        let state = state();
+        let created = create_download(
+            &state,
+            AddDownloadInput::Url("https://example.test/movie.MKV?token=secret#fragment".into()),
+            1,
+            0,
+            FineTune::default(),
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(created.download.filename.as_deref(), Some("movie.MKV"));
+        assert_eq!(created.download.category, FileCategory::Video);
+        assert_eq!(
+            created.download.destination_path,
+            "/tmp/ario-download-tests/Videos"
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_torrent_is_rejected_before_queueing() {
+        let state = state();
+        let error = create_download(
+            &state,
+            AddDownloadInput::TorrentFile {
+                filename: "broken.torrent".into(),
+                data: b"not-bencode".to_vec(),
+            },
+            1,
+            0,
+            FineTune::default(),
+            false,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, AppError::BadRequest(_)));
+        assert!(
+            state
+                .db
+                .list_downloads(&DownloadFilter::default())
+                .unwrap()
+                .is_empty()
         );
     }
 
@@ -1371,7 +1423,7 @@ mod torrent_creation_tests {
             &state,
             AddDownloadInput::TorrentFile {
                 filename: "sample.torrent".into(),
-                data: b"metainfo".to_vec(),
+                data: SAMPLE_TORRENT.to_vec(),
             },
             1,
             0,
@@ -1387,7 +1439,10 @@ mod torrent_creation_tests {
         assert_eq!(gid, "gid");
         let requests = requests.lock().await;
         assert_eq!(requests[0]["method"], "aria2.addTorrent");
-        assert_eq!(requests[0]["params"][0], "bWV0YWluZm8=");
+        assert_eq!(
+            requests[0]["params"][0],
+            base64::engine::general_purpose::STANDARD.encode(SAMPLE_TORRENT)
+        );
         assert_eq!(requests[0]["params"][2]["continue"], "true");
         server.abort();
     }
@@ -1417,7 +1472,8 @@ mod torrent_creation_tests {
         .unwrap();
         let boundary = "ario-test-boundary";
         let body = format!(
-            "--{boundary}\r\nContent-Disposition: form-data; name=\"metadata\"\r\nContent-Type: application/json\r\n\r\n{metadata}\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"sample.torrent\"\r\nContent-Type: application/x-bittorrent\r\n\r\nmetainfo\r\n--{boundary}--\r\n"
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"metadata\"\r\nContent-Type: application/json\r\n\r\n{metadata}\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"sample.torrent\"\r\nContent-Type: application/x-bittorrent\r\n\r\n{}\r\n--{boundary}--\r\n",
+            String::from_utf8_lossy(SAMPLE_TORRENT)
         );
         let response = app
             .oneshot(
@@ -1441,7 +1497,7 @@ mod torrent_creation_tests {
                 .db
                 .get_download_torrent_data(created.download.id)
                 .unwrap(),
-            Some(b"metainfo".to_vec())
+            Some(SAMPLE_TORRENT.to_vec())
         );
     }
 

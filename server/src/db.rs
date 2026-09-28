@@ -234,6 +234,33 @@ impl Database {
         Ok(())
     }
 
+    pub fn adopt_resolved_download(
+        &self,
+        id: i64,
+        gid: &str,
+        filename: &str,
+        size: Option<u64>,
+        category: &FileCategory,
+        destination_path: &str,
+    ) -> SqlResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE downloads
+             SET aria2_gid = ?1, filename = ?2, size = ?3, category = ?4,
+                 destination_path = ?5
+             WHERE id = ?6",
+            params![
+                gid,
+                filename,
+                size.map(|value| value as i64),
+                category_to_str(category),
+                destination_path,
+                id,
+            ],
+        )?;
+        Ok(())
+    }
+
     pub fn update_download_completed_length(
         &self,
         id: i64,
@@ -877,6 +904,29 @@ mod tests {
             .unwrap();
         let ids: Vec<i64> = downloads.into_iter().map(|download| download.id).collect();
         assert_eq!(ids, vec![second, first]);
+    }
+
+    #[test]
+    fn adopting_resolved_download_updates_routing_atomically() {
+        let db = Database::open(":memory:").unwrap();
+        let id = insert_download_with_status(&db, 1, "Active");
+
+        db.adopt_resolved_download(
+            id,
+            "child-gid",
+            "movie.mkv",
+            Some(42),
+            &FileCategory::Video,
+            "/downloads/Videos",
+        )
+        .unwrap();
+
+        let download = db.get_download(id).unwrap().unwrap();
+        assert_eq!(download.aria2_gid.as_deref(), Some("child-gid"));
+        assert_eq!(download.filename.as_deref(), Some("movie.mkv"));
+        assert_eq!(download.size, Some(42));
+        assert_eq!(download.category, FileCategory::Video);
+        assert_eq!(download.destination_path, "/downloads/Videos");
     }
 
     #[test]
