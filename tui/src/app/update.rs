@@ -141,7 +141,7 @@ fn update_action(app: &mut App, action: Action) -> Vec<Effect> {
 
 fn close_open_modal(app: &mut App) {
     use crate::modal::Modal;
-    if matches!(app.modal, Some(Modal::Confirmation { .. })) {
+    if matches!(app.modal, Some(Modal::Confirmation(_))) {
         app.cancel_confirmation();
     } else if matches!(app.modal, Some(Modal::Help(_))) {
         app.modal = None;

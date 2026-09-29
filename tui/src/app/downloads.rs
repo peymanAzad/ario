@@ -1,5 +1,6 @@
 use super::*;
-use crate::app::{PendingConfirmationAction, confirmation_modal::ConfirmationModal};
+use crate::app::{PendingConfirmationAction};
+use crate::modal::ConfirmationModal;
 use crate::effects::{ApiRequest, Effect};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,8 +109,8 @@ impl App {
                 ),
                 "Remove",
                 "Cancel",
+                PendingConfirmationAction::DeleteDownloadFiles { download_id: id },
             ),
-            PendingConfirmationAction::DeleteDownloadFiles { download_id: id },
         );
     }
 

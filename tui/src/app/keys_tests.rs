@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
-    app::{PendingConfirmationAction, confirmation_modal::ConfirmationModal, update::update},
+    app::{PendingConfirmationAction, update::update},
+    modal::ConfirmationModal,
     theme::Theme,
 };
 
@@ -149,10 +150,13 @@ fn existing_modals_block_help_and_text_editing_keeps_question_mark() {
     assert!(app.help_modal().is_none());
     app.cancel_download_modal();
 
-    app.open_confirmation(
-        ConfirmationModal::new("Confirm", "Message", "Yes", "No"),
+    app.open_confirmation(ConfirmationModal::new(
+        "Confirm",
+        "Message",
+        "Yes",
+        "No",
         PendingConfirmationAction::DeleteDownloadFiles { download_id: 1 },
-    );
+    ));
     press(&mut app, KeyCode::Char('?'));
     app.open_help_modal();
     assert!(app.help_modal().is_none());
@@ -304,10 +308,13 @@ fn confirmation_modal_consumes_cancel_before_global_quit() {
         crate::icons::IconSet::new(crate::icons::GlyphMode::Unicode),
         false,
     );
-    app.open_confirmation(
-        ConfirmationModal::new("Confirm", "Message", "Yes", "No"),
+    app.open_confirmation(ConfirmationModal::new(
+        "Confirm",
+        "Message",
+        "Yes",
+        "No",
         PendingConfirmationAction::DeleteDownloadFiles { download_id: 1 },
-    );
+    ));
 
     if let Some(msg) = route_key(
         &mut app,

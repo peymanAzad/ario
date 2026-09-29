@@ -1,5 +1,6 @@
 use super::*;
-use crate::app::{PendingConfirmationAction, confirmation_modal::ConfirmationModal};
+use crate::app::{PendingConfirmationAction};
+use crate::modal::ConfirmationModal;
 use crate::effects::{ApiRequest, Effect};
 
 const MAIN_QUEUE_ID: i64 = 1;
@@ -91,8 +92,8 @@ impl App {
                         ),
                         "Remove",
                         "Cancel",
+                        PendingConfirmationAction::DeleteQueue { queue_id },
                     ),
-                    PendingConfirmationAction::DeleteQueue { queue_id },
                 );
                 vec![]
             }

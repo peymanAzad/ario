@@ -58,7 +58,7 @@ fn download_detail_lines(
     let filename = detail_lines(download_name(download), width, filename_height, ellipsis);
     let error_height = height.saturating_sub(filename.len());
     let error = error.map_or_else(Vec::new, |message| {
-        super::help_modal::wrap_text(&message, width)
+        crate::modal::help::wrap_text(&message, width)
             .into_iter()
             .take(error_height)
             .collect()

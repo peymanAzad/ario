@@ -27,7 +27,7 @@ pub fn draw_toasts(f: &mut Frame, app: &App) {
             .lines()
             .flat_map(|line| {
                 let wrapped =
-                    super::help_modal::wrap_text(line, toast_width.saturating_sub(2) as usize);
+                    crate::modal::help::wrap_text(line, toast_width.saturating_sub(2) as usize);
                 if wrapped.is_empty() {
                     vec![Line::default()]
                 } else {

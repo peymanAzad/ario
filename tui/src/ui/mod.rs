@@ -1,11 +1,9 @@
 mod category_list;
 mod clipboard_import_modal;
-mod confirmation_modal;
 mod download_edit_modal;
 mod downloads_table;
 pub(crate) mod format;
 mod footer;
-mod help_modal;
 mod queue_list;
 mod queue_modal;
 mod status_bar;
@@ -20,11 +18,12 @@ pub(crate) use style::{border_style, centered_rect, field_style, highlight_style
 
 use crate::{
     app::{ALL_CATEGORIES, App},
+    modal::Modal,
     ui::{
         category_list::draw_categories_list, clipboard_import_modal::draw_clipboard_import_modal,
-        confirmation_modal::draw_confirmation_modal, download_edit_modal::draw_download_modal,
-        downloads_table::draw_downloads_table, footer::draw_footer, queue_list::draw_queues_list,
-        queue_modal::draw_queue_modal, status_bar::draw_status_bar, toast_popup::draw_toasts,
+        download_edit_modal::draw_download_modal, downloads_table::draw_downloads_table,
+        footer::draw_footer, queue_list::draw_queues_list, queue_modal::draw_queue_modal,
+        status_bar::draw_status_bar, toast_popup::draw_toasts,
         torrent_file_modal::draw_torrent_file_modal,
     },
 };
@@ -69,22 +68,60 @@ pub fn render(app: &mut App, f: &mut Frame) {
     draw_categories_list(f, app, left_layout[1]);
     draw_downloads_table(f, app, body_layout[1]);
 
-    match &app.modal {
-        Some(crate::modal::Modal::Confirmation { modal, .. }) => {
-            draw_confirmation_modal(f, app, modal);
+    if matches!(app.modal, Some(Modal::Confirmation(_))) {
+        let App {
+            modal,
+            queues,
+            selected_queue,
+            aria2_global_options,
+            theme,
+            icons,
+            ..
+        } = app;
+        if let Some(m) = modal {
+            let ctx = crate::modal::Ctx {
+                queues,
+                selected_queue: *selected_queue,
+                aria2_global_options: aria2_global_options.as_ref(),
+                theme,
+                icons,
+            };
+            m.render(f, f.area(), &ctx);
         }
-        Some(crate::modal::Modal::Queue(modal)) => draw_queue_modal(f, app, modal),
-        Some(crate::modal::Modal::TorrentFile(modal)) => draw_torrent_file_modal(f, app, modal),
-        Some(crate::modal::Modal::ClipboardImport(modal)) => {
-            draw_clipboard_import_modal(f, app, modal)
+    } else {
+        match &app.modal {
+            Some(Modal::Queue(modal)) => draw_queue_modal(f, app, modal),
+            Some(Modal::TorrentFile(modal)) => draw_torrent_file_modal(f, app, modal),
+            Some(Modal::ClipboardImport(modal)) => {
+                draw_clipboard_import_modal(f, app, modal)
+            }
+            Some(Modal::DownloadEdit(modal)) => draw_download_modal(f, app, modal),
+            Some(Modal::Confirmation(_)) | Some(Modal::Help(_)) | None => {}
         }
-        Some(crate::modal::Modal::DownloadEdit(modal)) => draw_download_modal(f, app, modal),
-        Some(crate::modal::Modal::Help(_)) | None => {}
     }
 
     draw_toasts(f, app);
-    if let Some(crate::modal::Modal::Help(modal)) = &mut app.modal {
-        help_modal::draw_help_modal(f, modal, &app.theme, main_layout[1]);
+    if matches!(app.modal, Some(Modal::Help(_))) {
+        let body_area = main_layout[1];
+        let App {
+            modal,
+            queues,
+            selected_queue,
+            aria2_global_options,
+            theme,
+            icons,
+            ..
+        } = app;
+        if let Some(m) = modal {
+            let ctx = crate::modal::Ctx {
+                queues,
+                selected_queue: *selected_queue,
+                aria2_global_options: aria2_global_options.as_ref(),
+                theme,
+                icons,
+            };
+            m.render(f, body_area, &ctx);
+        }
     }
     draw_footer(f, app, main_layout[2]);
 }
