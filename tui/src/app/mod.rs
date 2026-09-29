@@ -1,13 +1,9 @@
 pub mod categories;
-pub mod clipboard_import_modal;
-pub mod download_edit_modal;
 pub mod downloads;
 pub mod keys;
 pub mod lifecycle;
-pub mod queue_modal;
 pub mod queues;
 pub mod speed;
-pub mod torrent_file_modal;
 pub mod update;
 
 pub use lifecycle::LifecycleState;
@@ -19,13 +15,12 @@ use crate::app::lifecycle::{
     clears_last_error, is_stale_unreachable_refresh, marks_server_reachable,
 };
 
-use crate::app::clipboard_import_modal::ClipboardImportModal;
-use crate::app::download_edit_modal::DownloadEditModal;
-use crate::app::queue_modal::QueueModal;
-use crate::app::torrent_file_modal::TorrentFileModal;
 use crate::effects::{ApiRequest, Effect};
 use crate::icons::IconSet;
-use crate::modal::{ConfirmationModal, Ctx, HelpModal, Modal};
+use crate::modal::{
+    ClipboardImportModal, ConfirmationModal, Ctx, DownloadEditModal, HelpModal, Modal, QueueModal,
+    TorrentFileModal,
+};
 use crate::theme::Theme;
 pub use crate::toast::ToastLevel;
 use crate::toast::ToastStack;
@@ -75,18 +70,6 @@ pub const ALL_CATEGORIES: [FileCategory; 6] = [
     FileCategory::Program,
     FileCategory::Other,
 ];
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ModalTab {
-    Urls,
-    FineTuning,
-}
-
-#[derive(Clone, Debug)]
-pub struct ImportUrlEntry {
-    pub url: String,
-    pub selected: bool,
-}
 
 pub struct App {
     pub downloads: Vec<DownloadLiveStatus>,
@@ -148,6 +131,7 @@ impl App {
         self.modal.is_some()
     }
 
+    #[allow(dead_code)]
     pub fn clipboard_modal(&self) -> Option<&ClipboardImportModal> {
         match &self.modal {
             Some(Modal::ClipboardImport(m)) => Some(m),
@@ -155,6 +139,7 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
     pub fn clipboard_modal_mut(&mut self) -> Option<&mut ClipboardImportModal> {
         match &mut self.modal {
             Some(Modal::ClipboardImport(m)) => Some(m),
@@ -162,6 +147,7 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
     pub fn torrent_modal(&self) -> Option<&TorrentFileModal> {
         match &self.modal {
             Some(Modal::TorrentFile(m)) => Some(m),
@@ -169,6 +155,7 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
     pub fn torrent_modal_mut(&mut self) -> Option<&mut TorrentFileModal> {
         match &mut self.modal {
             Some(Modal::TorrentFile(m)) => Some(m),
@@ -176,6 +163,7 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
     pub fn queue_modal(&self) -> Option<&QueueModal> {
         match &self.modal {
             Some(Modal::Queue(m)) => Some(m),
@@ -183,6 +171,7 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
     pub fn queue_modal_mut(&mut self) -> Option<&mut QueueModal> {
         match &mut self.modal {
             Some(Modal::Queue(m)) => Some(m),
@@ -198,6 +187,7 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
     pub fn download_modal_mut(&mut self) -> Option<&mut DownloadEditModal> {
         match &mut self.modal {
             Some(Modal::DownloadEdit(m)) => Some(m),

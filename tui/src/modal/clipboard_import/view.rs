@@ -1,5 +1,13 @@
-use crate::app::{App, ModalTab, clipboard_import_modal::ClipboardImportModal};
+use crate::{
+    modal::{
+        Ctx,
+        clipboard_import::{ClipboardImportModal, ModalTab},
+    },
+    theme::Theme,
+    ui::centered_rect,
+};
 use common::enums::{AllocStrategy, StreamPieceSelector};
+use common::finetune::FineTune;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -8,9 +16,9 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
 
-pub fn draw_clipboard_import_modal(f: &mut Frame, app: &App, modal: &ClipboardImportModal) {
-    let theme = &app.theme;
-    let area = super::centered_rect(70, 70, f.area());
+pub fn draw_clipboard_import_modal(f: &mut Frame, modal: &ClipboardImportModal, ctx: &Ctx<'_>) {
+    let theme = ctx.theme;
+    let area = centered_rect(70, 70, f.area());
 
     f.render_widget(Clear, area);
 
@@ -29,25 +37,23 @@ pub fn draw_clipboard_import_modal(f: &mut Frame, app: &App, modal: &ClipboardIm
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // tab bar
-            Constraint::Min(0),    // tab content
-            Constraint::Length(1), // buttons
+            Constraint::Length(1),
+            Constraint::Min(0),
+            Constraint::Length(1),
         ])
         .split(inner);
 
-    draw_modal_tab_bar(f, app, modal, layout[0]);
+    draw_modal_tab_bar(f, theme, modal, layout[0]);
     match modal.tab {
-        ModalTab::Urls => draw_modal_urls_tab(f, app, modal, layout[1]),
+        ModalTab::Urls => draw_modal_urls_tab(f, ctx, modal, layout[1]),
         ModalTab::FineTuning => {
-            draw_finetuning_fields(f, app, &modal.finetune, modal.finetune_cursor, layout[1])
+            draw_finetuning_fields(f, theme, &modal.finetune, modal.finetune_cursor, layout[1])
         }
     }
-    draw_modal_buttons(f, app, layout[2]);
+    draw_modal_buttons(f, theme, layout[2]);
 }
 
-fn draw_modal_tab_bar(f: &mut Frame, app: &App, modal: &ClipboardImportModal, area: Rect) {
-    let theme = &app.theme;
-
+fn draw_modal_tab_bar(f: &mut Frame, theme: &Theme, modal: &ClipboardImportModal, area: Rect) {
     let tab_style = |active: bool| {
         if active {
             Style::default()
@@ -75,19 +81,19 @@ fn draw_modal_tab_bar(f: &mut Frame, app: &App, modal: &ClipboardImportModal, ar
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn draw_modal_urls_tab(f: &mut Frame, app: &App, modal: &ClipboardImportModal, area: Rect) {
-    let theme = &app.theme;
+fn draw_modal_urls_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &ClipboardImportModal, area: Rect) {
+    let theme = ctx.theme;
 
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // queue picker
-            Constraint::Min(0),    // URL checklist
-            Constraint::Length(1), // hint line
+            Constraint::Length(1),
+            Constraint::Min(0),
+            Constraint::Length(1),
         ])
         .split(area);
 
-    let queue_name = app
+    let queue_name = ctx
         .queues
         .get(modal.queue_cursor)
         .map(|q| q.name.as_str())
@@ -149,13 +155,11 @@ fn draw_modal_urls_tab(f: &mut Frame, app: &App, modal: &ClipboardImportModal, a
 
 pub(crate) fn draw_finetuning_fields(
     f: &mut Frame,
-    app: &App,
-    finetune: &common::finetune::FineTune,
+    theme: &Theme,
+    finetune: &FineTune,
     finetune_cursor: usize,
     area: Rect,
 ) {
-    let theme = &app.theme;
-
     let alloc_label = match &finetune.alloc_strategy {
         None => "(queue default)".to_string(),
         Some(AllocStrategy::None) => "none".to_string(),
@@ -233,9 +237,7 @@ pub(crate) fn draw_finetuning_fields(
     f.render_widget(list, area);
 }
 
-fn draw_modal_buttons(f: &mut Frame, app: &App, area: Rect) {
-    let theme = &app.theme;
-
+fn draw_modal_buttons(f: &mut Frame, theme: &Theme, area: Rect) {
     let spans = vec![
         Span::styled(
             " [s] Start Now ",

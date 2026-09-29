@@ -1,7 +1,10 @@
 use super::*;
 use crate::{
     app::{PendingConfirmationAction, update::update},
-    modal::ConfirmationModal,
+    modal::{
+        ClipboardImportModal, ConfirmationModal, DownloadEditModal, ModalTab, QueueModalMode,
+        QueueModalTab, RecurrenceKind, TorrentFileModalTab,
+    },
     theme::Theme,
 };
 
@@ -82,8 +85,6 @@ fn add_shortcut_opens_torrent_modal_and_accepts_paste() {
 
 #[test]
 fn torrent_path_focus_can_move_to_tabs_and_back_without_validation() {
-    use crate::app::torrent_file_modal::TorrentFileModalTab;
-
     let mut app = test_app();
     press(&mut app, KeyCode::Char('a'));
 
@@ -106,9 +107,6 @@ fn torrent_path_focus_can_move_to_tabs_and_back_without_validation() {
 
 #[test]
 fn existing_modals_block_help_and_text_editing_keeps_question_mark() {
-    use crate::app::{
-        clipboard_import_modal::ClipboardImportModal, download_edit_modal::DownloadEditModal,
-    };
     let mut app = test_app();
     app.open_create_queue_modal();
     press(&mut app, KeyCode::Char('?'));
@@ -168,7 +166,7 @@ fn queue_editor_can_save_from_download_items_tab() {
     let mut app = test_app();
     app.open_create_queue_modal();
     let modal = app.queue_modal_mut().unwrap();
-    modal.mode = crate::app::queue_modal::QueueModalMode::Edit { queue_id: 1 };
+    modal.mode = QueueModalMode::Edit { queue_id: 1 };
     modal.tab = QueueModalTab::DownloadItems;
     modal.name = "Queue".into();
 
@@ -185,7 +183,7 @@ fn one_time_schedule_uses_adjustable_date_and_time_fields() {
     app.open_create_queue_modal();
     let modal = app.queue_modal_mut().unwrap();
     modal.tab = QueueModalTab::Scheduler;
-    modal.recurrence_kind = crate::app::queue_modal::RecurrenceKind::Once;
+    modal.recurrence_kind = RecurrenceKind::Once;
     modal.scheduler_cursor = 2;
 
     let start_date = modal.once_start_date;

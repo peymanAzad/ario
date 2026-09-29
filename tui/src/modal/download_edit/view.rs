@@ -1,5 +1,7 @@
-use super::*;
-use crate::app::{App, download_edit_modal::DownloadEditModal};
+use crate::{
+    modal::{Ctx, download_edit::DownloadEditModal},
+    ui::{centered_rect, field_style},
+};
 use common::enums::{AllocStrategy, StreamPieceSelector};
 use ratatui::{
     Frame,
@@ -9,8 +11,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
 };
 
-pub fn draw_download_modal(f: &mut Frame, app: &App, modal: &DownloadEditModal) {
-    let theme = &app.theme;
+pub fn draw_download_modal(f: &mut Frame, modal: &DownloadEditModal, ctx: &Ctx<'_>) {
+    let theme = ctx.theme;
     let area = centered_rect(70, 60, f.area());
     f.render_widget(Clear, area);
 
@@ -50,7 +52,7 @@ pub fn draw_download_modal(f: &mut Frame, app: &App, modal: &DownloadEditModal) 
         Some(StreamPieceSelector::Geom) => "geom".to_string(),
     };
 
-    let queue_label = app
+    let queue_label = ctx
         .queues
         .get(modal.queue_cursor)
         .map(|queue| queue.name.clone())

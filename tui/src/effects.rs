@@ -14,7 +14,7 @@ use common::{
 
 use crate::{
     api,
-    app::torrent_file_modal::MAX_TORRENT_BYTES,
+    modal::MAX_TORRENT_BYTES,
     event::Event,
     msg::{ApiResult, Msg},
 };
