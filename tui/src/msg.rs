@@ -96,6 +96,7 @@ pub enum ApiResult {
         result: anyhow::Result<Vec<DownloadLiveStatus>>,
     },
     QueueSaved(anyhow::Result<()>),
+    DownloadEditSaved(anyhow::Result<()>),
     DownloadPaused {
         download_id: i64,
         result: anyhow::Result<DownloadLiveStatus>,

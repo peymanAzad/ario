@@ -45,13 +45,10 @@ pub enum ApiRequest {
     DeleteDownload(i64),
     DeleteDownloadFiles(i64),
     DeleteCompleted(Option<i64>),
-    UpdateFinetune {
-        id: i64,
-        finetune: FineTune,
-    },
-    MoveDownloadQueue {
+    SaveDownloadEdit {
         id: i64,
         queue_id: i64,
+        finetune: FineTune,
     },
     CreateQueue(CreateQueueRequest),
     UpdateQueue {
@@ -144,14 +141,15 @@ fn execute(base: &str, request: ApiRequest) -> ApiResult {
             "delete completed",
             api::delete_completed_downloads(base, queue_id),
         ),
-        ApiRequest::UpdateFinetune { id, finetune } => ApiResult::from_unit(
-            "update finetune",
-            api::update_finetune(base, id, &finetune).map(|_| ()),
-        ),
-        ApiRequest::MoveDownloadQueue { id, queue_id } => ApiResult::from_unit(
-            "move download",
-            api::move_download_queue(base, id, queue_id).map(|_| ()),
-        ),
+        ApiRequest::SaveDownloadEdit {
+            id,
+            queue_id,
+            finetune,
+        } => ApiResult::DownloadEditSaved((|| {
+            api::move_download_queue(base, id, queue_id).context("move download")?;
+            api::update_finetune(base, id, &finetune).context("update fine tuning")?;
+            Ok(())
+        })()),
         ApiRequest::CreateQueue(request) => {
             ApiResult::QueueSaved(api::create_queue(base, &request).map(|_| ()))
         }
@@ -285,8 +283,169 @@ fn open_path(path: PathBuf) {
 
 #[cfg(test)]
 mod tests {
-    use super::silence_command_stdio;
-    use std::process::Command;
+    use super::{ApiRequest, execute, silence_command_stdio};
+    use crate::msg::ApiResult;
+    use chrono::Utc;
+    use common::{
+        download::{Download, DownloadLiveStatus},
+        enums::{DownloadStatus, FileCategory, SourceType},
+        finetune::FineTune,
+    };
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        process::Command,
+        thread,
+        time::Duration,
+    };
+
+    fn live_status(queue_id: i64) -> String {
+        serde_json::to_string(&DownloadLiveStatus {
+            download: Download {
+                id: 7,
+                aria2_gid: None,
+                url: "https://example.test/file".into(),
+                filename: Some("file".into()),
+                destination_path: "/tmp".into(),
+                source_type: SourceType::Http,
+                category: FileCategory::Other,
+                status: DownloadStatus::Pending,
+                paused_by_scheduler: false,
+                manually_started: false,
+                size: None,
+                completed_length: None,
+                queue_id,
+                position_in_queue: 0,
+                finetune: FineTune::default(),
+                created_at: Utc::now(),
+                started_at: None,
+                completed_at: None,
+            },
+            completed_length: 0,
+            download_speed: 0,
+            eta_seconds: None,
+        })
+        .unwrap()
+    }
+
+    fn mock_server(
+        responses: Vec<(&'static str, String)>,
+    ) -> (String, thread::JoinHandle<Vec<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            let mut requests = Vec::new();
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0; 4096];
+                loop {
+                    let count = stream.read(&mut buffer).unwrap();
+                    if count == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..count]);
+                    if let Some(end) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&request[..end]);
+                        let length = headers
+                            .lines()
+                            .filter_map(|line| line.split_once(':'))
+                            .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                            .map(|(_, value)| value.trim().parse::<usize>().unwrap())
+                            .unwrap_or(0);
+                        if request.len() >= end + 4 + length {
+                            break;
+                        }
+                    }
+                }
+                requests.push(String::from_utf8_lossy(&request).into_owned());
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+            requests
+        });
+        (base, server)
+    }
+
+    #[test]
+    fn download_edit_moves_before_finetune_for_changed_and_unchanged_queues() {
+        for queue_id in [1, 2] {
+            let (base, server) = mock_server(vec![
+                ("200 OK", live_status(queue_id)),
+                ("200 OK", live_status(queue_id)),
+            ]);
+            let result = execute(
+                &base,
+                ApiRequest::SaveDownloadEdit {
+                    id: 7,
+                    queue_id,
+                    finetune: FineTune::default(),
+                },
+            );
+            assert!(matches!(result, ApiResult::DownloadEditSaved(Ok(()))));
+            let requests = server.join().unwrap();
+            assert_eq!(requests.len(), 2);
+            assert!(requests[0].starts_with("PUT /downloads/7/queue HTTP/1.1"));
+            assert!(requests[0].contains(&format!("\"queue_id\":{queue_id}")));
+            assert!(requests[1].starts_with("PUT /downloads/7/finetune HTTP/1.1"));
+        }
+    }
+
+    #[test]
+    fn download_edit_stops_when_move_fails() {
+        let (base, server) = mock_server(vec![(
+            "400 Bad Request",
+            r#"{"result":"error","message":"queue missing"}"#.into(),
+        )]);
+        let result = execute(
+            &base,
+            ApiRequest::SaveDownloadEdit {
+                id: 7,
+                queue_id: 2,
+                finetune: FineTune::default(),
+            },
+        );
+        let ApiResult::DownloadEditSaved(Err(error)) = result else {
+            panic!("failed move should fail the save");
+        };
+        assert_eq!(format!("{error:#}"), "move download: queue missing");
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("PUT /downloads/7/queue HTTP/1.1"));
+    }
+
+    #[test]
+    fn download_edit_reports_finetune_failure_after_move() {
+        let (base, server) = mock_server(vec![
+            ("200 OK", live_status(2)),
+            (
+                "400 Bad Request",
+                r#"{"result":"error","message":"invalid fine tuning"}"#.into(),
+            ),
+        ]);
+        let result = execute(
+            &base,
+            ApiRequest::SaveDownloadEdit {
+                id: 7,
+                queue_id: 2,
+                finetune: FineTune::default(),
+            },
+        );
+        let ApiResult::DownloadEditSaved(Err(error)) = result else {
+            panic!("failed fine tuning should fail the save");
+        };
+        assert_eq!(
+            format!("{error:#}"),
+            "update fine tuning: invalid fine tuning"
+        );
+        assert_eq!(server.join().unwrap().len(), 2);
+    }
 
     #[cfg(any(unix, windows))]
     #[test]
