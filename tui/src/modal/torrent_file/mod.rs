@@ -190,6 +190,24 @@ impl Component for TorrentFileModal {
     fn render(&mut self, f: &mut Frame, _area: Rect, ctx: &Ctx<'_>) {
         view::draw_torrent_file_modal(f, self, ctx);
     }
+
+    fn hints(&self) -> Vec<(&'static str, &'static str)> {
+        if self.path_input.editing {
+            vec![
+                ("Enter", "Accept"),
+                ("Esc", "Stop editing"),
+                ("Tab", "Tab"),
+            ]
+        } else {
+            vec![
+                ("s", "Start"),
+                ("w", "Save"),
+                ("c/Esc", "Cancel"),
+                ("Tab", "Tab"),
+                ("j/k", "Navigate"),
+            ]
+        }
+    }
 }
 
 impl App {

@@ -13,6 +13,12 @@ use crate::modal::{Component, Ctx, Modal, ModalOutcome};
 use crate::msg::Action;
 use crate::ui::centered_rect;
 
+/// Help section for confirmation dialogs.
+pub const HELP: &[(&str, &str)] = &[
+    ("Enter / y / Y", "Confirm action"),
+    ("Esc / n / N / c / C", "Cancel action (also Ctrl+C)"),
+];
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfirmationModal {
     pub title: String,

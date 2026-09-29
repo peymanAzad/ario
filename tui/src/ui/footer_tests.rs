@@ -1,12 +1,13 @@
 use super::*;
 use crate::{
+    app::Focus,
     icons::{GlyphMode, IconSet},
     theme::Theme,
 };
 use chrono::Utc;
 use common::{
     download::{Download, DownloadLiveStatus},
-    enums::{FileCategory, Recurrence, SourceType},
+    enums::{DownloadStatus, FileCategory, QueueStatus, Recurrence, SourceType},
     finetune::FineTune,
     queue::{Queue, QueueSettings},
     scheduler::Scheduler,

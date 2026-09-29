@@ -215,7 +215,7 @@ mod tests {
         assert!(output.contains("Queues"));
         assert!(output.contains(&"─".repeat(30)));
         assert!(output.contains("/: search keybindings"));
-        assert!(output.lines().last().unwrap().starts_with("?:Help"));
+        assert!(output.lines().last().unwrap().starts_with("Esc/q/?:Close"));
 
         app.help_modal_mut().unwrap().query = "keeping downloaded files".into();
         let output = render(&mut app, 60, 24);
@@ -258,12 +258,17 @@ mod tests {
             }
             app.open_create_queue_modal();
             let output = render(&mut app, 40, 12);
-            assert!(output.lines().last().unwrap().starts_with("?:Help"));
+            assert!(output.lines().last().unwrap().starts_with("s:Save"));
             app.cancel_queue_modal();
             app.open_help_modal();
             for (width, height) in [(7, 4), (30, 12), (80, 24), (120, 40)] {
                 let output = render(&mut app, width, height);
-                assert!(output.lines().last().unwrap().starts_with("?:Help"));
+                let footer = output.lines().last().unwrap();
+                // Narrow widths may only fit the first modal hint key fragment.
+                assert!(
+                    footer.starts_with("Esc/q/?:Close") || footer.starts_with("Esc"),
+                    "unexpected footer {footer:?}"
+                );
             }
         }
     }

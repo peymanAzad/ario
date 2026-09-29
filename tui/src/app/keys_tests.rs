@@ -1,10 +1,12 @@
 use super::*;
 use crate::{
-    app::{PendingConfirmationAction, update::update},
+    app::{Focus, PendingConfirmationAction, update::update},
+    keymap,
     modal::{
         ClipboardImportModal, ConfirmationModal, DownloadEditModal, ModalTab, QueueModalMode,
         QueueModalTab, RecurrenceKind, TorrentFileModalTab,
     },
+    msg::Action,
     theme::Theme,
 };
 
@@ -270,32 +272,68 @@ fn help_navigation_uses_viewport_and_ctrl_c_still_quits() {
 
 #[test]
 fn remove_completed_key_is_scoped_to_queue_pane() {
-    assert!(is_remove_completed_key(Focus::Queues, KeyCode::Char('x')));
-    assert!(!is_remove_completed_key(
-        Focus::Categories,
-        KeyCode::Char('x')
+    let x = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+    assert!(matches!(
+        keymap::lookup(Focus::Queues, x),
+        Some(Action::RemoveCompleted)
     ));
-    assert!(!is_remove_completed_key(
-        Focus::Downloads,
-        KeyCode::Char('x')
+    assert!(!matches!(
+        keymap::lookup(Focus::Categories, x),
+        Some(Action::RemoveCompleted)
     ));
-    assert!(!is_remove_completed_key(Focus::Queues, KeyCode::Char('X')));
+    assert!(!matches!(
+        keymap::lookup(Focus::Downloads, x),
+        Some(Action::RemoveCompleted)
+    ));
+    assert!(!matches!(
+        keymap::lookup(Focus::Queues, KeyEvent::new(KeyCode::Char('X'), KeyModifiers::NONE)),
+        Some(Action::RemoveCompleted)
+    ));
 }
 
 #[test]
 fn destructive_delete_key_is_shifted_and_scoped_to_downloads() {
-    assert!(is_delete_files_key(Focus::Downloads, KeyCode::Char('D')));
-    assert!(!is_delete_files_key(Focus::Downloads, KeyCode::Char('d')));
-    assert!(!is_delete_files_key(Focus::Queues, KeyCode::Char('D')));
-    assert!(!is_delete_files_key(Focus::Categories, KeyCode::Char('D')));
+    let shift_d = KeyEvent::new(KeyCode::Char('D'), KeyModifiers::NONE);
+    assert!(matches!(
+        keymap::lookup(Focus::Downloads, shift_d),
+        Some(Action::DeleteDownloadFiles)
+    ));
+    assert!(!matches!(
+        keymap::lookup(
+            Focus::Downloads,
+            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE)
+        ),
+        Some(Action::DeleteDownloadFiles)
+    ));
+    assert!(!matches!(
+        keymap::lookup(Focus::Queues, shift_d),
+        Some(Action::DeleteDownloadFiles)
+    ));
+    assert!(!matches!(
+        keymap::lookup(Focus::Categories, shift_d),
+        Some(Action::DeleteDownloadFiles)
+    ));
 }
 
 #[test]
 fn queue_delete_key_is_lowercase_and_scoped_to_queues() {
-    assert!(is_delete_queue_key(Focus::Queues, KeyCode::Char('d')));
-    assert!(!is_delete_queue_key(Focus::Downloads, KeyCode::Char('d')));
-    assert!(!is_delete_queue_key(Focus::Categories, KeyCode::Char('d')));
-    assert!(!is_delete_queue_key(Focus::Queues, KeyCode::Char('D')));
+    let d = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE);
+    assert!(matches!(
+        keymap::lookup(Focus::Queues, d),
+        Some(Action::DeleteQueue)
+    ));
+    assert!(!matches!(
+        keymap::lookup(Focus::Downloads, d),
+        Some(Action::DeleteQueue)
+    ));
+    assert!(!matches!(
+        keymap::lookup(Focus::Categories, d),
+        Some(Action::DeleteQueue)
+    ));
+    assert!(!matches!(
+        keymap::lookup(Focus::Queues, KeyEvent::new(KeyCode::Char('D'), KeyModifiers::NONE)),
+        Some(Action::DeleteQueue)
+    ));
 }
 
 #[test]
