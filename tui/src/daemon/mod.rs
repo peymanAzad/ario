@@ -1,5 +1,9 @@
 //! TUI-owned supervision of a local `ario_daemon` process.
 
+pub mod exit;
+
+pub use exit::finish_server_process;
+
 use std::net::{IpAddr, TcpListener};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -423,5 +427,4 @@ fn daemon_binary_name() -> &'static str {
 }
 
 #[cfg(test)]
-#[path = "server_process_tests.rs"]
 mod tests;
