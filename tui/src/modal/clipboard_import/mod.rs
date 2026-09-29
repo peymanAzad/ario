@@ -3,7 +3,8 @@ use common::finetune::FineTune;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{Frame, layout::Rect};
 
-use crate::app::{App, adjust_finetune_field};
+use crate::app::App;
+use crate::modal::widgets::{FineTuneEditor, QueuePicker};
 use crate::modal::{Component, Ctx, Modal, ModalOutcome};
 use crate::msg::Action;
 use crate::toast::ToastLevel;
@@ -27,9 +28,8 @@ pub struct ClipboardImportModal {
     pub tab: ModalTab,
     pub entries: Vec<ImportUrlEntry>,
     pub url_cursor: usize,
-    pub queue_cursor: usize,
-    pub finetune: FineTune,
-    pub finetune_cursor: usize,
+    pub queue_picker: QueuePicker,
+    pub finetune_editor: FineTuneEditor,
 }
 
 impl ClipboardImportModal {
@@ -47,34 +47,21 @@ impl ClipboardImportModal {
                     self.url_cursor = (self.url_cursor + 1).min(self.entries.len() - 1);
                 }
             }
-            ModalTab::FineTuning => {
-                self.finetune_cursor = (self.finetune_cursor + 1).min(5);
-            }
+            ModalTab::FineTuning => self.finetune_editor.move_down(),
         }
     }
 
     fn move_up(&mut self) {
         match self.tab {
             ModalTab::Urls => self.url_cursor = self.url_cursor.saturating_sub(1),
-            ModalTab::FineTuning => self.finetune_cursor = self.finetune_cursor.saturating_sub(1),
+            ModalTab::FineTuning => self.finetune_editor.move_up(),
         }
     }
 
     fn adjust(&mut self, forward: bool, queue_count: usize) {
         match self.tab {
-            ModalTab::Urls => {
-                if queue_count == 0 {
-                    return;
-                }
-                if forward {
-                    self.queue_cursor = (self.queue_cursor + 1).min(queue_count - 1);
-                } else {
-                    self.queue_cursor = self.queue_cursor.saturating_sub(1);
-                }
-            }
-            ModalTab::FineTuning => {
-                adjust_finetune_field(&mut self.finetune, self.finetune_cursor, forward)
-            }
+            ModalTab::Urls => self.queue_picker.move_by(forward, queue_count),
+            ModalTab::FineTuning => self.finetune_editor.adjust(forward),
         }
     }
 
@@ -108,16 +95,16 @@ impl ClipboardImportModal {
             return ModalOutcome::Close;
         }
 
-        let queue_id = ctx
-            .queues
-            .get(self.queue_cursor)
-            .map(|queue| queue.id)
+        let queue_id = self
+            .queue_picker
+            .selected_id(ctx.queues)
             .unwrap_or(1);
 
-        let finetune_override = if self.finetune == FineTune::default() {
+        let finetune = &self.finetune_editor.finetune;
+        let finetune_override = if *finetune == FineTune::default() {
             None
         } else {
-            Some(self.finetune.clone())
+            Some(finetune.clone())
         };
 
         ModalOutcome::Emit(Action::SubmitDownloads(AddDownloadsRequest {
@@ -195,17 +182,12 @@ impl App {
             })
             .collect();
 
-        let main_queue_cursor = self.queues.iter().position(|q| q.name == "Main Queue");
-        let queue_cursor =
-            clipboard_queue_cursor(self.selected_queue, self.queues.len(), main_queue_cursor);
-
         self.modal = Some(Modal::ClipboardImport(ClipboardImportModal {
             tab: ModalTab::Urls,
             entries,
             url_cursor: 0,
-            queue_cursor,
-            finetune: FineTune::default(),
-            finetune_cursor: 0,
+            queue_picker: QueuePicker::default_for(self.selected_queue, &self.queues),
+            finetune_editor: FineTuneEditor::new(FineTune::default()),
         }));
     }
 
@@ -214,44 +196,5 @@ impl App {
         if matches!(self.modal, Some(Modal::ClipboardImport(_))) {
             self.modal = None;
         }
-    }
-}
-
-fn clipboard_queue_cursor(
-    selected_queue: usize,
-    queue_count: usize,
-    main_queue_cursor: Option<usize>,
-) -> usize {
-    selected_queue
-        .checked_sub(1)
-        .filter(|&queue_cursor| queue_cursor < queue_count)
-        .or(main_queue_cursor)
-        .unwrap_or(0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::clipboard_queue_cursor;
-
-    #[test]
-    fn defaults_to_the_current_queue() {
-        assert_eq!(clipboard_queue_cursor(3, 4, Some(0)), 2);
-    }
-
-    #[test]
-    fn all_queues_selection_defaults_to_main_queue() {
-        assert_eq!(clipboard_queue_cursor(0, 4, Some(2)), 2);
-    }
-
-    #[test]
-    fn missing_main_queue_defaults_to_the_first_queue() {
-        assert_eq!(clipboard_queue_cursor(0, 4, None), 0);
-    }
-
-    #[test]
-    fn empty_and_stale_queue_selections_are_safe() {
-        assert_eq!(clipboard_queue_cursor(0, 0, None), 0);
-        assert_eq!(clipboard_queue_cursor(5, 2, Some(1)), 1);
-        assert_eq!(clipboard_queue_cursor(5, 2, None), 0);
     }
 }

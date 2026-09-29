@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 
-use common::{enums::DownloadStatus, finetune::FineTune};
+use common::enums::DownloadStatus;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{Frame, layout::Rect};
 
-use crate::app::{App, adjust_finetune_field};
+use crate::app::App;
 use crate::effects::Effect;
+use crate::modal::widgets::{FineTuneEditor, QueuePicker};
 use crate::modal::{Component, Ctx, Modal, ModalOutcome};
 use crate::msg::Action;
 
@@ -14,44 +15,66 @@ mod view;
 #[derive(Debug)]
 pub struct DownloadEditModal {
     pub download_id: i64,
-    pub finetune: FineTune,
-    pub cursor: usize,
-    pub queue_cursor: usize,
+    pub finetune_editor: FineTuneEditor,
+    pub queue_picker: QueuePicker,
+    /// When true, the Queue row (after the six finetune fields) is focused.
+    pub focusing_queue: bool,
     pub original_queue_id: i64,
     pub error: Option<String>,
 }
 
 impl DownloadEditModal {
     fn move_down(&mut self) {
-        self.cursor = (self.cursor + 1).min(6);
+        if self.focusing_queue {
+            return;
+        }
+        if self.finetune_editor.cursor >= 5 {
+            self.focusing_queue = true;
+        } else {
+            self.finetune_editor.move_down();
+        }
     }
 
     fn move_up(&mut self) {
-        self.cursor = self.cursor.saturating_sub(1);
+        if self.focusing_queue {
+            self.focusing_queue = false;
+        } else {
+            self.finetune_editor.move_up();
+        }
     }
 
     fn adjust(&mut self, forward: bool, queue_count: usize) {
-        if self.cursor == 6 {
-            if queue_count > 0 {
-                self.queue_cursor = if forward {
-                    (self.queue_cursor + 1) % queue_count
-                } else {
-                    (self.queue_cursor + queue_count - 1) % queue_count
-                };
+        if self.focusing_queue {
+            if queue_count == 0 {
+                return;
             }
+            // Preserve wrapping behavior for the download-edit queue row.
+            self.queue_picker.cursor = if forward {
+                (self.queue_picker.cursor + 1) % queue_count
+            } else {
+                (self.queue_picker.cursor + queue_count - 1) % queue_count
+            };
         } else {
-            adjust_finetune_field(&mut self.finetune, self.cursor, forward);
+            self.finetune_editor.adjust(forward);
+        }
+    }
+
+    pub(crate) fn selected_row(&self) -> usize {
+        if self.focusing_queue {
+            6
+        } else {
+            self.finetune_editor.cursor
         }
     }
 
     fn try_save(&mut self, ctx: &Ctx<'_>) -> ModalOutcome {
-        let Some(queue_id) = ctx.queues.get(self.queue_cursor).map(|queue| queue.id) else {
+        let Some(queue_id) = self.queue_picker.selected_id(ctx.queues) else {
             self.error = Some("No queue is available".into());
             return ModalOutcome::Continue;
         };
         ModalOutcome::Emit(Action::SaveDownloadEdit {
             id: self.download_id,
-            finetune: self.finetune.clone(),
+            finetune: self.finetune_editor.finetune.clone(),
             queue_id,
             original_queue_id: self.original_queue_id,
         })
@@ -113,9 +136,11 @@ impl App {
                 .unwrap_or(0);
             self.modal = Some(Modal::DownloadEdit(DownloadEditModal {
                 download_id,
-                finetune,
-                cursor: 0,
-                queue_cursor,
+                finetune_editor: FineTuneEditor::new(finetune),
+                queue_picker: QueuePicker {
+                    cursor: queue_cursor,
+                },
+                focusing_queue: false,
                 original_queue_id,
                 error: None,
             }));

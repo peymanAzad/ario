@@ -42,13 +42,9 @@ pub fn draw_torrent_file_modal(f: &mut Frame, modal: &TorrentFileModal, ctx: &Ct
     draw_tabs(f, ctx, modal, layout[0]);
     match modal.tab {
         TorrentFileModalTab::Torrent => draw_torrent_tab(f, ctx, modal, layout[1]),
-        TorrentFileModalTab::FineTuning => draw_finetuning_fields(
-            f,
-            theme,
-            &modal.finetune,
-            modal.finetune_cursor,
-            layout[1],
-        ),
+        TorrentFileModalTab::FineTuning => {
+            draw_finetuning_fields(f, theme, &modal.finetune_editor, layout[1])
+        }
     }
     draw_buttons(f, ctx, layout[2]);
 }
@@ -98,14 +94,14 @@ fn draw_torrent_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &TorrentFileModal, area
         layout[0],
     );
 
-    let value = if modal.path_input.is_empty() {
+    let value = if modal.path_input.buffer.is_empty() {
         "~/Downloads/example.torrent".to_string()
-    } else if modal.editing_path {
-        format!("{}▏", modal.path_input)
+    } else if modal.path_input.editing {
+        format!("{}▏", modal.path_input.buffer)
     } else {
-        modal.path_input.clone()
+        modal.path_input.buffer.clone()
     };
-    let path_style = if modal.path_input.is_empty() {
+    let path_style = if modal.path_input.buffer.is_empty() {
         Style::default().fg(theme.text_muted)
     } else if modal.resolved_path.is_some() {
         Style::default().fg(theme.status_ok)
@@ -116,7 +112,7 @@ fn draw_torrent_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &TorrentFileModal, area
         Paragraph::new(value).style(path_style).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(if modal.editing_path {
+                .border_style(Style::default().fg(if modal.path_input.editing {
                     theme.border_focused
                 } else {
                     theme.border
@@ -128,7 +124,7 @@ fn draw_torrent_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &TorrentFileModal, area
 
     let queue_name = ctx
         .queues
-        .get(modal.queue_cursor)
+        .get(modal.queue_picker.cursor)
         .map(|queue| queue.name.as_str())
         .unwrap_or("(no queues available)");
     f.render_widget(
@@ -143,7 +139,7 @@ fn draw_torrent_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &TorrentFileModal, area
         ])),
         layout[2],
     );
-    let hint = if modal.editing_path {
+    let hint = if modal.path_input.editing {
         "Enter: validate path   Tab: fine tuning   Esc: unfocus"
     } else {
         "Enter: edit path   h/l: select queue   Tab: fine tuning"

@@ -2,12 +2,11 @@ use crate::{
     modal::{
         Ctx,
         clipboard_import::{ClipboardImportModal, ModalTab},
+        widgets::FineTuneEditor,
     },
     theme::Theme,
     ui::centered_rect,
 };
-use common::enums::{AllocStrategy, StreamPieceSelector};
-use common::finetune::FineTune;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -47,7 +46,7 @@ pub fn draw_clipboard_import_modal(f: &mut Frame, modal: &ClipboardImportModal, 
     match modal.tab {
         ModalTab::Urls => draw_modal_urls_tab(f, ctx, modal, layout[1]),
         ModalTab::FineTuning => {
-            draw_finetuning_fields(f, theme, &modal.finetune, modal.finetune_cursor, layout[1])
+            draw_finetuning_fields(f, theme, &modal.finetune_editor, layout[1])
         }
     }
     draw_modal_buttons(f, theme, layout[2]);
@@ -95,7 +94,7 @@ fn draw_modal_urls_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &ClipboardImportModa
 
     let queue_name = ctx
         .queues
-        .get(modal.queue_cursor)
+        .get(modal.queue_picker.cursor)
         .map(|q| q.name.as_str())
         .unwrap_or("(no queues available)");
     f.render_widget(
@@ -156,63 +155,16 @@ fn draw_modal_urls_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &ClipboardImportModa
 pub(crate) fn draw_finetuning_fields(
     f: &mut Frame,
     theme: &Theme,
-    finetune: &FineTune,
-    finetune_cursor: usize,
+    editor: &FineTuneEditor,
     area: Rect,
 ) {
-    let alloc_label = match &finetune.alloc_strategy {
-        None => "(queue default)".to_string(),
-        Some(AllocStrategy::None) => "none".to_string(),
-        Some(AllocStrategy::Prealloc) => "prealloc".to_string(),
-        Some(AllocStrategy::Falloc) => "falloc".to_string(),
-        Some(AllocStrategy::Trunc) => "trunc".to_string(),
-    };
-    let selector_label = match &finetune.stream_piece_selector {
-        None => "(queue default)".to_string(),
-        Some(StreamPieceSelector::Default) => "default".to_string(),
-        Some(StreamPieceSelector::InOrder) => "inorder".to_string(),
-        Some(StreamPieceSelector::Random) => "random".to_string(),
-        Some(StreamPieceSelector::Geom) => "geom".to_string(),
-    };
-
-    let fields: [(&str, String); 6] = [
-        (
-            "Connections per download",
-            finetune
-                .connections_per_download
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "(queue default)".to_string()),
-        ),
-        (
-            "Max connections per server",
-            finetune
-                .max_connections_per_server
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "(queue default)".to_string()),
-        ),
-        ("File allocation", alloc_label),
-        ("Stream piece selector", selector_label),
-        (
-            "Max retries",
-            finetune
-                .max_retries
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "(queue default)".to_string()),
-        ),
-        (
-            "Retry wait (seconds)",
-            finetune
-                .retry_wait_seconds
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "(queue default)".to_string()),
-        ),
-    ];
+    let fields = editor.rows(None);
 
     let items: Vec<ListItem> = fields
         .iter()
         .enumerate()
         .map(|(i, (label, value))| {
-            let style = if i == finetune_cursor {
+            let style = if i == editor.cursor {
                 Style::default()
                     .bg(theme.selected_bg)
                     .fg(theme.selected_fg)

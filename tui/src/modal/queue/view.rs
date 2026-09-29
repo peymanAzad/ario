@@ -5,7 +5,6 @@ use crate::{
     },
     ui::{centered_rect, field_style},
 };
-use common::enums::{AllocStrategy, StreamPieceSelector};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -104,36 +103,13 @@ fn draw_queue_modal_tab_bar(
 
 fn draw_queue_modal_common_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal, area: Rect) {
     let theme = ctx.theme;
-    let name_display = if modal.editing_text && modal.common_cursor == 0 {
-        format!("{}▏", modal.text_buffer)
+    let name_display = if modal.name_input.editing && modal.common_cursor == 0 {
+        format!("{}▏", modal.name_input.buffer)
     } else {
         modal.name.clone()
     };
 
-    let alloc_label = match &modal.finetune.alloc_strategy {
-        None => aria2_global_label(
-            ctx.aria2_global_options
-                .and_then(|options| options.alloc_strategy.as_ref())
-                .map(alloc_strategy_label),
-        ),
-        Some(AllocStrategy::None) => "none".to_string(),
-        Some(AllocStrategy::Prealloc) => "prealloc".to_string(),
-        Some(AllocStrategy::Falloc) => "falloc".to_string(),
-        Some(AllocStrategy::Trunc) => "trunc".to_string(),
-    };
-    let selector_label = match &modal.finetune.stream_piece_selector {
-        None => aria2_global_label(
-            ctx.aria2_global_options
-                .and_then(|options| options.stream_piece_selector.as_ref())
-                .map(stream_piece_selector_label),
-        ),
-        Some(StreamPieceSelector::Default) => "default".to_string(),
-        Some(StreamPieceSelector::InOrder) => "inorder".to_string(),
-        Some(StreamPieceSelector::Random) => "random".to_string(),
-        Some(StreamPieceSelector::Geom) => "geom".to_string(),
-    };
-
-    let rows: [(String, String); 8] = [
+    let mut rows = vec![
         ("Name".to_string(), name_display),
         (
             "Max concurrent downloads".to_string(),
@@ -147,46 +123,16 @@ fn draw_queue_modal_common_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal,
             "Retry wait (seconds)".to_string(),
             format!("◀ {} ▶", modal.retry_wait_seconds),
         ),
-        (
-            "Connections per download".to_string(),
-            format!(
-                "◀ {} ▶",
-                modal
-                    .finetune
-                    .connections_per_download
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| {
-                        aria2_global_label(
-                            ctx.aria2_global_options
-                                .and_then(|options| options.connections_per_download)
-                                .map(|value| value.to_string()),
-                        )
-                    })
-            ),
-        ),
-        (
-            "Max connections per server".to_string(),
-            format!(
-                "◀ {} ▶",
-                modal
-                    .finetune
-                    .max_connections_per_server
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| {
-                        aria2_global_label(
-                            ctx.aria2_global_options
-                                .and_then(|options| options.max_connections_per_server)
-                                .map(|value| value.to_string()),
-                        )
-                    })
-            ),
-        ),
-        ("File allocation".to_string(), format!("◀ {alloc_label} ▶")),
-        (
-            "Stream piece selector".to_string(),
-            format!("◀ {selector_label} ▶"),
-        ),
     ];
+    // Queue common tab shows only the first four finetune fields (not retries).
+    for (label, value) in modal
+        .finetune_editor
+        .rows(ctx.aria2_global_options)
+        .into_iter()
+        .take(4)
+    {
+        rows.push((label, format!("◀ {value} ▶")));
+    }
 
     let items: Vec<ListItem> = rows
         .iter()
@@ -208,33 +154,6 @@ fn draw_queue_modal_common_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal,
     );
 
     f.render_widget(list, area);
-}
-
-fn aria2_global_label(value: Option<String>) -> String {
-    value.map_or_else(
-        || "(aria2 global)".to_string(),
-        |value| format!("{value} (aria2 global)"),
-    )
-}
-
-fn alloc_strategy_label(value: &AllocStrategy) -> String {
-    match value {
-        AllocStrategy::None => "none",
-        AllocStrategy::Prealloc => "prealloc",
-        AllocStrategy::Falloc => "falloc",
-        AllocStrategy::Trunc => "trunc",
-    }
-    .to_string()
-}
-
-fn stream_piece_selector_label(value: &StreamPieceSelector) -> String {
-    match value {
-        StreamPieceSelector::Default => "default",
-        StreamPieceSelector::InOrder => "inorder",
-        StreamPieceSelector::Random => "random",
-        StreamPieceSelector::Geom => "geom",
-    }
-    .to_string()
 }
 
 fn draw_queue_modal_scheduler_tab(
@@ -475,21 +394,4 @@ fn draw_queue_modal_buttons(
     ];
 
     f.render_widget(Paragraph::new(Line::from(spans)), area);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{alloc_strategy_label, aria2_global_label, stream_piece_selector_label};
-    use common::enums::{AllocStrategy, StreamPieceSelector};
-
-    #[test]
-    fn global_labels_include_effective_value_or_text_fallback() {
-        assert_eq!(aria2_global_label(Some("5".into())), "5 (aria2 global)");
-        assert_eq!(aria2_global_label(None), "(aria2 global)");
-        assert_eq!(alloc_strategy_label(&AllocStrategy::Prealloc), "prealloc");
-        assert_eq!(
-            stream_piece_selector_label(&StreamPieceSelector::InOrder),
-            "inorder"
-        );
-    }
 }
