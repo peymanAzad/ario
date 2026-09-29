@@ -1,18 +1,24 @@
-pub mod category_list;
+pub mod categories;
 pub mod clipboard_import_modal;
 pub mod confirmation_modal;
 pub mod download_edit_modal;
-pub mod downloads_table;
+pub mod downloads;
 pub mod help_modal;
 pub mod keys;
-pub mod queue_list;
+pub mod lifecycle;
 pub mod queue_modal;
+pub mod queues;
+pub mod speed;
 pub mod torrent_file_modal;
 pub mod update;
 
-use std::{
-    collections::{HashSet, VecDeque},
-    time::{Duration, Instant},
+pub use lifecycle::LifecycleState;
+pub use speed::SpeedTracker;
+
+use std::collections::HashSet;
+
+use crate::app::lifecycle::{
+    clears_last_error, is_stale_unreachable_refresh, marks_server_reachable,
 };
 
 use crate::app::clipboard_import_modal::ClipboardImportModal;
@@ -30,13 +36,6 @@ use common::enums::{AllocStrategy, DownloadStatus, FileCategory, StreamPieceSele
 use common::finetune::{Aria2GlobalOptions, FineTune};
 use common::queue::Queue;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum LifecycleState {
-    Starting,
-    Retrying,
-    Connected,
-    Failed(String),
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Focus {
@@ -69,14 +68,6 @@ impl Focus {
     }
 }
 
-pub const MAX_SPEED_HISTORY_SAMPLES: usize = 150;
-pub(crate) const SPEED_SAMPLE_INTERVAL: Duration = Duration::from_secs(2);
-
-fn speed_scale_target(history: impl IntoIterator<Item = u64>) -> u64 {
-    let peak = history.into_iter().max().unwrap_or(0);
-    let headroom = peak / 5 + u64::from(peak % 5 != 0);
-    peak.saturating_add(headroom).max(1)
-}
 
 pub const ALL_CATEGORIES: [FileCategory; 6] = [
     FileCategory::Video,
@@ -111,9 +102,7 @@ pub struct App {
     pub aria2_global_options: Option<Aria2GlobalOptions>,
     pub total_download_speed: u64,
     pub active_downloads: u64,
-    pub speed_history: VecDeque<u64>,
-    smoothed_download_speed: Option<u64>,
-    speed_chart_max: u64,
+    pub speed: SpeedTracker,
     pub lifecycle: LifecycleState,
     pub last_error: Option<String>,
     pub should_quit: bool,
@@ -127,12 +116,11 @@ pub struct App {
     pub help_modal: Option<help_modal::HelpModal>,
     pub toasts: ToastStack,
     /// When true, TUI may spawn/supervise ario_daemon for a local URL.
-    manages_server: bool,
+    pub(crate) manages_server: bool,
     refresh_in_flight: bool,
-    lifecycle_revision: u64,
+    pub(crate) lifecycle_revision: u64,
     pending_confirmation_action: Option<PendingConfirmationAction>,
     pausing_downloads: HashSet<i64>,
-    last_speed_sample_at: Option<Instant>,
 }
 
 impl App {
@@ -149,9 +137,7 @@ impl App {
             aria2_global_options: None,
             total_download_speed: 0,
             active_downloads: 0,
-            speed_history: VecDeque::new(),
-            smoothed_download_speed: None,
-            speed_chart_max: 1,
+            speed: SpeedTracker::new(),
             lifecycle: LifecycleState::Starting,
             last_error: None,
             should_quit: false,
@@ -168,7 +154,6 @@ impl App {
             lifecycle_revision: 0,
             pending_confirmation_action: None,
             pausing_downloads: HashSet::new(),
-            last_speed_sample_at: None,
             toasts: ToastStack::new(),
         }
     }
@@ -239,8 +224,12 @@ impl App {
         self.refresh_in_flight = false;
 
         // A failed request started before a newer worker event cannot undo it.
-        if self.manages_server && !server_reachable && lifecycle_revision != self.lifecycle_revision
-        {
+        if is_stale_unreachable_refresh(
+            self.manages_server,
+            server_reachable,
+            lifecycle_revision,
+            self.lifecycle_revision,
+        ) {
             return;
         }
 
@@ -290,72 +279,41 @@ impl App {
         };
         self.active_downloads = active_downloads;
         if server_reachable {
-            self.smoothed_download_speed = Some(if active_downloads == 0 {
-                0
-            } else {
-                self.smoothed_download_speed
-                    .map_or(download_speed, |previous| {
-                        ((u128::from(previous) * 3 + u128::from(download_speed)) / 4) as u64
-                    })
-            });
-            if active_downloads > 0 && self.should_record_speed_sample() {
+            self.speed.update_smoothed(download_speed, active_downloads);
+            if active_downloads > 0 && self.speed.should_record() {
                 self.push_speed_sample(download_speed);
-                self.last_speed_sample_at = Some(Instant::now());
             }
             self.apply_lifecycle(LifecycleState::Connected);
         } else {
-            self.smoothed_download_speed = None;
+            self.speed.clear_smoothed();
         }
-    }
-
-    fn should_record_speed_sample(&self) -> bool {
-        self.last_speed_sample_at
-            .is_none_or(|at| at.elapsed() >= SPEED_SAMPLE_INTERVAL)
     }
 
     pub(crate) fn push_speed_sample(&mut self, speed: u64) {
-        if self.speed_history.len() == MAX_SPEED_HISTORY_SAMPLES {
-            self.speed_history.pop_front();
-        }
-        self.speed_history.push_back(speed);
-
-        let target = speed_scale_target(self.speed_history.iter().copied());
-        self.speed_chart_max = if target >= self.speed_chart_max {
-            target
-        } else {
-            let decay = self.speed_chart_max / 10 + u64::from(self.speed_chart_max % 10 != 0);
-            self.speed_chart_max.saturating_sub(decay).max(target)
-        };
+        self.speed.record_sample_now(speed);
     }
 
     pub(crate) fn displayed_download_speed(&self) -> u64 {
-        self.smoothed_download_speed
-            .unwrap_or(self.total_download_speed)
+        self.speed.displayed(self.total_download_speed)
     }
 
     pub(crate) fn speed_chart_max(&self) -> u64 {
-        self.speed_chart_max
-            .max(speed_scale_target(self.speed_history.iter().copied()))
+        self.speed.chart_max()
     }
 
     fn clear_speed_history(&mut self) {
-        self.speed_history.clear();
-        self.last_speed_sample_at = None;
-        self.speed_chart_max = 1;
+        self.speed.clear();
     }
 
     pub fn apply_lifecycle(&mut self, state: LifecycleState) {
         self.lifecycle_revision += 1;
-        if matches!(
-            state,
-            LifecycleState::Starting | LifecycleState::Retrying | LifecycleState::Connected
-        ) {
+        if clears_last_error(&state) {
             self.last_error = None;
         }
         if let LifecycleState::Failed(ref message) = state {
             self.last_error = Some(message.clone());
         }
-        if matches!(state, LifecycleState::Connected) {
+        if marks_server_reachable(&state) {
             self.server_reachable = true;
         } else {
             self.clear_speed_history();
@@ -451,11 +409,11 @@ impl App {
                         } else {
                             self.total_download_speed.saturating_sub(previous_speed)
                         };
-                        self.smoothed_download_speed = Some(if self.active_downloads == 0 {
+                        self.speed.set_smoothed(Some(if self.active_downloads == 0 {
                             0
                         } else {
                             self.total_download_speed
-                        });
+                        }));
                         if self.active_downloads == 0 {
                             self.clear_speed_history();
                         }
@@ -541,219 +499,5 @@ fn cycle<T: PartialEq + Clone>(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use common::download::DeleteDownloadFilesResult;
-    use std::time::Instant;
-
-    fn app() -> App {
-        App::new(
-            Theme::default_dark(),
-            crate::icons::IconSet::new(crate::icons::GlyphMode::Unicode),
-            false,
-        )
-    }
-
-    #[test]
-    fn optional_retry_values_include_default_zero_and_bounded_values() {
-        assert_eq!(adjust_opt_u32_including_zero(None, true, 20), Some(0));
-        assert_eq!(adjust_opt_u32_including_zero(Some(0), false, 20), None);
-        assert_eq!(adjust_opt_u32_including_zero(Some(20), true, 20), Some(20));
-        assert_eq!(adjust_opt_u32_including_zero(Some(1), false, 20), Some(0));
-    }
-
-    #[test]
-    fn missing_file_result_becomes_a_warning_toast() {
-        let mut app = app();
-        app.apply_download_files_deleted(Ok(DeleteDownloadFilesResult {
-            removed_payloads: 0,
-            missing_payloads: 1,
-            metadata_complete: true,
-        }));
-
-        let toast = app.toasts.iter().last().unwrap();
-        assert_eq!(toast.level, ToastLevel::Warning);
-        assert!(toast.message.contains("already missing"));
-    }
-
-    #[test]
-    fn fully_removed_result_becomes_a_success_toast() {
-        let mut app = app();
-        app.apply_download_files_deleted(Ok(DeleteDownloadFilesResult {
-            removed_payloads: 2,
-            missing_payloads: 0,
-            metadata_complete: true,
-        }));
-
-        let toast = app.toasts.iter().last().unwrap();
-        assert_eq!(toast.level, ToastLevel::Success);
-    }
-
-    #[test]
-    fn lifecycle_progress_and_stale_failed_refresh() {
-        let mut app = app();
-        app.manages_server = true;
-        assert_eq!(app.lifecycle, LifecycleState::Starting);
-        app.apply_refresh(
-            Err(anyhow::anyhow!("offline")),
-            Err(anyhow::anyhow!("offline")),
-            false,
-            false,
-            0,
-            0,
-            None,
-            0,
-        );
-        assert!(app.last_error.is_none());
-        app.apply_lifecycle(LifecycleState::Retrying);
-        app.apply_lifecycle(LifecycleState::Connected);
-        let revision = app.lifecycle_revision;
-        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 0, 0, None, revision);
-        assert!(app.server_reachable);
-        app.apply_refresh(
-            Err(anyhow::anyhow!("old")),
-            Err(anyhow::anyhow!("old")),
-            false,
-            false,
-            0,
-            0,
-            None,
-            0,
-        );
-        assert!(app.server_reachable);
-        assert!(app.last_error.is_none());
-        app.apply_lifecycle(LifecycleState::Failed("daemon exited".into()));
-        assert_eq!(app.last_error.as_deref(), Some("daemon exited"));
-        app.apply_refresh(
-            Err(anyhow::anyhow!("offline")),
-            Err(anyhow::anyhow!("offline")),
-            false,
-            false,
-            0,
-            0,
-            None,
-            app.lifecycle_revision,
-        );
-        assert_eq!(app.last_error.as_deref(), Some("daemon exited"));
-        app.apply_refresh(
-            Ok(vec![]),
-            Ok(vec![]),
-            true,
-            true,
-            0,
-            0,
-            None,
-            app.lifecycle_revision,
-        );
-        assert_eq!(app.lifecycle, LifecycleState::Connected);
-        assert!(app.last_error.is_none());
-    }
-
-    #[test]
-    fn speed_history_resets_on_connection_loss_and_caps_retained_samples() {
-        let mut app = app();
-        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 100, 1, None, 0);
-        assert_eq!(app.total_download_speed, 100);
-        assert_eq!(app.speed_history.iter().copied().collect::<Vec<_>>(), [100]);
-
-        app.apply_refresh(Ok(vec![]), Ok(vec![]), false, false, 50, 0, None, 0);
-        assert_eq!(app.total_download_speed, 0);
-        assert!(app.speed_history.is_empty());
-        assert!(app.last_speed_sample_at.is_none());
-        assert_eq!(app.speed_chart_max(), 1);
-
-        for speed in 1..=MAX_SPEED_HISTORY_SAMPLES as u64 {
-            app.push_speed_sample(speed);
-        }
-        assert_eq!(app.speed_history.len(), MAX_SPEED_HISTORY_SAMPLES);
-        assert_eq!(app.speed_history.front(), Some(&1));
-        assert_eq!(
-            app.speed_history.back(),
-            Some(&(MAX_SPEED_HISTORY_SAMPLES as u64))
-        );
-        app.push_speed_sample(MAX_SPEED_HISTORY_SAMPLES as u64 + 1);
-        assert_eq!(app.speed_history.len(), MAX_SPEED_HISTORY_SAMPLES);
-        assert_eq!(app.speed_history.front(), Some(&2));
-        assert_eq!(
-            app.speed_history.back(),
-            Some(&(MAX_SPEED_HISTORY_SAMPLES as u64 + 1))
-        );
-    }
-
-    #[test]
-    fn successful_health_refresh_caches_aria2_global_options() {
-        let mut app = app();
-        let options = Aria2GlobalOptions {
-            connections_per_download: Some(5),
-            max_connections_per_server: Some(1),
-            alloc_strategy: Some(AllocStrategy::Prealloc),
-            stream_piece_selector: Some(StreamPieceSelector::Default),
-        };
-
-        app.apply_refresh(
-            Ok(vec![]),
-            Ok(vec![]),
-            true,
-            true,
-            0,
-            0,
-            Some(options.clone()),
-            0,
-        );
-
-        assert_eq!(app.aria2_global_options, Some(options));
-    }
-
-    #[test]
-    fn reachable_refresh_throttles_speed_samples() {
-        let mut app = app();
-        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 100, 1, None, 0);
-        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 200, 1, None, 0);
-        assert_eq!(app.total_download_speed, 200);
-        assert_eq!(app.displayed_download_speed(), 125);
-        assert_eq!(app.speed_history.iter().copied().collect::<Vec<_>>(), [100]);
-
-        app.last_speed_sample_at = Some(Instant::now() - SPEED_SAMPLE_INTERVAL);
-        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 300, 1, None, 0);
-        assert_eq!(app.displayed_download_speed(), 168);
-        assert_eq!(
-            app.speed_history.iter().copied().collect::<Vec<_>>(),
-            [100, 300]
-        );
-    }
-
-    #[test]
-    fn active_zero_speed_stays_smoothed_but_idle_resets_immediately() {
-        let mut app = app();
-        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 100, 1, None, 0);
-        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 0, 1, None, 0);
-        assert_eq!(app.total_download_speed, 0);
-        assert_eq!(app.displayed_download_speed(), 75);
-
-        app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 100, 0, None, 0);
-        assert_eq!(app.total_download_speed, 0);
-        assert_eq!(app.displayed_download_speed(), 0);
-        assert_eq!(app.active_downloads, 0);
-        assert!(app.speed_history.is_empty());
-        assert!(app.last_speed_sample_at.is_none());
-    }
-
-    #[test]
-    fn speed_chart_uses_twenty_percent_headroom_and_decays_gradually() {
-        assert_eq!(speed_scale_target(std::iter::empty()), 1);
-        assert_eq!(speed_scale_target([1]), 2);
-        assert_eq!(speed_scale_target([100]), 120);
-        assert_eq!(speed_scale_target([u64::MAX]), u64::MAX);
-
-        let mut app = app();
-        app.push_speed_sample(100);
-        assert_eq!(app.speed_chart_max(), 120);
-
-        app.speed_history.clear();
-        app.push_speed_sample(0);
-        assert_eq!(app.speed_chart_max(), 108);
-        app.speed_history.clear();
-        app.push_speed_sample(0);
-        assert_eq!(app.speed_chart_max(), 97);
-    }
-}
+#[path = "mod_tests.rs"]
+mod tests;
