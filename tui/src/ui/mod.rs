@@ -1,15 +1,11 @@
 mod category_list;
-mod clipboard_import_modal;
-mod download_edit_modal;
 mod downloads_table;
 pub(crate) mod format;
 mod footer;
 mod queue_list;
-mod queue_modal;
 mod status_bar;
 pub(crate) mod style;
 mod toast_popup;
-mod torrent_file_modal;
 
 pub(crate) use format::{
     detail_lines, format_bytes, format_eta, format_speed, middle_truncate,
@@ -20,11 +16,9 @@ use crate::{
     app::{ALL_CATEGORIES, App},
     modal::Modal,
     ui::{
-        category_list::draw_categories_list, clipboard_import_modal::draw_clipboard_import_modal,
-        download_edit_modal::draw_download_modal, downloads_table::draw_downloads_table,
-        footer::draw_footer, queue_list::draw_queues_list, queue_modal::draw_queue_modal,
-        status_bar::draw_status_bar, toast_popup::draw_toasts,
-        torrent_file_modal::draw_torrent_file_modal,
+        category_list::draw_categories_list, downloads_table::draw_downloads_table,
+        footer::draw_footer, queue_list::draw_queues_list, status_bar::draw_status_bar,
+        toast_popup::draw_toasts,
     },
 };
 use common::enums::FileCategory;
@@ -68,7 +62,10 @@ pub fn render(app: &mut App, f: &mut Frame) {
     draw_categories_list(f, app, left_layout[1]);
     draw_downloads_table(f, app, body_layout[1]);
 
-    if matches!(app.modal, Some(Modal::Confirmation(_))) {
+    let help_open = matches!(app.modal, Some(Modal::Help(_)));
+
+    // Non-help modals paint under toasts; Help paints after so search stays readable.
+    if app.modal.is_some() && !help_open {
         let App {
             modal,
             queues,
@@ -88,20 +85,10 @@ pub fn render(app: &mut App, f: &mut Frame) {
             };
             m.render(f, f.area(), &ctx);
         }
-    } else {
-        match &app.modal {
-            Some(Modal::Queue(modal)) => draw_queue_modal(f, app, modal),
-            Some(Modal::TorrentFile(modal)) => draw_torrent_file_modal(f, app, modal),
-            Some(Modal::ClipboardImport(modal)) => {
-                draw_clipboard_import_modal(f, app, modal)
-            }
-            Some(Modal::DownloadEdit(modal)) => draw_download_modal(f, app, modal),
-            Some(Modal::Confirmation(_)) | Some(Modal::Help(_)) | None => {}
-        }
     }
 
     draw_toasts(f, app);
-    if matches!(app.modal, Some(Modal::Help(_))) {
+    if help_open {
         let body_area = main_layout[1];
         let App {
             modal,

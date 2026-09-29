@@ -1,6 +1,10 @@
-use crate::app::{
-    App,
-    torrent_file_modal::{TorrentFileModal, TorrentFileModalTab},
+use crate::{
+    modal::{
+        Ctx,
+        clipboard_import::view::draw_finetuning_fields,
+        torrent_file::{TorrentFileModal, TorrentFileModalTab},
+    },
+    ui::centered_rect,
 };
 use ratatui::{
     Frame,
@@ -10,9 +14,9 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
-pub fn draw_torrent_file_modal(f: &mut Frame, app: &App, modal: &TorrentFileModal) {
-    let theme = &app.theme;
-    let area = super::centered_rect(70, 55, f.area());
+pub fn draw_torrent_file_modal(f: &mut Frame, modal: &TorrentFileModal, ctx: &Ctx<'_>) {
+    let theme = ctx.theme;
+    let area = centered_rect(70, 55, f.area());
     f.render_widget(Clear, area);
 
     let outer = Block::default()
@@ -35,29 +39,30 @@ pub fn draw_torrent_file_modal(f: &mut Frame, app: &App, modal: &TorrentFileModa
         ])
         .split(inner);
 
-    draw_tabs(f, app, modal, layout[0]);
+    draw_tabs(f, ctx, modal, layout[0]);
     match modal.tab {
-        TorrentFileModalTab::Torrent => draw_torrent_tab(f, app, modal, layout[1]),
-        TorrentFileModalTab::FineTuning => super::clipboard_import_modal::draw_finetuning_fields(
+        TorrentFileModalTab::Torrent => draw_torrent_tab(f, ctx, modal, layout[1]),
+        TorrentFileModalTab::FineTuning => draw_finetuning_fields(
             f,
-            app,
+            theme,
             &modal.finetune,
             modal.finetune_cursor,
             layout[1],
         ),
     }
-    draw_buttons(f, app, layout[2]);
+    draw_buttons(f, ctx, layout[2]);
 }
 
-fn draw_tabs(f: &mut Frame, app: &App, modal: &TorrentFileModal, area: Rect) {
+fn draw_tabs(f: &mut Frame, ctx: &Ctx<'_>, modal: &TorrentFileModal, area: Rect) {
+    let theme = ctx.theme;
     let active = |selected| {
         if selected {
             Style::default()
-                .fg(app.theme.selected_fg)
-                .bg(app.theme.accent)
+                .fg(theme.selected_fg)
+                .bg(theme.accent)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(app.theme.text_muted)
+            Style::default().fg(theme.text_muted)
         }
     };
     let spans = vec![
@@ -75,7 +80,8 @@ fn draw_tabs(f: &mut Frame, app: &App, modal: &TorrentFileModal, area: Rect) {
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn draw_torrent_tab(f: &mut Frame, app: &App, modal: &TorrentFileModal, area: Rect) {
+fn draw_torrent_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &TorrentFileModal, area: Rect) {
+    let theme = ctx.theme;
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -88,7 +94,7 @@ fn draw_torrent_tab(f: &mut Frame, app: &App, modal: &TorrentFileModal, area: Re
         .split(area);
     f.render_widget(
         Paragraph::new("Enter or drag and drop a .torrent file path\nMaximum file size: 16 MiB")
-            .style(Style::default().fg(app.theme.foreground)),
+            .style(Style::default().fg(theme.foreground)),
         layout[0],
     );
 
@@ -100,38 +106,38 @@ fn draw_torrent_tab(f: &mut Frame, app: &App, modal: &TorrentFileModal, area: Re
         modal.path_input.clone()
     };
     let path_style = if modal.path_input.is_empty() {
-        Style::default().fg(app.theme.text_muted)
+        Style::default().fg(theme.text_muted)
     } else if modal.resolved_path.is_some() {
-        Style::default().fg(app.theme.status_ok)
+        Style::default().fg(theme.status_ok)
     } else {
-        Style::default().fg(app.theme.foreground)
+        Style::default().fg(theme.foreground)
     };
     f.render_widget(
         Paragraph::new(value).style(path_style).block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(if modal.editing_path {
-                    app.theme.border_focused
+                    theme.border_focused
                 } else {
-                    app.theme.border
+                    theme.border
                 }))
                 .title(" .torrent path "),
         ),
         layout[1],
     );
 
-    let queue_name = app
+    let queue_name = ctx
         .queues
         .get(modal.queue_cursor)
         .map(|queue| queue.name.as_str())
         .unwrap_or("(no queues available)");
     f.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("Queue:  ", Style::default().fg(app.theme.foreground)),
+            Span::styled("Queue:  ", Style::default().fg(theme.foreground)),
             Span::styled(
                 format!("◀ {queue_name} ▶"),
                 Style::default()
-                    .fg(app.theme.accent)
+                    .fg(theme.accent)
                     .add_modifier(Modifier::BOLD),
             ),
         ])),
@@ -143,32 +149,33 @@ fn draw_torrent_tab(f: &mut Frame, app: &App, modal: &TorrentFileModal, area: Re
         "Enter: edit path   h/l: select queue   Tab: fine tuning"
     };
     f.render_widget(
-        Paragraph::new(hint).style(Style::default().fg(app.theme.text_muted)),
+        Paragraph::new(hint).style(Style::default().fg(theme.text_muted)),
         layout[3],
     );
 }
 
-fn draw_buttons(f: &mut Frame, app: &App, area: Rect) {
+fn draw_buttons(f: &mut Frame, ctx: &Ctx<'_>, area: Rect) {
+    let theme = ctx.theme;
     let spans = vec![
         Span::styled(
             " [s] Start Now ",
             Style::default()
-                .fg(app.theme.selected_fg)
-                .bg(app.theme.status_ok),
+                .fg(theme.selected_fg)
+                .bg(theme.status_ok),
         ),
         Span::raw("  "),
         Span::styled(
             " [w] Save For Later ",
             Style::default()
-                .fg(app.theme.selected_fg)
-                .bg(app.theme.accent),
+                .fg(theme.selected_fg)
+                .bg(theme.accent),
         ),
         Span::raw("  "),
         Span::styled(
             " [c/Esc] Cancel ",
             Style::default()
-                .fg(app.theme.foreground)
-                .bg(app.theme.border),
+                .fg(theme.foreground)
+                .bg(theme.border),
         ),
     ];
     f.render_widget(Paragraph::new(Line::from(spans)), area);

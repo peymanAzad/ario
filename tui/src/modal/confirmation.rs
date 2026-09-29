@@ -113,6 +113,7 @@ impl App {
         self.modal = Some(Modal::Confirmation(modal));
     }
 
+    #[allow(dead_code)]
     pub fn cancel_confirmation(&mut self) {
         if matches!(self.modal, Some(Modal::Confirmation(_))) {
             self.modal = None;

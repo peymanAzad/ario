@@ -89,16 +89,13 @@ fn update_action(app: &mut App, action: Action) -> Vec<Effect> {
         Action::ResumeQueue => app.resume_selected_queue(),
         Action::DeleteQueue => app.request_delete_selected_queue(),
         Action::RemoveCompleted => app.remove_completed_downloads(),
-        Action::CloseModal | Action::CancelModal => {
-            close_open_modal(app);
-            vec![]
-        }
         Action::SubmitDownloads(request) => {
             let mut effects = vec![Effect::Api(ApiRequest::AddDownloads(request))];
             effects.extend(app.refresh());
             effects
         }
         Action::SubmitTorrent { path, metadata } => {
+            app.apply_toast("adding torrent…".into(), ToastLevel::Info);
             vec![Effect::Api(ApiRequest::AddTorrent { path, metadata })]
         }
         Action::SaveQueue {
@@ -107,10 +104,10 @@ fn update_action(app: &mut App, action: Action) -> Vec<Effect> {
             update,
             ordered_ids,
         } => match mode {
-            crate::app::queue_modal::QueueModalMode::Create => create
+            crate::modal::QueueModalMode::Create => create
                 .map(|request| vec![Effect::Api(ApiRequest::CreateQueue(request))])
                 .unwrap_or_default(),
-            crate::app::queue_modal::QueueModalMode::Edit { .. } => update
+            crate::modal::QueueModalMode::Edit { .. } => update
                 .map(|(id, request)| {
                     vec![Effect::Api(ApiRequest::UpdateQueue {
                         id,
@@ -135,24 +132,6 @@ fn update_action(app: &mut App, action: Action) -> Vec<Effect> {
             effects
         }
         Action::Confirm(pending) => app.execute_confirmation(pending),
-        Action::ModalHandled => vec![],
-    }
-}
-
-fn close_open_modal(app: &mut App) {
-    use crate::modal::Modal;
-    if matches!(app.modal, Some(Modal::Confirmation(_))) {
-        app.cancel_confirmation();
-    } else if matches!(app.modal, Some(Modal::Help(_))) {
-        app.modal = None;
-    } else if matches!(app.modal, Some(Modal::Queue(_))) {
-        app.cancel_queue_modal();
-    } else if matches!(app.modal, Some(Modal::TorrentFile(_))) {
-        app.cancel_torrent_file_modal();
-    } else if matches!(app.modal, Some(Modal::ClipboardImport(_))) {
-        app.cancel_modal();
-    } else if matches!(app.modal, Some(Modal::DownloadEdit(_))) {
-        app.cancel_download_modal();
     }
 }
 

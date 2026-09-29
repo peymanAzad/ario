@@ -10,8 +10,9 @@ use common::{
 };
 
 use crate::{
-    api::{DeleteQueueOutcome},
-    app::{Focus, LifecycleState, PendingConfirmationAction, queue_modal::QueueModalMode},
+    api::DeleteQueueOutcome,
+    app::{Focus, LifecycleState, PendingConfirmationAction},
+    modal::QueueModalMode,
     toast::ToastLevel,
 };
 
@@ -52,10 +53,6 @@ pub enum Action {
     ResumeQueue,
     DeleteQueue,
     RemoveCompleted,
-    #[allow(dead_code)]
-    CloseModal,
-    /// Cancel the open modal without submitting (Esc / c).
-    CancelModal,
     SubmitDownloads(AddDownloadsRequest),
     SubmitTorrent {
         path: PathBuf,
@@ -74,9 +71,6 @@ pub enum Action {
         original_queue_id: i64,
     },
     Confirm(PendingConfirmationAction),
-    /// Modal-local mutations that need no further Action payload.
-    #[allow(dead_code)]
-    ModalHandled,
 }
 
 #[derive(Debug)]

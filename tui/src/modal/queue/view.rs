@@ -1,7 +1,9 @@
-use super::*;
-use crate::app::{
-    App,
-    queue_modal::{QueueModal, QueueModalMode, QueueModalTab, RecurrenceKind},
+use crate::{
+    modal::{
+        Ctx,
+        queue::{QueueModal, QueueModalMode, QueueModalTab, RecurrenceKind},
+    },
+    ui::{centered_rect, field_style},
 };
 use common::enums::{AllocStrategy, StreamPieceSelector};
 use ratatui::{
@@ -12,8 +14,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
 };
 
-pub fn draw_queue_modal(f: &mut Frame, app: &App, modal: &QueueModal) {
-    let theme = &app.theme;
+pub fn draw_queue_modal(f: &mut Frame, modal: &QueueModal, ctx: &Ctx<'_>) {
+    let theme = ctx.theme;
     let area = centered_rect(75, 80, f.area());
     f.render_widget(Clear, area);
 
@@ -37,16 +39,16 @@ pub fn draw_queue_modal(f: &mut Frame, app: &App, modal: &QueueModal) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // tab bar
-            Constraint::Min(0),    // tab content
-            Constraint::Length(1), // error line (blank if none)
-            Constraint::Length(1), // buttons
+            Constraint::Length(1),
+            Constraint::Min(0),
+            Constraint::Length(1),
+            Constraint::Length(1),
         ])
         .split(inner);
 
     draw_queue_modal_tab_bar(f, theme, modal, layout[0]);
     match modal.tab {
-        QueueModalTab::Common => draw_queue_modal_common_tab(f, app, modal, layout[1]),
+        QueueModalTab::Common => draw_queue_modal_common_tab(f, ctx, modal, layout[1]),
         QueueModalTab::Scheduler => draw_queue_modal_scheduler_tab(f, theme, modal, layout[1]),
         QueueModalTab::DownloadItems => draw_queue_modal_items_tab(f, theme, modal, layout[1]),
     }
@@ -100,18 +102,17 @@ fn draw_queue_modal_tab_bar(
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn draw_queue_modal_common_tab(f: &mut Frame, app: &App, modal: &QueueModal, area: Rect) {
-    let theme = &app.theme;
+fn draw_queue_modal_common_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal, area: Rect) {
+    let theme = ctx.theme;
     let name_display = if modal.editing_text && modal.common_cursor == 0 {
-        format!("{}▏", modal.text_buffer) // trailing block cursor while editing
+        format!("{}▏", modal.text_buffer)
     } else {
         modal.name.clone()
     };
 
     let alloc_label = match &modal.finetune.alloc_strategy {
         None => aria2_global_label(
-            app.aria2_global_options
-                .as_ref()
+            ctx.aria2_global_options
                 .and_then(|options| options.alloc_strategy.as_ref())
                 .map(alloc_strategy_label),
         ),
@@ -122,8 +123,7 @@ fn draw_queue_modal_common_tab(f: &mut Frame, app: &App, modal: &QueueModal, are
     };
     let selector_label = match &modal.finetune.stream_piece_selector {
         None => aria2_global_label(
-            app.aria2_global_options
-                .as_ref()
+            ctx.aria2_global_options
                 .and_then(|options| options.stream_piece_selector.as_ref())
                 .map(stream_piece_selector_label),
         ),
@@ -157,8 +157,7 @@ fn draw_queue_modal_common_tab(f: &mut Frame, app: &App, modal: &QueueModal, are
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| {
                         aria2_global_label(
-                            app.aria2_global_options
-                                .as_ref()
+                            ctx.aria2_global_options
                                 .and_then(|options| options.connections_per_download)
                                 .map(|value| value.to_string()),
                         )
@@ -175,8 +174,7 @@ fn draw_queue_modal_common_tab(f: &mut Frame, app: &App, modal: &QueueModal, are
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| {
                         aria2_global_label(
-                            app.aria2_global_options
-                                .as_ref()
+                            ctx.aria2_global_options
                                 .and_then(|options| options.max_connections_per_server)
                                 .map(|value| value.to_string()),
                         )
@@ -250,7 +248,6 @@ fn draw_queue_modal_scheduler_tab(
         .constraints([Constraint::Length(2), Constraint::Min(0)])
         .split(area);
 
-    // Enabled + recurrence-kind toggle, always shown regardless of kind.
     let enabled_style = field_style(theme, modal.scheduler_cursor == 0);
     let kind_style = field_style(theme, modal.scheduler_cursor == 1);
     let top_lines = vec![
