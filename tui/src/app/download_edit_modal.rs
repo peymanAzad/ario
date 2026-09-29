@@ -5,9 +5,11 @@ use common::{enums::DownloadStatus, finetune::FineTune};
 use crate::{
     app::{App, adjust_finetune_field},
     effects::Effect,
+    modal::Modal,
     msg::Action,
 };
 
+#[derive(Debug)]
 pub struct DownloadEditModal {
     pub download_id: i64,
     pub finetune: FineTune,
@@ -40,14 +42,14 @@ impl App {
                 .iter()
                 .position(|queue| queue.id == original_queue_id)
                 .unwrap_or(0);
-            self.download_modal = Some(DownloadEditModal {
+            self.modal = Some(Modal::DownloadEdit(DownloadEditModal {
                 download_id,
                 finetune,
                 cursor: 0,
                 queue_cursor,
                 original_queue_id,
                 error: None,
-            });
+            }));
             vec![]
         }
     }
@@ -80,17 +82,19 @@ impl App {
     }
 
     pub fn cancel_download_modal(&mut self) {
-        self.download_modal = None;
+        if matches!(self.modal, Some(Modal::DownloadEdit(_))) {
+            self.modal = None;
+        }
     }
 
     pub fn download_modal_move_down(&mut self) {
-        if let Some(m) = &mut self.download_modal {
+        if let Some(m) = self.download_modal_mut() {
             m.cursor = (m.cursor + 1).min(6);
         }
     }
 
     pub fn download_modal_move_up(&mut self) {
-        if let Some(m) = &mut self.download_modal {
+        if let Some(m) = self.download_modal_mut() {
             m.cursor = m.cursor.saturating_sub(1);
         }
     }
@@ -104,14 +108,14 @@ impl App {
     }
 
     fn download_modal_adjust(&mut self, forward: bool) {
-        if let Some(m) = &mut self.download_modal {
+        let queue_count = self.queues.len();
+        if let Some(m) = self.download_modal_mut() {
             if m.cursor == 6 {
-                if !self.queues.is_empty() {
-                    let len = self.queues.len();
+                if queue_count > 0 {
                     m.queue_cursor = if forward {
-                        (m.queue_cursor + 1) % len
+                        (m.queue_cursor + 1) % queue_count
                     } else {
-                        (m.queue_cursor + len - 1) % len
+                        (m.queue_cursor + queue_count - 1) % queue_count
                     };
                 }
             } else {
@@ -121,10 +125,12 @@ impl App {
     }
 
     pub fn take_save_download_edit_action(&mut self) -> Option<Action> {
-        let mut modal = self.download_modal.take()?;
+        let Some(Modal::DownloadEdit(mut modal)) = self.modal.take() else {
+            return None;
+        };
         let Some(queue_id) = self.queues.get(modal.queue_cursor).map(|queue| queue.id) else {
             modal.error = Some("No queue is available".into());
-            self.download_modal = Some(modal);
+            self.modal = Some(Modal::DownloadEdit(modal));
             return None;
         };
         Some(Action::SaveDownloadEdit {

@@ -134,26 +134,24 @@ fn update_action(app: &mut App, action: Action) -> Vec<Effect> {
             effects.extend(app.refresh());
             effects
         }
-        Action::Confirm(pending) => {
-            app.pending_confirmation_action = Some(pending);
-            app.confirm_confirmation()
-        }
+        Action::Confirm(pending) => app.execute_confirmation(pending),
         Action::ModalHandled => vec![],
     }
 }
 
 fn close_open_modal(app: &mut App) {
-    if app.confirmation_modal.is_some() {
+    use crate::modal::Modal;
+    if matches!(app.modal, Some(Modal::Confirmation { .. })) {
         app.cancel_confirmation();
-    } else if app.help_modal.is_some() {
-        app.help_modal = None;
-    } else if app.queue_modal.is_some() {
+    } else if matches!(app.modal, Some(Modal::Help(_))) {
+        app.modal = None;
+    } else if matches!(app.modal, Some(Modal::Queue(_))) {
         app.cancel_queue_modal();
-    } else if app.torrent_modal.is_some() {
+    } else if matches!(app.modal, Some(Modal::TorrentFile(_))) {
         app.cancel_torrent_file_modal();
-    } else if app.modal.is_some() {
+    } else if matches!(app.modal, Some(Modal::ClipboardImport(_))) {
         app.cancel_modal();
-    } else if app.download_modal.is_some() {
+    } else if matches!(app.modal, Some(Modal::DownloadEdit(_))) {
         app.cancel_download_modal();
     }
 }

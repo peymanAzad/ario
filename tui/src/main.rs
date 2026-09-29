@@ -5,6 +5,7 @@ mod config;
 mod effects;
 mod event;
 mod icons;
+mod modal;
 mod msg;
 mod runtime;
 mod server_process;

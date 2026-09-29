@@ -7,6 +7,7 @@ use chrono::{
 
 use crate::app::App;
 use crate::effects::{ApiRequest, Effect};
+use crate::modal::Modal;
 use common::{
     download::Download,
     enums::Recurrence,
@@ -71,6 +72,7 @@ const WEEKDAY_ORDER: [Weekday; 7] = [
 /// struct with zero side effects, including any reordering done on the
 /// Download Items tab (that's why reordering happens on a local `Vec`
 /// snapshot here, not by calling the reorder endpoint on every keystroke).
+#[derive(Debug)]
 pub struct QueueModal {
     pub mode: QueueModalMode,
     pub tab: QueueModalTab,
@@ -135,7 +137,7 @@ impl App {
 
         let (once_start_date, once_start_time, once_end_date, once_end_time) =
             default_once_window();
-        self.queue_modal = Some(QueueModal {
+        self.modal = Some(Modal::Queue(QueueModal {
             mode: QueueModalMode::Create,
             tab: QueueModalTab::Common,
             name: String::new(),
@@ -161,7 +163,7 @@ impl App {
             items: Vec::new(),
             item_cursor: 0,
             error: None,
-        });
+        }));
     }
 
     pub fn open_edit_queue_modal(&mut self) -> Vec<Effect> {
@@ -221,7 +223,7 @@ impl App {
             ),
         };
 
-        self.queue_modal = Some(QueueModal {
+        self.modal = Some(Modal::Queue(QueueModal {
             mode: QueueModalMode::Edit { queue_id: queue.id },
             tab: QueueModalTab::Common,
             name: queue.name,
@@ -247,7 +249,7 @@ impl App {
             items: Vec::new(),
             item_cursor: 0,
             error: None,
-        });
+        }));
 
         vec![Effect::Api(ApiRequest::ListQueueDownloads {
             queue_id: queue.id,
@@ -263,10 +265,10 @@ impl App {
         result: anyhow::Result<Vec<DownloadLiveStatus>>,
     ) {
         let modal_matches_queue = matches!(
-            self.queue_modal.as_ref().map(|modal| modal.mode),
+            self.queue_modal().map(|modal| modal.mode),
             Some(QueueModalMode::Edit { queue_id: open_queue_id }) if open_queue_id == queue_id
         );
-        if modal_matches_queue && let (Some(modal), Ok(list)) = (&mut self.queue_modal, result) {
+        if modal_matches_queue && let (Some(modal), Ok(list)) = (self.queue_modal_mut(), result) {
             modal.items = list.into_iter().map(|d| d.download).collect();
         }
     }
@@ -279,17 +281,19 @@ impl App {
     }
 
     pub fn cancel_queue_modal(&mut self) {
-        self.queue_modal = None;
+        if matches!(self.modal, Some(Modal::Queue(_))) {
+            self.modal = None;
+        }
     }
 
     pub fn queue_modal_next_tab(&mut self) {
-        if let Some(m) = &mut self.queue_modal {
+        if let Some(m) = self.queue_modal_mut() {
             m.tab = m.tab.next(m.mode);
         }
     }
 
     pub fn queue_modal_prev_tab(&mut self) {
-        if let Some(m) = &mut self.queue_modal {
+        if let Some(m) = self.queue_modal_mut() {
             m.tab = m.tab.prev(m.mode);
         }
     }
@@ -297,7 +301,7 @@ impl App {
     /// Enters text-edit mode for the queue name. Scheduler values use
     /// left/right adjustment controls instead of free-form text.
     pub fn queue_modal_start_text_edit(&mut self) {
-        if let Some(m) = &mut self.queue_modal {
+        if let Some(m) = self.queue_modal_mut() {
             let initial = match (
                 m.tab,
                 m.common_cursor,
@@ -315,7 +319,7 @@ impl App {
     }
 
     pub fn queue_modal_text_input(&mut self, c: char) {
-        if let Some(m) = &mut self.queue_modal {
+        if let Some(m) = self.queue_modal_mut() {
             if m.editing_text {
                 m.text_buffer.push(c);
             }
@@ -323,7 +327,7 @@ impl App {
     }
 
     pub fn queue_modal_text_backspace(&mut self) {
-        if let Some(m) = &mut self.queue_modal {
+        if let Some(m) = self.queue_modal_mut() {
             if m.editing_text {
                 m.text_buffer.pop();
             }
@@ -331,7 +335,7 @@ impl App {
     }
 
     pub fn queue_modal_confirm_text_edit(&mut self) {
-        if let Some(m) = &mut self.queue_modal {
+        if let Some(m) = self.queue_modal_mut() {
             if !m.editing_text {
                 return;
             }
@@ -349,13 +353,13 @@ impl App {
     }
 
     pub fn queue_modal_cancel_text_edit(&mut self) {
-        if let Some(m) = &mut self.queue_modal {
+        if let Some(m) = self.queue_modal_mut() {
             m.editing_text = false;
         }
     }
 
     pub fn queue_modal_move_down(&mut self) {
-        if let Some(m) = &mut self.queue_modal {
+        if let Some(m) = self.queue_modal_mut() {
             match m.tab {
                 QueueModalTab::Common => m.common_cursor = (m.common_cursor + 1).min(7),
                 QueueModalTab::Scheduler => {
@@ -375,7 +379,7 @@ impl App {
     }
 
     pub fn queue_modal_move_up(&mut self) {
-        if let Some(m) = &mut self.queue_modal {
+        if let Some(m) = self.queue_modal_mut() {
             match m.tab {
                 QueueModalTab::Common => m.common_cursor = m.common_cursor.saturating_sub(1),
                 QueueModalTab::Scheduler => {
@@ -392,7 +396,7 @@ impl App {
     /// (`J`/`K`), since left/right has no natural meaning for reordering a
     /// vertical list.
     fn queue_modal_adjust(&mut self, forward: bool) {
-        if let Some(m) = &mut self.queue_modal {
+        if let Some(m) = self.queue_modal_mut() {
             match m.tab {
                 QueueModalTab::Common => match m.common_cursor {
                     1 => {
@@ -467,7 +471,7 @@ impl App {
     /// Toggles the currently-highlighted day in the Weekly days row
     /// (Scheduler tab, cursor 2, sub-cursor `day_cursor`).
     pub fn queue_modal_toggle_day(&mut self) {
-        if let Some(m) = &mut self.queue_modal {
+        if let Some(m) = self.queue_modal_mut() {
             if m.tab == QueueModalTab::Scheduler
                 && m.scheduler_cursor == 2
                 && m.recurrence_kind == RecurrenceKind::Weekly
@@ -481,7 +485,7 @@ impl App {
     /// (Download Items tab only) — a local `Vec::swap`, not an API call;
     /// persisted all at once on Save.
     pub fn queue_modal_move_item_down(&mut self) {
-        if let Some(m) = &mut self.queue_modal {
+        if let Some(m) = self.queue_modal_mut() {
             if m.tab == QueueModalTab::DownloadItems && m.item_cursor + 1 < m.items.len() {
                 m.items.swap(m.item_cursor, m.item_cursor + 1);
                 m.item_cursor += 1;
@@ -490,7 +494,7 @@ impl App {
     }
 
     pub fn queue_modal_move_item_up(&mut self) {
-        if let Some(m) = &mut self.queue_modal {
+        if let Some(m) = self.queue_modal_mut() {
             if m.tab == QueueModalTab::DownloadItems && m.item_cursor > 0 {
                 m.items.swap(m.item_cursor, m.item_cursor - 1);
                 m.item_cursor -= 1;
@@ -525,7 +529,7 @@ impl App {
     /// (and reorder ids if the Download Items tab's order changed). Closes
     /// the modal immediately on a successful build of the request.
     pub fn take_save_queue_action(&mut self) -> Option<crate::msg::Action> {
-        let Some(modal) = &mut self.queue_modal else {
+        let Some(modal) = self.queue_modal_mut() else {
             return None;
         };
 
@@ -542,7 +546,9 @@ impl App {
             }
         };
 
-        let modal = self.queue_modal.take().unwrap(); // known Some, just validated above
+        let Some(Modal::Queue(modal)) = self.modal.take() else {
+            unreachable!("queue modal is open");
+        };
 
         match modal.mode {
             QueueModalMode::Create => Some(crate::msg::Action::SaveQueue {

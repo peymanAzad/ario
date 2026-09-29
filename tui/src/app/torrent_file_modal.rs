@@ -5,6 +5,7 @@ use common::{download::TorrentUploadMetadata, finetune::FineTune};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::*;
+use crate::modal::Modal;
 use crate::msg::Action;
 
 pub const MAX_TORRENT_BYTES: u64 = 16 * 1024 * 1024;
@@ -15,6 +16,7 @@ pub enum TorrentFileModalTab {
     FineTuning,
 }
 
+#[derive(Debug)]
 pub struct TorrentFileModal {
     pub tab: TorrentFileModalTab,
     pub path_input: String,
@@ -40,7 +42,7 @@ impl App {
             .filter(|cursor| *cursor < self.queues.len())
             .or(main_queue_cursor)
             .unwrap_or(0);
-        self.torrent_modal = Some(TorrentFileModal {
+        self.modal = Some(Modal::TorrentFile(TorrentFileModal {
             tab: TorrentFileModalTab::Torrent,
             path_input: String::new(),
             resolved_path: None,
@@ -48,21 +50,23 @@ impl App {
             queue_cursor,
             finetune: FineTune::default(),
             finetune_cursor: 0,
-        });
+        }));
     }
 
     pub fn cancel_torrent_file_modal(&mut self) {
-        self.torrent_modal = None;
+        if matches!(self.modal, Some(Modal::TorrentFile(_))) {
+            self.modal = None;
+        }
     }
 
     pub fn torrent_modal_stop_path_editing(&mut self) {
-        if let Some(modal) = &mut self.torrent_modal {
+        if let Some(modal) = self.torrent_modal_mut() {
             modal.editing_path = false;
         }
     }
 
     pub fn torrent_modal_next_tab(&mut self) {
-        if let Some(modal) = &mut self.torrent_modal {
+        if let Some(modal) = self.torrent_modal_mut() {
             modal.editing_path = false;
             modal.tab = match modal.tab {
                 TorrentFileModalTab::Torrent => TorrentFileModalTab::FineTuning,
@@ -72,7 +76,7 @@ impl App {
     }
 
     pub fn torrent_modal_text_input(&mut self, character: char) {
-        if let Some(modal) = &mut self.torrent_modal
+        if let Some(modal) = self.torrent_modal_mut()
             && modal.editing_path
             && !character.is_control()
         {
@@ -82,7 +86,7 @@ impl App {
     }
 
     pub fn torrent_modal_text_backspace(&mut self) {
-        if let Some(modal) = &mut self.torrent_modal
+        if let Some(modal) = self.torrent_modal_mut()
             && modal.editing_path
             && let Some((index, _)) = modal.path_input.grapheme_indices(true).next_back()
         {
@@ -92,7 +96,7 @@ impl App {
     }
 
     pub fn paste_torrent_path(&mut self, text: &str) {
-        if let Some(modal) = &mut self.torrent_modal
+        if let Some(modal) = self.torrent_modal_mut()
             && modal.editing_path
         {
             modal.path_input = text.trim().to_string();
@@ -101,7 +105,7 @@ impl App {
     }
 
     pub fn torrent_modal_commit_path(&mut self) {
-        let Some(modal) = &mut self.torrent_modal else {
+        let Some(modal) = self.torrent_modal_mut() else {
             return;
         };
         if !modal.editing_path {
@@ -119,7 +123,7 @@ impl App {
     }
 
     pub fn torrent_modal_move_down(&mut self) {
-        if let Some(modal) = &mut self.torrent_modal
+        if let Some(modal) = self.torrent_modal_mut()
             && modal.tab == TorrentFileModalTab::FineTuning
         {
             modal.finetune_cursor = (modal.finetune_cursor + 1).min(5);
@@ -127,7 +131,7 @@ impl App {
     }
 
     pub fn torrent_modal_move_up(&mut self) {
-        if let Some(modal) = &mut self.torrent_modal
+        if let Some(modal) = self.torrent_modal_mut()
             && modal.tab == TorrentFileModalTab::FineTuning
         {
             modal.finetune_cursor = modal.finetune_cursor.saturating_sub(1);
@@ -136,7 +140,7 @@ impl App {
 
     fn torrent_modal_adjust(&mut self, forward: bool) {
         let queue_count = self.queues.len();
-        if let Some(modal) = &mut self.torrent_modal {
+        if let Some(modal) = self.torrent_modal_mut() {
             match modal.tab {
                 TorrentFileModalTab::Torrent if !modal.editing_path && queue_count > 0 => {
                     modal.queue_cursor = if forward {
@@ -162,7 +166,7 @@ impl App {
     }
 
     pub fn take_submit_torrent_action(&mut self, start_immediately: bool) -> Option<Action> {
-        let Some(modal) = &mut self.torrent_modal else {
+        let Some(modal) = self.torrent_modal_mut() else {
             return None;
         };
         let path = match normalize_torrent_path(&modal.path_input) {
@@ -173,7 +177,9 @@ impl App {
             }
         };
         modal.resolved_path = Some(path.clone());
-        let modal = self.torrent_modal.take().expect("torrent modal is open");
+        let Some(Modal::TorrentFile(modal)) = self.modal.take() else {
+            unreachable!("torrent modal is open");
+        };
         let queue_id = self
             .queues
             .get(modal.queue_cursor)

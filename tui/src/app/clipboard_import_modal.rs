@@ -1,6 +1,8 @@
 use super::*;
+use crate::modal::Modal;
 use common::download::{AddDownloadInput, AddDownloadsRequest};
 
+#[derive(Debug)]
 pub struct ClipboardImportModal {
     pub tab: ModalTab,
     pub entries: Vec<ImportUrlEntry>,
@@ -33,22 +35,24 @@ impl App {
         let queue_cursor =
             clipboard_queue_cursor(self.selected_queue, self.queues.len(), main_queue_cursor);
 
-        self.modal = Some(ClipboardImportModal {
+        self.modal = Some(Modal::ClipboardImport(ClipboardImportModal {
             tab: ModalTab::Urls,
             entries,
             url_cursor: 0,
             queue_cursor,
             finetune: FineTune::default(),
             finetune_cursor: 0,
-        });
+        }));
     }
 
     pub fn cancel_modal(&mut self) {
-        self.modal = None;
+        if matches!(self.modal, Some(Modal::ClipboardImport(_))) {
+            self.modal = None;
+        }
     }
 
     pub fn modal_next_tab(&mut self) {
-        if let Some(m) = &mut self.modal {
+        if let Some(m) = self.clipboard_modal_mut() {
             m.tab = match m.tab {
                 ModalTab::Urls => ModalTab::FineTuning,
                 ModalTab::FineTuning => ModalTab::Urls,
@@ -61,7 +65,7 @@ impl App {
     }
 
     pub fn modal_move_down(&mut self) {
-        if let Some(m) = &mut self.modal {
+        if let Some(m) = self.clipboard_modal_mut() {
             match m.tab {
                 ModalTab::Urls => {
                     if !m.entries.is_empty() {
@@ -76,7 +80,7 @@ impl App {
     }
 
     pub fn modal_move_up(&mut self) {
-        if let Some(m) = &mut self.modal {
+        if let Some(m) = self.clipboard_modal_mut() {
             match m.tab {
                 ModalTab::Urls => m.url_cursor = m.url_cursor.saturating_sub(1),
                 ModalTab::FineTuning => m.finetune_cursor = m.finetune_cursor.saturating_sub(1),
@@ -86,7 +90,7 @@ impl App {
 
     fn modal_adjust(&mut self, forward: bool) {
         let queues_len = self.queues.len();
-        if let Some(m) = &mut self.modal {
+        if let Some(m) = self.clipboard_modal_mut() {
             match m.tab {
                 ModalTab::Urls => {
                     if queues_len == 0 {
@@ -114,7 +118,7 @@ impl App {
     }
 
     pub fn modal_toggle_selected_url(&mut self) {
-        if let Some(m) = &mut self.modal {
+        if let Some(m) = self.clipboard_modal_mut() {
             if let Some(entry) = m.entries.get_mut(m.url_cursor) {
                 entry.selected = !entry.selected;
             }
@@ -122,7 +126,7 @@ impl App {
     }
 
     pub fn modal_select_all(&mut self) {
-        if let Some(m) = &mut self.modal {
+        if let Some(m) = self.clipboard_modal_mut() {
             for e in &mut m.entries {
                 e.selected = true;
             }
@@ -130,7 +134,7 @@ impl App {
     }
 
     pub fn modal_select_none(&mut self) {
-        if let Some(m) = &mut self.modal {
+        if let Some(m) = self.clipboard_modal_mut() {
             for e in &mut m.entries {
                 e.selected = false;
             }
@@ -142,7 +146,13 @@ impl App {
         &mut self,
         start_immediately: bool,
     ) -> Option<crate::msg::Action> {
-        let modal = self.modal.take()?;
+        let modal = match self.modal.take() {
+            Some(Modal::ClipboardImport(modal)) => modal,
+            other => {
+                self.modal = other;
+                return None;
+            }
+        };
 
         let inputs: Vec<AddDownloadInput> = modal
             .entries

@@ -24,10 +24,12 @@ use crate::app::lifecycle::{
 use crate::app::clipboard_import_modal::ClipboardImportModal;
 use crate::app::confirmation_modal::ConfirmationModal;
 use crate::app::download_edit_modal::DownloadEditModal;
+use crate::app::help_modal::HelpModal;
 use crate::app::queue_modal::QueueModal;
 use crate::app::torrent_file_modal::TorrentFileModal;
 use crate::effects::{ApiRequest, Effect};
 use crate::icons::IconSet;
+use crate::modal::Modal;
 use crate::theme::Theme;
 pub use crate::toast::ToastLevel;
 use crate::toast::ToastStack;
@@ -108,18 +110,12 @@ pub struct App {
     pub should_quit: bool,
     pub theme: Theme,
     pub icons: IconSet,
-    pub modal: Option<ClipboardImportModal>,
-    pub torrent_modal: Option<TorrentFileModal>,
-    pub queue_modal: Option<QueueModal>,
-    pub download_modal: Option<DownloadEditModal>,
-    pub confirmation_modal: Option<ConfirmationModal>,
-    pub help_modal: Option<help_modal::HelpModal>,
+    pub modal: Option<Modal>,
     pub toasts: ToastStack,
     /// When true, TUI may spawn/supervise ario_daemon for a local URL.
     pub(crate) manages_server: bool,
     refresh_in_flight: bool,
     pub(crate) lifecycle_revision: u64,
-    pending_confirmation_action: Option<PendingConfirmationAction>,
     pausing_downloads: HashSet<i64>,
 }
 
@@ -144,15 +140,9 @@ impl App {
             theme,
             icons,
             modal: None,
-            torrent_modal: None,
-            queue_modal: None,
-            download_modal: None,
-            confirmation_modal: None,
-            help_modal: None,
             manages_server,
             refresh_in_flight: false,
             lifecycle_revision: 0,
-            pending_confirmation_action: None,
             pausing_downloads: HashSet::new(),
             toasts: ToastStack::new(),
         }
@@ -160,11 +150,91 @@ impl App {
 
     pub fn has_open_modal(&self) -> bool {
         self.modal.is_some()
-            || self.torrent_modal.is_some()
-            || self.queue_modal.is_some()
-            || self.download_modal.is_some()
-            || self.confirmation_modal.is_some()
-            || self.help_modal.is_some()
+    }
+
+    pub fn clipboard_modal(&self) -> Option<&ClipboardImportModal> {
+        match &self.modal {
+            Some(Modal::ClipboardImport(m)) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub fn clipboard_modal_mut(&mut self) -> Option<&mut ClipboardImportModal> {
+        match &mut self.modal {
+            Some(Modal::ClipboardImport(m)) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub fn torrent_modal(&self) -> Option<&TorrentFileModal> {
+        match &self.modal {
+            Some(Modal::TorrentFile(m)) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub fn torrent_modal_mut(&mut self) -> Option<&mut TorrentFileModal> {
+        match &mut self.modal {
+            Some(Modal::TorrentFile(m)) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub fn queue_modal(&self) -> Option<&QueueModal> {
+        match &self.modal {
+            Some(Modal::Queue(m)) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub fn queue_modal_mut(&mut self) -> Option<&mut QueueModal> {
+        match &mut self.modal {
+            Some(Modal::Queue(m)) => Some(m),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn download_modal(&self) -> Option<&DownloadEditModal> {
+        match &self.modal {
+            Some(Modal::DownloadEdit(m)) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub fn download_modal_mut(&mut self) -> Option<&mut DownloadEditModal> {
+        match &mut self.modal {
+            Some(Modal::DownloadEdit(m)) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub fn help_modal(&self) -> Option<&HelpModal> {
+        match &self.modal {
+            Some(Modal::Help(m)) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub fn help_modal_mut(&mut self) -> Option<&mut HelpModal> {
+        match &mut self.modal {
+            Some(Modal::Help(m)) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub fn confirmation_modal(&self) -> Option<&ConfirmationModal> {
+        match &self.modal {
+            Some(Modal::Confirmation { modal, .. }) => Some(modal),
+            _ => None,
+        }
+    }
+
+    pub fn pending_confirmation_action(&self) -> Option<&PendingConfirmationAction> {
+        match &self.modal {
+            Some(Modal::Confirmation { action, .. }) => Some(action),
+            _ => None,
+        }
     }
 
     pub fn manages_server(&self) -> bool {

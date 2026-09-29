@@ -85,17 +85,17 @@ fn populated_queue_result_opens_confirmation_with_retention_copy() {
         Ok(crate::api::DeleteQueueOutcome::NeedsConfirmation),
     );
 
-    let modal = app.confirmation_modal.as_ref().unwrap();
+    let modal = app.confirmation_modal().unwrap();
     assert_eq!(modal.title, "Remove queue?");
     assert!(modal.message.contains("Second"));
     assert!(modal.message.contains("Downloaded files will be kept"));
     assert_eq!(
-        app.pending_confirmation_action,
-        Some(PendingConfirmationAction::DeleteQueue { queue_id: 2 })
+        app.pending_confirmation_action(),
+        Some(&PendingConfirmationAction::DeleteQueue { queue_id: 2 })
     );
 
     app.cancel_confirmation();
-    assert!(app.confirmation_modal.is_none());
+    assert!(app.confirmation_modal().is_none());
     assert_eq!(app.queues.len(), 3);
 }
 
@@ -108,9 +108,9 @@ fn late_queue_confirmation_does_not_replace_help() {
         "Second".into(),
         Ok(crate::api::DeleteQueueOutcome::NeedsConfirmation),
     );
-    assert!(app.help_modal.is_some());
-    assert!(app.confirmation_modal.is_none());
-    assert!(app.pending_confirmation_action.is_none());
+    assert!(app.help_modal().is_some());
+    assert!(app.confirmation_modal().is_none());
+    assert!(app.pending_confirmation_action().is_none());
 }
 
 #[test]
