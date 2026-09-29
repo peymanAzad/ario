@@ -1,10 +1,11 @@
-use std::{fs, path::PathBuf, thread};
+use std::path::PathBuf;
 
 use anyhow::{Context, ensure};
 use common::{download::TorrentUploadMetadata, finetune::FineTune};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::*;
+use crate::msg::Action;
 
 pub const MAX_TORRENT_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -160,15 +161,15 @@ impl App {
         self.torrent_modal_adjust(true);
     }
 
-    fn submit_torrent_file(&mut self, start_immediately: bool) {
+    pub fn take_submit_torrent_action(&mut self, start_immediately: bool) -> Option<Action> {
         let Some(modal) = &mut self.torrent_modal else {
-            return;
+            return None;
         };
         let path = match normalize_torrent_path(&modal.path_input) {
             Ok(path) => path,
             Err(error) => {
                 self.toasts.push(error.to_string(), ToastLevel::Error);
-                return;
+                return None;
             }
         };
         modal.resolved_path = Some(path.clone());
@@ -179,39 +180,15 @@ impl App {
             .map(|queue| queue.id)
             .unwrap_or(1);
         let finetune_override = (modal.finetune != FineTune::default()).then_some(modal.finetune);
-        let metadata = TorrentUploadMetadata {
-            queue_id,
-            finetune_override,
-            start_immediately,
-        };
-        let api_base = self.api_base.clone();
-        let sender = self.event_sender.clone();
         self.toasts.push("adding torrent…", ToastLevel::Info);
-        thread::spawn(move || {
-            let result = (|| -> anyhow::Result<DownloadLiveStatus> {
-                let data = fs::read(&path)
-                    .with_context(|| format!("failed to read {}", path.display()))?;
-                ensure!(!data.is_empty(), "torrent file is empty");
-                ensure!(
-                    data.len() as u64 <= MAX_TORRENT_BYTES,
-                    "torrent file exceeds the 16 MiB limit"
-                );
-                let filename = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .context("torrent filename is not valid UTF-8")?;
-                api::add_torrent(&api_base, filename, data, &metadata)
-            })();
-            let _ = sender.send(Event::App(AppEvent::TorrentAdded(result)));
-        });
-    }
-
-    pub fn start_torrent_now(&mut self) {
-        self.submit_torrent_file(true);
-    }
-
-    pub fn save_torrent_for_later(&mut self) {
-        self.submit_torrent_file(false);
+        Some(Action::SubmitTorrent {
+            path,
+            metadata: TorrentUploadMetadata {
+                queue_id,
+                finetune_override,
+                start_immediately,
+            },
+        })
     }
 }
 
@@ -253,7 +230,7 @@ pub fn normalize_torrent_path(input: &str) -> anyhow::Result<PathBuf> {
             .is_some_and(|extension| extension.eq_ignore_ascii_case("torrent")),
         "file must have a .torrent extension"
     );
-    fs::File::open(&path)
+    std::fs::File::open(&path)
         .with_context(|| format!("torrent file is not readable: {}", path.display()))?;
     Ok(path)
 }
@@ -274,46 +251,46 @@ mod tests {
     #[test]
     fn normalizes_quoted_and_escaped_paths() {
         let dir = temp_path("torrent path with spaces");
-        fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("sample.TORRENT");
-        fs::write(&path, b"torrent").unwrap();
+        std::fs::write(&path, b"torrent").unwrap();
 
         let quoted = format!("'{}'", path.display());
         assert_eq!(normalize_torrent_path(&quoted).unwrap(), path);
         let escaped = path.to_string_lossy().replace(' ', "\\ ");
         assert_eq!(normalize_torrent_path(&escaped).unwrap(), path);
 
-        fs::remove_file(path).unwrap();
-        fs::remove_dir(dir).unwrap();
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(dir).unwrap();
     }
 
     #[test]
     fn rejects_directories_wrong_extensions_and_empty_files() {
         let dir = temp_path("torrent-validation");
-        fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
         let wrong = dir.join("sample.txt");
         let empty = dir.join("empty.torrent");
-        fs::write(&wrong, b"data").unwrap();
-        fs::write(&empty, b"").unwrap();
+        std::fs::write(&wrong, b"data").unwrap();
+        std::fs::write(&empty, b"").unwrap();
 
         assert!(normalize_torrent_path(dir.to_str().unwrap()).is_err());
         assert!(normalize_torrent_path(wrong.to_str().unwrap()).is_err());
         assert!(normalize_torrent_path(empty.to_str().unwrap()).is_err());
 
-        fs::remove_file(wrong).unwrap();
-        fs::remove_file(empty).unwrap();
-        fs::remove_dir(dir).unwrap();
+        std::fs::remove_file(wrong).unwrap();
+        std::fs::remove_file(empty).unwrap();
+        std::fs::remove_dir(dir).unwrap();
     }
 
     #[test]
     fn rejects_torrent_files_over_the_size_limit() {
         let path = temp_path("oversized.torrent");
-        let file = fs::File::create(&path).unwrap();
+        let file = std::fs::File::create(&path).unwrap();
         file.set_len(MAX_TORRENT_BYTES + 1).unwrap();
         drop(file);
 
         assert!(normalize_torrent_path(path.to_str().unwrap()).is_err());
 
-        fs::remove_file(path).unwrap();
+        std::fs::remove_file(path).unwrap();
     }
 }

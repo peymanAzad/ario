@@ -369,17 +369,9 @@ mod tests {
     use chrono::Utc;
     use common::{download::Download, enums::SourceType, finetune::FineTune};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
-    use std::sync::mpsc;
 
     fn app(mode: GlyphMode) -> App {
-        let (sender, _) = mpsc::channel();
-        let mut app = App::new(
-            "http://127.0.0.1:1".into(),
-            Theme::default_dark(),
-            IconSet::new(mode),
-            sender,
-            false,
-        );
+        let mut app = App::new(Theme::default_dark(), IconSet::new(mode), false);
         app.downloads.push(DownloadLiveStatus {
             download: Download {
                 id: 1,

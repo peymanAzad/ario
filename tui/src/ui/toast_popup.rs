@@ -87,17 +87,9 @@ mod tests {
         toast::ToastLevel,
     };
     use ratatui::{Terminal, backend::TestBackend};
-    use std::sync::mpsc;
 
     fn render(width: u16, height: u16, messages: &[&str]) -> Vec<String> {
-        let (sender, _receiver) = mpsc::channel();
-        let mut app = App::new(
-            "http://127.0.0.1:1".into(),
-            Theme::default_dark(),
-            IconSet::new(GlyphMode::Ascii),
-            sender,
-            false,
-        );
+        let mut app = App::new(Theme::default_dark(), IconSet::new(GlyphMode::Ascii), false);
         for message in messages {
             app.toasts.push(*message, ToastLevel::Success);
         }

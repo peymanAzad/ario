@@ -1,15 +1,11 @@
-use std::{
-    path::PathBuf,
-    process::{Command, Stdio},
-    thread,
-};
+use std::path::PathBuf;
 
 use common::{enums::DownloadStatus, finetune::FineTune};
 
 use crate::{
-    api,
-    app::{App, AppEvent, ToastLevel, adjust_finetune_field},
-    event::Event,
+    app::{App, adjust_finetune_field},
+    effects::Effect,
+    msg::Action,
 };
 
 pub struct DownloadEditModal {
@@ -21,20 +17,13 @@ pub struct DownloadEditModal {
     pub error: Option<String>,
 }
 
-fn silence_command_stdio(command: &mut Command) -> &mut Command {
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-}
-
 impl App {
-    pub fn activate_selected_download(&mut self) {
+    pub fn activate_selected_download(&mut self) -> Vec<Effect> {
         if self.has_open_modal() {
-            return;
+            return vec![];
         }
         let Some(live) = self.current_download() else {
-            return;
+            return vec![];
         };
         let is_completed = live.download.status == DownloadStatus::Completed;
         let download_id = live.download.id;
@@ -44,7 +33,7 @@ impl App {
         let filename = live.download.filename.clone();
 
         if is_completed {
-            self.open_download_file(destination_path, filename);
+            self.open_download_file(destination_path, filename)
         } else {
             let queue_cursor = self
                 .queues
@@ -59,55 +48,35 @@ impl App {
                 original_queue_id,
                 error: None,
             });
+            vec![]
         }
     }
 
-    /// Spawns the OS's native "open this file" command in a background
-    /// thread — fire-and-forget, same as every other action in this app.
-    fn open_download_file(&mut self, destination_path: String, filename: Option<String>) {
+    fn open_download_file(
+        &mut self,
+        destination_path: String,
+        filename: Option<String>,
+    ) -> Vec<Effect> {
         let path = filename
             .map(|name| PathBuf::from(&destination_path).join(name))
             .unwrap_or_else(|| PathBuf::from(destination_path));
-
-        Self::open_path(path);
+        vec![Effect::OpenPath(path)]
     }
 
-    pub fn open_selected_download_folder(&mut self) {
+    pub fn open_selected_download_folder(&mut self) -> Vec<Effect> {
         if self.has_open_modal() {
-            return;
+            return vec![];
         }
         let Some(live) = self.current_download() else {
-            return;
+            return vec![];
         };
         if live.download.status != DownloadStatus::Completed {
-            return;
+            return vec![];
         }
 
-        Self::open_path(PathBuf::from(live.download.destination_path.clone()));
-    }
-
-    /// Spawns the OS's native "open this path" command in a background thread.
-    fn open_path(path: PathBuf) {
-        thread::spawn(move || {
-            #[cfg(target_os = "linux")]
-            {
-                let mut command = Command::new("xdg-open");
-                command.arg(&path);
-                let _ = silence_command_stdio(&mut command).spawn();
-            }
-            #[cfg(target_os = "macos")]
-            {
-                let mut command = Command::new("open");
-                command.arg(&path);
-                let _ = silence_command_stdio(&mut command).spawn();
-            }
-            #[cfg(target_os = "windows")]
-            {
-                let mut command = Command::new("cmd");
-                command.args(["/C", "start", ""]).arg(&path);
-                let _ = silence_command_stdio(&mut command).spawn();
-            }
-        });
+        vec![Effect::OpenPath(PathBuf::from(
+            live.download.destination_path.clone(),
+        ))]
     }
 
     pub fn cancel_download_modal(&mut self) {
@@ -151,64 +120,18 @@ impl App {
         }
     }
 
-    pub fn save_download_modal(&mut self) {
-        let Some(mut modal) = self.download_modal.take() else {
-            return;
-        };
+    pub fn take_save_download_edit_action(&mut self) -> Option<Action> {
+        let mut modal = self.download_modal.take()?;
         let Some(queue_id) = self.queues.get(modal.queue_cursor).map(|queue| queue.id) else {
             modal.error = Some("No queue is available".into());
             self.download_modal = Some(modal);
-            return;
+            return None;
         };
-        let api_base = self.api_base.clone();
-        let sender = self.event_sender.clone();
-        thread::spawn(move || {
-            let result: anyhow::Result<()> = (|| {
-                if queue_id != modal.original_queue_id {
-                    api::move_download_queue(&api_base, modal.download_id, queue_id)?;
-                }
-                api::update_finetune(&api_base, modal.download_id, &modal.finetune)?;
-                Ok(())
-            })();
-            if let Err(e) = result {
-                let _ = sender.send(Event::App(AppEvent::Toast {
-                    message: e.to_string(),
-                    level: ToastLevel::Error,
-                }));
-            }
-        });
-        self.refresh();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::silence_command_stdio;
-    use std::process::Command;
-
-    #[cfg(any(unix, windows))]
-    #[test]
-    fn external_command_stdio_is_silenced() {
-        #[cfg(unix)]
-        let mut command = {
-            let mut command = Command::new("sh");
-            command.args(["-c", "printf stdout; printf stderr >&2"]);
-            command
-        };
-
-        #[cfg(windows)]
-        let mut command = {
-            let mut command = Command::new("cmd");
-            command.args(["/C", "echo stdout & echo stderr 1>&2"]);
-            command
-        };
-
-        let output = silence_command_stdio(&mut command)
-            .output()
-            .expect("test command should run");
-
-        assert!(output.status.success());
-        assert!(output.stdout.is_empty());
-        assert!(output.stderr.is_empty());
+        Some(Action::SaveDownloadEdit {
+            id: modal.download_id,
+            finetune: modal.finetune,
+            queue_id,
+            original_queue_id: modal.original_queue_id,
+        })
     }
 }

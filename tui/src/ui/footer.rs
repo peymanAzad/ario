@@ -163,17 +163,9 @@ mod tests {
         scheduler::Scheduler,
     };
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
-    use std::sync::mpsc;
 
     fn app() -> App {
-        let (sender, _receiver) = mpsc::channel();
-        App::new(
-            "http://127.0.0.1:1".into(),
-            Theme::default_dark(),
-            IconSet::new(GlyphMode::Unicode),
-            sender,
-            false,
-        )
+        App::new(Theme::default_dark(), IconSet::new(GlyphMode::Unicode), false)
     }
 
     fn add_download(app: &mut App, status: DownloadStatus) {

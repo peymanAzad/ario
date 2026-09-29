@@ -1,15 +1,16 @@
 use super::*;
+use crate::effects::Effect;
 
 impl App {
-    pub fn select_next_category(&mut self) {
+    pub fn select_next_category(&mut self) -> Vec<Effect> {
         let len = ALL_CATEGORIES.len() + 1; // +1 for "All"
         self.selected_category = (self.selected_category + 1).min(len - 1);
-        self.refresh();
+        self.refresh()
     }
 
-    pub fn select_prev_category(&mut self) {
+    pub fn select_prev_category(&mut self) -> Vec<Effect> {
         self.selected_category = self.selected_category.saturating_sub(1);
-        self.refresh();
+        self.refresh()
     }
 }
 
@@ -20,18 +21,10 @@ mod tests {
         icons::{GlyphMode, IconSet},
         theme::Theme,
     };
-    use std::sync::mpsc;
 
     #[test]
     fn program_category_is_available_as_a_filter() {
-        let (sender, _receiver) = mpsc::channel();
-        let mut app = App::new(
-            "http://127.0.0.1:1".into(),
-            Theme::default_dark(),
-            IconSet::new(GlyphMode::Unicode),
-            sender,
-            false,
-        );
+        let mut app = App::new(Theme::default_dark(), IconSet::new(GlyphMode::Unicode), false);
         app.selected_category = ALL_CATEGORIES
             .iter()
             .position(|category| *category == FileCategory::Program)

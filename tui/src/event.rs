@@ -6,14 +6,17 @@ use std::{
 
 use crossterm::event::{self, Event as CrosstermEvent, KeyEvent};
 
+use crate::msg::Msg;
+
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum Event {
     Tick,
     Key(KeyEvent),
     Paste(String),
     Mouse,
     Resize,
-    App(crate::app::AppEvent),
+    Msg(Msg),
 }
 
 pub struct EventHandler {
@@ -75,8 +78,7 @@ impl EventHandler {
     }
 
     /// Returns a cloneable sender into the same channel this handler's
-    /// receiver reads from — `App` uses this to push background API results
-    /// in as `Event::App(...)`, from threads it spawns itself.
+    /// receiver reads from — background workers push `Event::Msg(...)` here.
     pub fn sender(&self) -> mpsc::Sender<Event> {
         self.sender.clone()
     }
