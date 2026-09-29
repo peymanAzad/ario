@@ -1,7 +1,8 @@
 use crate::{
     app::{App, Focus, queues::queue_start_message},
     effects::{ApiRequest, Effect},
-    msg::{Action, ApiResult, Msg},
+    modal::{ClipboardImportModal, HelpModal, Modal, QueueModal, TorrentFileModal},
+    msg::{Action, ApiResult, Msg, QueueSaveRequest},
     toast::ToastLevel,
 };
 
@@ -9,7 +10,7 @@ pub fn update(app: &mut App, msg: Msg) -> Vec<Effect> {
     match msg {
         Msg::Tick => app.refresh(),
         Msg::Paste(text) => {
-            crate::app::keys::paste(app, &text);
+            crate::keymap::paste(app, &text);
             vec![]
         }
         Msg::Action(action) => update_action(app, action),
@@ -60,22 +61,32 @@ fn update_action(app: &mut App, action: Action) -> Vec<Effect> {
             }
         },
         Action::OpenHelp => {
-            app.open_help_modal();
+            if app.modal.is_none() {
+                app.modal = Some(Modal::Help(HelpModal::default()));
+            }
             vec![]
         }
-        Action::OpenClipboardImport => {
-            app.open_clipboard_import();
-            vec![]
-        }
+        Action::OpenClipboardImport => open_clipboard_import(app),
         Action::OpenTorrentFile => {
-            app.open_torrent_file_modal();
+            if app.modal.is_none() {
+                app.modal = Some(Modal::TorrentFile(TorrentFileModal::open(
+                    app.selected_queue,
+                    &app.queues,
+                )));
+            }
             vec![]
         }
         Action::OpenCreateQueue => {
-            app.open_create_queue_modal();
+            if app.modal.is_none() {
+                app.modal = Some(Modal::Queue(QueueModal::create()));
+            }
             vec![]
         }
-        Action::OpenEditQueue => app.open_edit_queue_modal(),
+        Action::OpenEditQueue => open_edit_queue(app),
+        Action::CloseModal => {
+            app.modal = None;
+            vec![]
+        }
         Action::PauseDownload => app.pause_selected(),
         Action::ResumeDownload => app.resume_selected(),
         Action::DeleteDownload => app.delete_selected(),
@@ -100,38 +111,48 @@ fn update_action(app: &mut App, action: Action) -> Vec<Effect> {
         }
         Action::SaveQueue {
             mode,
-            create,
-            update,
+            request,
             ordered_ids,
-        } => match mode {
-            crate::modal::QueueModalMode::Create => create
-                .map(|request| vec![Effect::Api(ApiRequest::CreateQueue(request))])
-                .unwrap_or_default(),
-            crate::modal::QueueModalMode::Edit { .. } => update
-                .map(|(id, request)| {
-                    vec![Effect::Api(ApiRequest::UpdateQueue {
-                        id,
-                        request,
-                        ordered_ids,
-                    })]
-                })
-                .unwrap_or_default(),
+        } => match (mode, request) {
+            (crate::modal::QueueModalMode::Create, QueueSaveRequest::Create(request)) => {
+                vec![Effect::Api(ApiRequest::CreateQueue(request))]
+            }
+            (
+                crate::modal::QueueModalMode::Edit { .. },
+                QueueSaveRequest::Update { id, request },
+            ) => vec![Effect::Api(ApiRequest::UpdateQueue {
+                id,
+                request,
+                ordered_ids,
+            })],
+            _ => vec![],
         },
         Action::SaveDownloadEdit {
             id,
             finetune,
             queue_id,
-            original_queue_id,
         } => {
             let mut effects = Vec::new();
-            if queue_id != original_queue_id {
+            let current_queue_id = app
+                .downloads
+                .iter()
+                .find(|download| download.download.id == id)
+                .map(|download| download.download.queue_id);
+            if current_queue_id != Some(queue_id) {
                 effects.push(Effect::Api(ApiRequest::MoveDownloadQueue { id, queue_id }));
             }
             effects.push(Effect::Api(ApiRequest::UpdateFinetune { id, finetune }));
             effects.extend(app.refresh());
             effects
         }
-        Action::Confirm(pending) => app.execute_confirmation(pending),
+        Action::Confirm(pending) => match pending {
+            crate::app::PendingConfirmationAction::DeleteDownloadFiles { download_id } => {
+                app.delete_download_files(download_id)
+            }
+            crate::app::PendingConfirmationAction::DeleteQueue { queue_id } => {
+                app.confirm_delete_queue(queue_id)
+            }
+        },
     }
 }
 
@@ -160,10 +181,17 @@ fn update_api(app: &mut App, result: ApiResult) -> Vec<Effect> {
             vec![]
         }
         ApiResult::QueueDownloadsLoaded { queue_id, result } => {
-            app.apply_queue_downloads_loaded(queue_id, result);
+            if let Some(Modal::Queue(modal)) = &mut app.modal {
+                modal.apply_loaded_downloads(queue_id, result);
+            }
             vec![]
         }
-        ApiResult::QueueSaved(result) => app.apply_queue_saved(result),
+        ApiResult::QueueSaved(result) => {
+            if let Err(error) = result {
+                app.apply_toast(error.to_string(), ToastLevel::Error);
+            }
+            app.refresh()
+        }
         ApiResult::DownloadPaused {
             download_id,
             result,
@@ -191,10 +219,39 @@ fn update_api(app: &mut App, result: ApiResult) -> Vec<Effect> {
                 vec![]
             }
         },
-        ApiResult::Failed { error } => {
-            app.apply_toast(error, ToastLevel::Error);
+        ApiResult::Failed { context, error } => {
+            app.apply_toast(format!("{context}: {error}"), ToastLevel::Error);
             vec![]
         }
         ApiResult::Done => app.refresh(),
     }
+}
+
+fn open_clipboard_import(app: &mut App) -> Vec<Effect> {
+    if app.modal.is_some() {
+        return vec![];
+    }
+    let urls = crate::clipboard::scan_clipboard_for_urls();
+    if urls.is_empty() {
+        app.apply_toast("clipboard is empty".into(), ToastLevel::Info);
+        return vec![];
+    }
+    app.modal = Some(Modal::ClipboardImport(ClipboardImportModal::from_urls(
+        urls,
+        app.selected_queue,
+        &app.queues,
+    )));
+    vec![]
+}
+
+fn open_edit_queue(app: &mut App) -> Vec<Effect> {
+    if app.modal.is_some() || app.selected_queue == 0 {
+        return vec![];
+    }
+    let Some(queue) = app.queues.get(app.selected_queue - 1).cloned() else {
+        return vec![];
+    };
+    let queue_id = queue.id;
+    app.modal = Some(Modal::Queue(QueueModal::edit(&queue)));
+    vec![Effect::Api(ApiRequest::ListQueueDownloads { queue_id })]
 }

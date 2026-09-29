@@ -39,7 +39,6 @@ fn column_widths(width: u16) -> Vec<u16> {
     widths
 }
 
-
 fn download_detail_lines(
     download: &DownloadLiveStatus,
     width: usize,

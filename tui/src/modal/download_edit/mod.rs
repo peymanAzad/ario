@@ -1,13 +1,9 @@
-use std::path::PathBuf;
-
-use common::enums::DownloadStatus;
+use common::finetune::FineTune;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{Frame, layout::Rect};
 
-use crate::app::App;
-use crate::effects::Effect;
 use crate::modal::widgets::{FineTuneEditor, QueuePicker};
-use crate::modal::{Component, Ctx, Modal, ModalOutcome};
+use crate::modal::{Component, Ctx, ModalOutcome};
 use crate::msg::Action;
 
 mod view;
@@ -29,11 +25,22 @@ pub struct DownloadEditModal {
     pub queue_picker: QueuePicker,
     /// When true, the Queue row (after the six finetune fields) is focused.
     pub focusing_queue: bool,
-    pub original_queue_id: i64,
     pub error: Option<String>,
 }
 
 impl DownloadEditModal {
+    pub(crate) fn editing(download_id: i64, finetune: FineTune, queue_cursor: usize) -> Self {
+        Self {
+            download_id,
+            finetune_editor: FineTuneEditor::new(finetune),
+            queue_picker: QueuePicker {
+                cursor: queue_cursor,
+            },
+            focusing_queue: false,
+            error: None,
+        }
+    }
+
     fn move_down(&mut self) {
         if self.focusing_queue {
             return;
@@ -86,7 +93,6 @@ impl DownloadEditModal {
             id: self.download_id,
             finetune: self.finetune_editor.finetune.clone(),
             queue_id,
-            original_queue_id: self.original_queue_id,
         })
     }
 }
@@ -127,77 +133,5 @@ impl Component for DownloadEditModal {
             ("j/k", "Navigate"),
             ("h/l", "Adjust"),
         ]
-    }
-}
-
-impl App {
-    pub fn activate_selected_download(&mut self) -> Vec<Effect> {
-        if self.has_open_modal() {
-            return vec![];
-        }
-        let Some(live) = self.current_download() else {
-            return vec![];
-        };
-        let is_completed = live.download.status == DownloadStatus::Completed;
-        let download_id = live.download.id;
-        let finetune = live.download.finetune.clone();
-        let original_queue_id = live.download.queue_id;
-        let destination_path = live.download.destination_path.clone();
-        let filename = live.download.filename.clone();
-
-        if is_completed {
-            self.open_download_file(destination_path, filename)
-        } else {
-            let queue_cursor = self
-                .queues
-                .iter()
-                .position(|queue| queue.id == original_queue_id)
-                .unwrap_or(0);
-            self.modal = Some(Modal::DownloadEdit(DownloadEditModal {
-                download_id,
-                finetune_editor: FineTuneEditor::new(finetune),
-                queue_picker: QueuePicker {
-                    cursor: queue_cursor,
-                },
-                focusing_queue: false,
-                original_queue_id,
-                error: None,
-            }));
-            vec![]
-        }
-    }
-
-    fn open_download_file(
-        &mut self,
-        destination_path: String,
-        filename: Option<String>,
-    ) -> Vec<Effect> {
-        let path = filename
-            .map(|name| PathBuf::from(&destination_path).join(name))
-            .unwrap_or_else(|| PathBuf::from(destination_path));
-        vec![Effect::OpenPath(path)]
-    }
-
-    pub fn open_selected_download_folder(&mut self) -> Vec<Effect> {
-        if self.has_open_modal() {
-            return vec![];
-        }
-        let Some(live) = self.current_download() else {
-            return vec![];
-        };
-        if live.download.status != DownloadStatus::Completed {
-            return vec![];
-        }
-
-        vec![Effect::OpenPath(PathBuf::from(
-            live.download.destination_path.clone(),
-        ))]
-    }
-
-    #[allow(dead_code)]
-    pub fn cancel_download_modal(&mut self) {
-        if matches!(self.modal, Some(Modal::DownloadEdit(_))) {
-            self.modal = None;
-        }
     }
 }

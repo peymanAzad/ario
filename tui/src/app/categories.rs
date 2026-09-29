@@ -24,7 +24,11 @@ mod tests {
 
     #[test]
     fn program_category_is_available_as_a_filter() {
-        let mut app = App::new(Theme::default_dark(), IconSet::new(GlyphMode::Unicode), false);
+        let mut app = App::new(
+            Theme::default_dark(),
+            IconSet::new(GlyphMode::Unicode),
+            false,
+        );
         app.selected_category = ALL_CATEGORIES
             .iter()
             .position(|category| *category == FileCategory::Program)

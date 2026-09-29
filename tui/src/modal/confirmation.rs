@@ -7,9 +7,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
-use crate::app::{App, PendingConfirmationAction};
-use crate::effects::Effect;
-use crate::modal::{Component, Ctx, Modal, ModalOutcome};
+use crate::app::PendingConfirmationAction;
+use crate::modal::{Component, Ctx, ModalOutcome};
 use crate::msg::Action;
 use crate::ui::centered_rect;
 
@@ -107,33 +106,6 @@ impl Component for ConfirmationModal {
     }
 
     fn hints(&self) -> Vec<(&'static str, &'static str)> {
-        vec![
-            ("Enter/y", "Confirm"),
-            ("Esc/n/c", "Cancel"),
-        ]
-    }
-}
-
-impl App {
-    pub fn open_confirmation(&mut self, modal: ConfirmationModal) {
-        self.modal = Some(Modal::Confirmation(modal));
-    }
-
-    #[allow(dead_code)]
-    pub fn cancel_confirmation(&mut self) {
-        if matches!(self.modal, Some(Modal::Confirmation(_))) {
-            self.modal = None;
-        }
-    }
-
-    pub fn execute_confirmation(&mut self, action: PendingConfirmationAction) -> Vec<Effect> {
-        match action {
-            PendingConfirmationAction::DeleteDownloadFiles { download_id } => {
-                self.delete_download_files(download_id)
-            }
-            PendingConfirmationAction::DeleteQueue { queue_id } => {
-                self.confirm_delete_queue(queue_id)
-            }
-        }
+        vec![("Enter/y", "Confirm"), ("Esc/n/c", "Cancel")]
     }
 }

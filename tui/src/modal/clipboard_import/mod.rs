@@ -1,13 +1,12 @@
 use common::download::{AddDownloadInput, AddDownloadsRequest};
 use common::finetune::FineTune;
+use common::queue::Queue;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{Frame, layout::Rect};
 
-use crate::app::App;
 use crate::modal::widgets::{FineTuneEditor, QueuePicker};
-use crate::modal::{Component, Ctx, Modal, ModalOutcome};
+use crate::modal::{Component, Ctx, ModalOutcome};
 use crate::msg::Action;
-use crate::toast::ToastLevel;
 
 pub(crate) mod view;
 
@@ -50,6 +49,23 @@ pub struct ClipboardImportModal {
 }
 
 impl ClipboardImportModal {
+    pub(crate) fn from_urls(urls: Vec<String>, selected_queue: usize, queues: &[Queue]) -> Self {
+        let entries = urls
+            .into_iter()
+            .map(|url| ImportUrlEntry {
+                url,
+                selected: true,
+            })
+            .collect();
+        Self {
+            tab: ModalTab::Urls,
+            entries,
+            url_cursor: 0,
+            queue_picker: QueuePicker::default_for(selected_queue, queues),
+            finetune_editor: FineTuneEditor::new(FineTune::default()),
+        }
+    }
+
     fn next_tab(&mut self) {
         self.tab = match self.tab {
             ModalTab::Urls => ModalTab::FineTuning,
@@ -112,10 +128,7 @@ impl ClipboardImportModal {
             return ModalOutcome::Close;
         }
 
-        let queue_id = self
-            .queue_picker
-            .selected_id(ctx.queues)
-            .unwrap_or(1);
+        let queue_id = self.queue_picker.selected_id(ctx.queues).unwrap_or(1);
 
         let finetune = &self.finetune_editor.finetune;
         let finetune_override = if *finetune == FineTune::default() {
@@ -187,41 +200,5 @@ impl Component for ClipboardImportModal {
             ("Tab", "Tab"),
             ("j/k", "Navigate"),
         ]
-    }
-}
-
-impl App {
-    pub fn open_clipboard_import(&mut self) {
-        if self.has_open_modal() {
-            return;
-        }
-        let urls = crate::clipboard::scan_clipboard_for_urls();
-        if urls.is_empty() {
-            self.toasts.push("clipboard is empty", ToastLevel::Info);
-            return;
-        }
-
-        let entries = urls
-            .into_iter()
-            .map(|url| ImportUrlEntry {
-                url,
-                selected: true,
-            })
-            .collect();
-
-        self.modal = Some(Modal::ClipboardImport(ClipboardImportModal {
-            tab: ModalTab::Urls,
-            entries,
-            url_cursor: 0,
-            queue_picker: QueuePicker::default_for(self.selected_queue, &self.queues),
-            finetune_editor: FineTuneEditor::new(FineTune::default()),
-        }));
-    }
-
-    #[allow(dead_code)]
-    pub fn cancel_modal(&mut self) {
-        if matches!(self.modal, Some(Modal::ClipboardImport(_))) {
-            self.modal = None;
-        }
     }
 }

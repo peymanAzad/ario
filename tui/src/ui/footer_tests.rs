@@ -15,7 +15,11 @@ use common::{
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
 fn app() -> App {
-    App::new(Theme::default_dark(), IconSet::new(GlyphMode::Unicode), false)
+    App::new(
+        Theme::default_dark(),
+        IconSet::new(GlyphMode::Unicode),
+        false,
+    )
 }
 
 fn add_download(app: &mut App, status: DownloadStatus) {

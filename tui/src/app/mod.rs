@@ -1,6 +1,5 @@
 pub mod categories;
 pub mod downloads;
-pub mod keys;
 pub mod lifecycle;
 pub mod queues;
 pub mod speed;
@@ -28,7 +27,6 @@ use common::download::{DownloadFilter, DownloadLiveStatus};
 use common::enums::{DownloadStatus, FileCategory};
 use common::finetune::Aria2GlobalOptions;
 use common::queue::Queue;
-
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Focus {
@@ -60,7 +58,6 @@ impl Focus {
         }
     }
 }
-
 
 pub const ALL_CATEGORIES: [FileCategory; 6] = [
     FileCategory::Video,
@@ -129,6 +126,10 @@ impl App {
 
     pub fn has_open_modal(&self) -> bool {
         self.modal.is_some()
+    }
+
+    pub(crate) fn open_confirmation(&mut self, modal: ConfirmationModal) {
+        self.modal = Some(Modal::Confirmation(modal));
     }
 
     #[allow(dead_code)]

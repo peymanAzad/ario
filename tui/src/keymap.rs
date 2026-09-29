@@ -1,8 +1,11 @@
-use crossterm::event::{KeyCode, KeyEvent};
+use std::mem::discriminant;
+
 use common::enums::{DownloadStatus, QueueStatus};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{App, Focus, downloads::DownloadAction};
-use crate::msg::Action;
+use crate::modal::{Modal, ModalOutcome};
+use crate::msg::{Action, Msg};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
@@ -17,8 +20,9 @@ pub struct Binding {
     pub scope: Scope,
     pub action: Action,
     /// Default short footer label; contextual overrides in `footer_hints` may replace it.
-    #[allow(dead_code)]
     pub label: &'static str,
+    /// Footer key when this binding is shown. `None` keeps it out of the footer.
+    pub footer_key: Option<&'static str>,
     /// Help description.
     pub description: &'static str,
 }
@@ -49,6 +53,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::OpenHelp,
         label: "Help",
         description: "Open keybindings help (main screen only)",
+        footer_key: Some("?"),
     },
     Binding {
         keys: &[KeyCode::Char('1')],
@@ -57,6 +62,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Focus(Focus::Queues),
         label: "Queues",
         description: "Focus Queues pane",
+        footer_key: None,
     },
     Binding {
         keys: &[KeyCode::Char('2')],
@@ -65,6 +71,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Focus(Focus::Categories),
         label: "Categories",
         description: "Focus Categories pane",
+        footer_key: None,
     },
     Binding {
         keys: &[KeyCode::Char('3')],
@@ -73,6 +80,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Focus(Focus::Downloads),
         label: "Downloads",
         description: "Focus Downloads pane",
+        footer_key: None,
     },
     Binding {
         keys: &[KeyCode::Tab],
@@ -81,6 +89,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::FocusNext,
         label: "Pane",
         description: "Focus next pane",
+        footer_key: Some("Tab"),
     },
     Binding {
         keys: &[KeyCode::BackTab],
@@ -89,6 +98,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::FocusPrev,
         label: "Pane",
         description: "Focus previous pane",
+        footer_key: None,
     },
     Binding {
         keys: &[KeyCode::Char('a')],
@@ -97,6 +107,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::OpenTorrentFile,
         label: "Torrent",
         description: "Add a local .torrent file",
+        footer_key: Some("a"),
     },
     Binding {
         keys: &[KeyCode::Char('v')],
@@ -105,6 +116,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::OpenClipboardImport,
         label: "Import Clipboard",
         description: "Import URLs and magnet links from clipboard",
+        footer_key: Some("v"),
     },
     Binding {
         keys: &[KeyCode::Esc, KeyCode::Char('q')],
@@ -113,6 +125,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Quit,
         label: "Quit",
         description: "Quit from the main screen",
+        footer_key: Some("q"),
     },
     // Downloads
     Binding {
@@ -122,6 +135,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::SelectNext,
         label: "Navigate",
         description: "Select next download",
+        footer_key: Some("j/k"),
     },
     Binding {
         keys: &[KeyCode::Up, KeyCode::Char('k')],
@@ -130,6 +144,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::SelectPrev,
         label: "Navigate",
         description: "Select previous download",
+        footer_key: None,
     },
     Binding {
         keys: &[KeyCode::Enter],
@@ -138,6 +153,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::ActivateDownload,
         label: "Edit",
         description: "Open completed file; edit other downloads",
+        footer_key: Some("Enter"),
     },
     Binding {
         keys: &[KeyCode::Char('f')],
@@ -146,6 +162,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::OpenDownloadFolder,
         label: "Folder",
         description: "Open folder of completed download",
+        footer_key: Some("f"),
     },
     Binding {
         keys: &[KeyCode::Char('p')],
@@ -154,6 +171,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::PauseDownload,
         label: "Pause",
         description: "Pause active download",
+        footer_key: Some("p"),
     },
     Binding {
         keys: &[KeyCode::Char('r')],
@@ -161,16 +179,17 @@ pub static BINDINGS: &[Binding] = &[
         scope: Scope::Pane(Focus::Downloads),
         action: Action::ResumeDownload,
         label: "Resume",
-        description:
-            "Start pending, resume paused, retry failed/removed, or restart completed download",
+        description: "Start pending, resume paused, retry failed/removed, or restart completed download",
+        footer_key: Some("r"),
     },
     Binding {
         keys: &[KeyCode::Char('d')],
         keys_label: "d",
         scope: Scope::Pane(Focus::Downloads),
         action: Action::DeleteDownload,
-        label: "Delete",
+        label: "Delete/Delete+files",
         description: "Delete download, keeping downloaded files",
+        footer_key: Some("d/D"),
     },
     Binding {
         keys: &[KeyCode::Char('D')],
@@ -179,6 +198,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::DeleteDownloadFiles,
         label: "Delete+files",
         description: "Delete download and files after confirmation",
+        footer_key: None,
     },
     // Queues
     Binding {
@@ -188,6 +208,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::SelectNext,
         label: "Navigate",
         description: "Select next queue",
+        footer_key: Some("j/k"),
     },
     Binding {
         keys: &[KeyCode::Up, KeyCode::Char('k')],
@@ -196,6 +217,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::SelectPrev,
         label: "Navigate",
         description: "Select previous queue",
+        footer_key: None,
     },
     Binding {
         keys: &[KeyCode::Char('n')],
@@ -204,6 +226,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::OpenCreateQueue,
         label: "New",
         description: "Create a queue",
+        footer_key: Some("n"),
     },
     Binding {
         keys: &[KeyCode::Enter],
@@ -212,6 +235,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::OpenEditQueue,
         label: "Edit",
         description: "Edit selected queue (except All)",
+        footer_key: Some("Enter"),
     },
     Binding {
         keys: &[KeyCode::Char('p')],
@@ -220,6 +244,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::PauseQueue,
         label: "Pause",
         description: "Pause selected queue (except All)",
+        footer_key: Some("p"),
     },
     Binding {
         keys: &[KeyCode::Char('r')],
@@ -228,6 +253,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::ResumeQueue,
         label: "Resume",
         description: "Resume selected queue (except All)",
+        footer_key: Some("r"),
     },
     Binding {
         keys: &[KeyCode::Char('x')],
@@ -235,8 +261,8 @@ pub static BINDINGS: &[Binding] = &[
         scope: Scope::Pane(Focus::Queues),
         action: Action::RemoveCompleted,
         label: "Clear completed",
-        description:
-            "Remove completed downloads from selected queue, or all queues in All",
+        description: "Remove completed downloads from selected queue, or all queues in All",
+        footer_key: Some("x"),
     },
     Binding {
         keys: &[KeyCode::Char('d')],
@@ -244,8 +270,8 @@ pub static BINDINGS: &[Binding] = &[
         scope: Scope::Pane(Focus::Queues),
         action: Action::DeleteQueue,
         label: "Delete",
-        description:
-            "Delete selected queue (except All and Main Queue); confirm if it contains downloads",
+        description: "Delete selected queue (except All and Main Queue); confirm if it contains downloads",
+        footer_key: Some("d"),
     },
     // Categories
     Binding {
@@ -255,6 +281,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::SelectNext,
         label: "Navigate",
         description: "Select next category",
+        footer_key: Some("j/k"),
     },
     Binding {
         keys: &[KeyCode::Up, KeyCode::Char('k')],
@@ -263,6 +290,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::SelectPrev,
         label: "Navigate",
         description: "Select previous category",
+        footer_key: None,
     },
 ];
 
@@ -299,10 +327,7 @@ pub fn main_help_sections() -> Vec<(&'static str, Vec<(&'static str, &'static st
     push_scope_section(&mut sections, "Main Navigation", Scope::Global);
     // Preserve the historical Ctrl+C note that is special-cased in route_key.
     if let Some((_, bindings)) = sections.last_mut() {
-        bindings.push((
-            "Ctrl+C",
-            "Quit, except in confirmations where it cancels",
-        ));
+        bindings.push(("Ctrl+C", "Quit, except in confirmations where it cancels"));
     }
     push_scope_section(&mut sections, "Downloads", Scope::Pane(Focus::Downloads));
     push_scope_section(&mut sections, "Queues", Scope::Pane(Focus::Queues));
@@ -316,13 +341,11 @@ pub fn main_help_sections() -> Vec<(&'static str, Vec<(&'static str, &'static st
             bindings[first] = ("p / r", "Pause / resume selected queue (except All)");
         }
     }
-    push_scope_section(
-        &mut sections,
-        "Categories",
-        Scope::Pane(Focus::Categories),
-    );
+    push_scope_section(&mut sections, "Categories", Scope::Pane(Focus::Categories));
     // Merge focus 1/2/3 and Tab/BackTab into historical combined rows.
-    if let Some((_, bindings)) = sections.iter_mut().find(|(title, _)| *title == "Main Navigation")
+    if let Some((_, bindings)) = sections
+        .iter_mut()
+        .find(|(title, _)| *title == "Main Navigation")
     {
         coalesce_focus_rows(bindings);
     }
@@ -370,99 +393,167 @@ fn coalesce_focus_rows(bindings: &mut Vec<(&'static str, &'static str)>) {
     }
 }
 
-/// Contextual footer hints for the main screen (no modal).
+const DOWNLOAD_FOOTER: &[Action] = &[
+    Action::OpenHelp,
+    Action::OpenClipboardImport,
+    Action::OpenTorrentFile,
+    Action::PauseDownload,
+    Action::ResumeDownload,
+    Action::ActivateDownload,
+    Action::OpenDownloadFolder,
+    Action::DeleteDownload,
+    Action::SelectNext,
+    Action::FocusNext,
+    Action::Quit,
+];
+
+const QUEUE_FOOTER: &[Action] = &[
+    Action::OpenHelp,
+    Action::PauseQueue,
+    Action::ResumeQueue,
+    Action::OpenEditQueue,
+    Action::OpenCreateQueue,
+    Action::RemoveCompleted,
+    Action::DeleteQueue,
+    Action::SelectNext,
+    Action::FocusNext,
+    Action::OpenClipboardImport,
+    Action::OpenTorrentFile,
+    Action::Quit,
+];
+
+/// All-queues row puts clear-completed ahead of create, matching the curated footer.
+const QUEUE_ALL_FOOTER: &[Action] = &[
+    Action::OpenHelp,
+    Action::RemoveCompleted,
+    Action::OpenCreateQueue,
+    Action::SelectNext,
+    Action::FocusNext,
+    Action::OpenClipboardImport,
+    Action::OpenTorrentFile,
+    Action::Quit,
+];
+
+const CATEGORY_FOOTER: &[Action] = &[
+    Action::OpenHelp,
+    Action::SelectNext,
+    Action::FocusNext,
+    Action::OpenClipboardImport,
+    Action::OpenTorrentFile,
+    Action::Quit,
+];
+
+/// Contextual footer hints for the main screen, taken from [`BINDINGS`].
 pub fn footer_hints(app: &App) -> Vec<FooterHint> {
-    let mut hints = vec![FooterHint::new("?", "Help")];
+    footer_actions(app)
+        .iter()
+        .filter(|action| app.action_available(action))
+        .filter_map(|action| footer_binding(app.focus, action))
+        .filter_map(|binding| {
+            let key = binding.footer_key?;
+            Some(FooterHint::new(key, presented_label(app, binding)))
+        })
+        .collect()
+}
+
+fn footer_actions(app: &App) -> &'static [Action] {
     match app.focus {
-        Focus::Downloads => download_hints(app, &mut hints),
-        Focus::Queues => queue_hints(app, &mut hints),
-        Focus::Categories => category_hints(&mut hints),
+        Focus::Downloads => DOWNLOAD_FOOTER,
+        Focus::Categories => CATEGORY_FOOTER,
+        Focus::Queues if app.selected_queue == 0 || app.current_queue().is_none() => {
+            QUEUE_ALL_FOOTER
+        }
+        Focus::Queues => QUEUE_FOOTER,
     }
-    hints
 }
 
-fn download_hints(app: &App, hints: &mut Vec<FooterHint>) {
-    hints.extend([
-        FooterHint::new("v", "Import Clipboard"),
-        FooterHint::new("a", "Torrent"),
-    ]);
+fn footer_binding(focus: Focus, action: &Action) -> Option<&'static Binding> {
+    BINDINGS.iter().find(|binding| {
+        binding.footer_key.is_some()
+            && discriminant(&binding.action) == discriminant(action)
+            && scope_matches(binding.scope, focus)
+    })
+}
 
-    if app.action_available(&Action::DeleteDownload) {
-        if let Some(action) = app.current_download_action() {
-            hints.push(download_action_hint(action));
-        }
-        let enter_label = match app.current_download() {
-            Some(d) if d.download.status == DownloadStatus::Completed => "Open",
-            _ => "Edit",
+fn scope_matches(scope: Scope, focus: Focus) -> bool {
+    match scope {
+        Scope::Global => true,
+        Scope::Pane(pane) => pane == focus,
+    }
+}
+
+fn presented_label<'a>(app: &App, binding: &'a Binding) -> &'a str {
+    match &binding.action {
+        Action::ResumeDownload => match app.current_download_action() {
+            Some(DownloadAction::Start) => "Start",
+            Some(DownloadAction::Retry) => "Retry",
+            Some(DownloadAction::Restart) => "Restart",
+            Some(DownloadAction::Resume) | Some(DownloadAction::Pause) | None => binding.label,
+        },
+        Action::ActivateDownload => match app.current_download() {
+            Some(download) if download.download.status == DownloadStatus::Completed => "Open",
+            _ => binding.label,
+        },
+        _ => binding.label,
+    }
+}
+
+/// Route a key to a message. Modal keys stay inside the component; the main
+/// screen resolves through [`lookup`].
+pub fn route_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
+    let is_confirmation = matches!(app.modal, Some(Modal::Confirmation(_)));
+
+    // Confirmation cancels on Ctrl+C before the global quit shortcut.
+    if key_event.modifiers == KeyModifiers::CONTROL
+        && matches!(key_event.code, KeyCode::Char('c') | KeyCode::Char('C'))
+        && !is_confirmation
+    {
+        return Some(Msg::Action(Action::Quit));
+    }
+
+    if app.modal.is_some() {
+        return dispatch_modal_key(app, key_event);
+    }
+
+    lookup(app.focus, key_event).map(Msg::Action)
+}
+
+pub fn paste(app: &mut App, text: &str) {
+    if let Some(modal) = &mut app.modal {
+        modal.handle_paste(text);
+    }
+}
+
+fn dispatch_modal_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
+    let App {
+        modal,
+        queues,
+        selected_queue,
+        aria2_global_options,
+        theme,
+        icons,
+        ..
+    } = app;
+    let outcome = {
+        let active = modal.as_mut()?;
+        let ctx = crate::modal::Ctx {
+            queues,
+            selected_queue: *selected_queue,
+            aria2_global_options: aria2_global_options.as_ref(),
+            theme,
+            icons,
         };
-        hints.push(FooterHint::new("Enter", enter_label));
-        if app.action_available(&Action::OpenDownloadFolder) {
-            hints.push(FooterHint::new("f", "Folder"));
+        active.handle_key(key_event, &ctx)
+    };
+    match outcome {
+        ModalOutcome::Continue => None,
+        ModalOutcome::Close => Some(Msg::Action(Action::CloseModal)),
+        ModalOutcome::Notify { message, level } => Some(Msg::Toast { message, level }),
+        ModalOutcome::Emit(action) => {
+            *modal = None;
+            Some(Msg::Action(action))
         }
-        hints.push(FooterHint::new("d/D", "Delete/Delete+files"));
     }
-
-    hints.extend([
-        FooterHint::new("j/k", "Navigate"),
-        FooterHint::new("Tab", "Pane"),
-        FooterHint::new("q", "Quit"),
-    ]);
-}
-
-fn download_action_hint(action: DownloadAction) -> FooterHint {
-    match action {
-        DownloadAction::Start => FooterHint::new("r", "Start"),
-        DownloadAction::Resume => FooterHint::new("r", "Resume"),
-        DownloadAction::Pause => FooterHint::new("p", "Pause"),
-        DownloadAction::Retry => FooterHint::new("r", "Retry"),
-        DownloadAction::Restart => FooterHint::new("r", "Restart"),
-    }
-}
-
-fn queue_hints(app: &App, hints: &mut Vec<FooterHint>) {
-    if app.selected_queue == 0 {
-        hints.extend([
-            FooterHint::new("x", "Clear completed"),
-            FooterHint::new("n", "New"),
-        ]);
-    } else if app.current_queue().is_some() {
-        if app.action_available(&Action::PauseQueue) {
-            hints.push(FooterHint::new("p", "Pause"));
-        } else if app.action_available(&Action::ResumeQueue) {
-            hints.push(FooterHint::new("r", "Resume"));
-        }
-        hints.extend([
-            FooterHint::new("Enter", "Edit"),
-            FooterHint::new("n", "New"),
-            FooterHint::new("x", "Clear completed"),
-        ]);
-        if app.action_available(&Action::DeleteQueue) {
-            hints.push(FooterHint::new("d", "Delete"));
-        }
-    } else {
-        hints.extend([
-            FooterHint::new("x", "Clear completed"),
-            FooterHint::new("n", "New"),
-        ]);
-    }
-
-    hints.extend([
-        FooterHint::new("j/k", "Navigate"),
-        FooterHint::new("Tab", "Pane"),
-        FooterHint::new("v", "Import Clipboard"),
-        FooterHint::new("a", "Torrent"),
-        FooterHint::new("q", "Quit"),
-    ]);
-}
-
-fn category_hints(hints: &mut Vec<FooterHint>) {
-    hints.extend([
-        FooterHint::new("j/k", "Navigate"),
-        FooterHint::new("Tab", "Pane"),
-        FooterHint::new("v", "Import Clipboard"),
-        FooterHint::new("a", "Torrent"),
-        FooterHint::new("q", "Quit"),
-    ]);
 }
 
 impl App {
@@ -480,18 +571,16 @@ impl App {
             | Action::OpenTorrentFile
             | Action::OpenCreateQueue
             | Action::RemoveCompleted => true,
-            Action::PauseDownload => {
-                self.current_download_action() == Some(DownloadAction::Pause)
-            }
+            Action::PauseDownload => self.current_download_action() == Some(DownloadAction::Pause),
             Action::ResumeDownload => self
                 .current_download_action()
                 .is_some_and(|action| action.key() == 'r'),
             Action::ActivateDownload | Action::DeleteDownload | Action::DeleteDownloadFiles => {
                 self.current_download().is_some()
             }
-            Action::OpenDownloadFolder => self.current_download().is_some_and(|download| {
-                download.download.status == DownloadStatus::Completed
-            }),
+            Action::OpenDownloadFolder => self
+                .current_download()
+                .is_some_and(|download| download.download.status == DownloadStatus::Completed),
             Action::OpenEditQueue => self.selected_queue != 0 && self.current_queue().is_some(),
             Action::PauseQueue => self
                 .current_queue()
@@ -504,3 +593,7 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "keymap_tests.rs"]
+mod tests;

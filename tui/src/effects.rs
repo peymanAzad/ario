@@ -14,18 +14,18 @@ use common::{
 
 use crate::{
     api,
-    modal::MAX_TORRENT_BYTES,
     event::Event,
+    modal::MAX_TORRENT_BYTES,
     msg::{ApiResult, Msg},
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
     Api(ApiRequest),
     OpenPath(PathBuf),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ApiRequest {
     Refresh {
         filter: DownloadFilter,
@@ -106,6 +106,7 @@ fn execute(base: &str, request: ApiRequest) -> ApiResult {
         ApiRequest::AddDownloads(request) => match api::add_downloads(base, &request) {
             Ok(_) => ApiResult::Done,
             Err(error) => ApiResult::Failed {
+                context: "add downloads".to_string(),
                 error: error.to_string(),
             },
         },
@@ -130,20 +131,27 @@ fn execute(base: &str, request: ApiRequest) -> ApiResult {
             download_id: id,
             result: api::pause_download(base, id),
         },
-        ApiRequest::ResumeDownload(id) => ApiResult::from_unit(api::resume_download(base, id)),
-        ApiRequest::DeleteDownload(id) => ApiResult::from_unit(api::delete_download(base, id)),
+        ApiRequest::ResumeDownload(id) => {
+            ApiResult::from_unit("resume download", api::resume_download(base, id))
+        }
+        ApiRequest::DeleteDownload(id) => {
+            ApiResult::from_unit("delete download", api::delete_download(base, id))
+        }
         ApiRequest::DeleteDownloadFiles(id) => {
             ApiResult::DownloadFilesDeleted(api::delete_download_files(base, id))
         }
-        ApiRequest::DeleteCompleted(queue_id) => {
-            ApiResult::from_unit(api::delete_completed_downloads(base, queue_id))
-        }
-        ApiRequest::UpdateFinetune { id, finetune } => {
-            ApiResult::from_unit(api::update_finetune(base, id, &finetune).map(|_| ()))
-        }
-        ApiRequest::MoveDownloadQueue { id, queue_id } => {
-            ApiResult::from_unit(api::move_download_queue(base, id, queue_id).map(|_| ()))
-        }
+        ApiRequest::DeleteCompleted(queue_id) => ApiResult::from_unit(
+            "delete completed",
+            api::delete_completed_downloads(base, queue_id),
+        ),
+        ApiRequest::UpdateFinetune { id, finetune } => ApiResult::from_unit(
+            "update finetune",
+            api::update_finetune(base, id, &finetune).map(|_| ()),
+        ),
+        ApiRequest::MoveDownloadQueue { id, queue_id } => ApiResult::from_unit(
+            "move download",
+            api::move_download_queue(base, id, queue_id).map(|_| ()),
+        ),
         ApiRequest::CreateQueue(request) => {
             ApiResult::QueueSaved(api::create_queue(base, &request).map(|_| ()))
         }
@@ -161,7 +169,9 @@ fn execute(base: &str, request: ApiRequest) -> ApiResult {
             });
             ApiResult::QueueSaved(result)
         }
-        ApiRequest::PauseQueue(id) => ApiResult::from_unit(api::pause_queue(base, id)),
+        ApiRequest::PauseQueue(id) => {
+            ApiResult::from_unit("pause queue", api::pause_queue(base, id))
+        }
         ApiRequest::ResumeQueue(id) => match api::resume_queue(base, id) {
             Ok(()) => {
                 let stop = api::list_queues(base)
@@ -174,6 +184,7 @@ fn execute(base: &str, request: ApiRequest) -> ApiResult {
                 }
             }
             Err(error) => ApiResult::Failed {
+                context: "resume queue".to_string(),
                 error: error.to_string(),
             },
         },

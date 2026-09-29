@@ -1,7 +1,9 @@
+use std::path::PathBuf;
+
 use super::*;
-use crate::app::{PendingConfirmationAction};
-use crate::modal::ConfirmationModal;
+use crate::app::PendingConfirmationAction;
 use crate::effects::{ApiRequest, Effect};
+use crate::modal::{ConfirmationModal, DownloadEditModal, Modal};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DownloadAction {
@@ -116,6 +118,56 @@ impl App {
 
     pub fn delete_download_files(&mut self, download_id: i64) -> Vec<Effect> {
         vec![Effect::Api(ApiRequest::DeleteDownloadFiles(download_id))]
+    }
+
+    pub fn activate_selected_download(&mut self) -> Vec<Effect> {
+        if self.has_open_modal() {
+            return vec![];
+        }
+        let Some(live) = self.current_download() else {
+            return vec![];
+        };
+        let is_completed = live.download.status == DownloadStatus::Completed;
+        let download_id = live.download.id;
+        let finetune = live.download.finetune.clone();
+        let original_queue_id = live.download.queue_id;
+        let destination_path = live.download.destination_path.clone();
+        let filename = live.download.filename.clone();
+
+        if is_completed {
+            let path = filename
+                .map(|name| PathBuf::from(&destination_path).join(name))
+                .unwrap_or_else(|| PathBuf::from(destination_path));
+            vec![Effect::OpenPath(path)]
+        } else {
+            let queue_cursor = self
+                .queues
+                .iter()
+                .position(|queue| queue.id == original_queue_id)
+                .unwrap_or(0);
+            self.modal = Some(Modal::DownloadEdit(DownloadEditModal::editing(
+                download_id,
+                finetune,
+                queue_cursor,
+            )));
+            vec![]
+        }
+    }
+
+    pub fn open_selected_download_folder(&mut self) -> Vec<Effect> {
+        if self.has_open_modal() {
+            return vec![];
+        }
+        let Some(live) = self.current_download() else {
+            return vec![];
+        };
+        if live.download.status != DownloadStatus::Completed {
+            return vec![];
+        }
+
+        vec![Effect::OpenPath(PathBuf::from(
+            live.download.destination_path.clone(),
+        ))]
     }
 }
 

@@ -1,15 +1,13 @@
 mod category_list;
 mod downloads_table;
-pub(crate) mod format;
 mod footer;
+pub(crate) mod format;
 mod queue_list;
 mod status_bar;
 pub(crate) mod style;
 mod toast_popup;
 
-pub(crate) use format::{
-    detail_lines, format_bytes, format_eta, format_speed, middle_truncate,
-};
+pub(crate) use format::{detail_lines, format_bytes, format_eta, format_speed, middle_truncate};
 pub(crate) use style::{border_style, centered_rect, field_style, highlight_style};
 
 use crate::{
@@ -157,7 +155,6 @@ fn category_label(c: &FileCategory) -> String {
     }
     .to_string()
 }
-
 
 #[cfg(test)]
 mod tests;

@@ -76,11 +76,7 @@ fn main() -> anyhow::Result<()> {
     let backend = CrosstermBackend::new(std::io::stderr());
     let terminal = Terminal::new(backend)?;
     let events = EventHandler::new(TICK_RATE_MS);
-    let mut app = App::new(
-        resolved_theme,
-        icons::IconSet::new(glyph_mode),
-        managed,
-    );
+    let mut app = App::new(resolved_theme, icons::IconSet::new(glyph_mode), managed);
 
     let mut tui = Tui::new(terminal, events);
     if let Err(error) = tui.enter() {

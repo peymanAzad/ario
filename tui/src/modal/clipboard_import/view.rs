@@ -45,9 +45,7 @@ pub fn draw_clipboard_import_modal(f: &mut Frame, modal: &ClipboardImportModal, 
     draw_modal_tab_bar(f, theme, modal, layout[0]);
     match modal.tab {
         ModalTab::Urls => draw_modal_urls_tab(f, ctx, modal, layout[1]),
-        ModalTab::FineTuning => {
-            draw_finetuning_fields(f, theme, &modal.finetune_editor, layout[1])
-        }
+        ModalTab::FineTuning => draw_finetuning_fields(f, theme, &modal.finetune_editor, layout[1]),
     }
     draw_modal_buttons(f, theme, layout[2]);
 }

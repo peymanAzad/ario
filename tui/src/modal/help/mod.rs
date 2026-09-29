@@ -2,13 +2,13 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{Frame, layout::Rect};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::app::App;
 use crate::keymap;
 use crate::modal::clipboard_import::HELP as CLIPBOARD_HELP;
 use crate::modal::confirmation::HELP as CONFIRMATION_HELP;
 use crate::modal::download_edit::HELP as DOWNLOAD_EDIT_HELP;
 use crate::modal::queue::{HELP as QUEUE_HELP, HELP_TEXT_EDITING};
-use crate::modal::{Component, Ctx, Modal, ModalOutcome};
+use crate::modal::torrent_file::HELP as TORRENT_HELP;
+use crate::modal::{Component, Ctx, ModalOutcome};
 
 mod view;
 
@@ -52,6 +52,10 @@ const MODAL_SECTIONS: &[KeybindingSection] = &[
     KeybindingSection {
         title: "Clipboard Import",
         bindings: CLIPBOARD_HELP,
+    },
+    KeybindingSection {
+        title: "Torrent File",
+        bindings: TORRENT_HELP,
     },
     KeybindingSection {
         title: "Queue Editor",
@@ -225,25 +229,9 @@ impl Component for HelpModal {
 
     fn hints(&self) -> Vec<(&'static str, &'static str)> {
         if self.editing_search {
-            vec![
-                ("Enter", "Keep"),
-                ("Esc", "Clear"),
-                ("Backspace", "Erase"),
-            ]
+            vec![("Enter", "Keep"), ("Esc", "Clear"), ("Backspace", "Erase")]
         } else {
-            vec![
-                ("Esc/q/?", "Close"),
-                ("/", "Search"),
-                ("j/k", "Scroll"),
-            ]
-        }
-    }
-}
-
-impl App {
-    pub fn open_help_modal(&mut self) {
-        if !self.has_open_modal() {
-            self.modal = Some(Modal::Help(HelpModal::default()));
+            vec![("Esc/q/?", "Close"), ("/", "Search"), ("j/k", "Scroll")]
         }
     }
 }

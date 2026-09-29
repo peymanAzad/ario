@@ -1,12 +1,12 @@
 use super::*;
 use crate::{
-    app::{Focus, PendingConfirmationAction, update::update},
+    app::{App, Focus, PendingConfirmationAction, update::update},
     keymap,
     modal::{
-        ClipboardImportModal, ConfirmationModal, DownloadEditModal, ModalTab, QueueModalMode,
-        QueueModalTab, RecurrenceKind, TorrentFileModalTab,
+        ClipboardImportModal, ConfirmationModal, DownloadEditModal, Modal, ModalTab,
+        QueueModalMode, QueueModalTab, RecurrenceKind, TorrentFileModalTab,
     },
-    msg::Action,
+    msg::{Action, Msg},
     theme::Theme,
 };
 
@@ -31,9 +31,10 @@ fn help_opens_from_every_pane_and_consumes_main_screen_actions() {
             let mut app = test_app();
             app.focus = focus;
             // Terminals can report '?' with Shift set.
-            if let Some(msg) =
-                route_key(&mut app, KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT))
-            {
+            if let Some(msg) = route_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT),
+            ) {
                 let _ = update(&mut app, msg);
             }
             assert!(app.help_modal().is_some());
@@ -110,9 +111,9 @@ fn torrent_path_focus_can_move_to_tabs_and_back_without_validation() {
 #[test]
 fn existing_modals_block_help_and_text_editing_keeps_question_mark() {
     let mut app = test_app();
-    app.open_create_queue_modal();
+    let _ = update(&mut app, Msg::Action(Action::OpenCreateQueue));
     press(&mut app, KeyCode::Char('?'));
-    app.open_help_modal();
+    let _ = update(&mut app, Msg::Action(Action::OpenHelp));
     assert!(app.help_modal().is_none());
     press(&mut app, KeyCode::Enter);
     let before = app.queue_modal().unwrap().name_input.buffer.clone();
@@ -122,7 +123,7 @@ fn existing_modals_block_help_and_text_editing_keeps_question_mark() {
         format!("{before}?")
     );
     assert!(app.help_modal().is_none());
-    app.cancel_queue_modal();
+    app.modal = None;
 
     app.modal = Some(crate::modal::Modal::ClipboardImport(ClipboardImportModal {
         tab: ModalTab::Urls,
@@ -132,32 +133,31 @@ fn existing_modals_block_help_and_text_editing_keeps_question_mark() {
         finetune_editor: crate::modal::widgets::FineTuneEditor::new(Default::default()),
     }));
     press(&mut app, KeyCode::Char('?'));
-    app.open_help_modal();
+    let _ = update(&mut app, Msg::Action(Action::OpenHelp));
     assert!(app.help_modal().is_none());
-    app.cancel_modal();
+    app.modal = None;
 
     app.modal = Some(crate::modal::Modal::DownloadEdit(DownloadEditModal {
         download_id: 1,
         finetune_editor: crate::modal::widgets::FineTuneEditor::new(Default::default()),
         queue_picker: crate::modal::widgets::QueuePicker { cursor: 0 },
         focusing_queue: false,
-        original_queue_id: 1,
         error: None,
     }));
     press(&mut app, KeyCode::Char('?'));
-    app.open_help_modal();
+    let _ = update(&mut app, Msg::Action(Action::OpenHelp));
     assert!(app.help_modal().is_none());
-    app.cancel_download_modal();
+    app.modal = None;
 
-    app.open_confirmation(ConfirmationModal::new(
+    app.modal = Some(Modal::Confirmation(ConfirmationModal::new(
         "Confirm",
         "Message",
         "Yes",
         "No",
         PendingConfirmationAction::DeleteDownloadFiles { download_id: 1 },
-    ));
+    )));
     press(&mut app, KeyCode::Char('?'));
-    app.open_help_modal();
+    let _ = update(&mut app, Msg::Action(Action::OpenHelp));
     assert!(app.help_modal().is_none());
     assert!(app.confirmation_modal().is_some());
 }
@@ -165,7 +165,7 @@ fn existing_modals_block_help_and_text_editing_keeps_question_mark() {
 #[test]
 fn queue_editor_can_save_from_download_items_tab() {
     let mut app = test_app();
-    app.open_create_queue_modal();
+    let _ = update(&mut app, Msg::Action(Action::OpenCreateQueue));
     let modal = app.queue_modal_mut().unwrap();
     modal.mode = QueueModalMode::Edit { queue_id: 1 };
     modal.tab = QueueModalTab::DownloadItems;
@@ -181,7 +181,7 @@ fn one_time_schedule_uses_adjustable_date_and_time_fields() {
     use chrono::Duration as ChronoDuration;
 
     let mut app = test_app();
-    app.open_create_queue_modal();
+    let _ = update(&mut app, Msg::Action(Action::OpenCreateQueue));
     let modal = app.queue_modal_mut().unwrap();
     modal.tab = QueueModalTab::Scheduler;
     modal.recurrence_kind = RecurrenceKind::Once;
@@ -209,7 +209,7 @@ fn one_time_schedule_uses_adjustable_date_and_time_fields() {
 #[test]
 fn help_search_accepts_shortcut_characters_and_clears_or_keeps_filter() {
     let mut app = test_app();
-    app.open_help_modal();
+    let _ = update(&mut app, Msg::Action(Action::OpenHelp));
     app.help_modal_mut().unwrap().set_dimensions(100, 10);
     press(&mut app, KeyCode::End);
     press(&mut app, KeyCode::Char('/'));
@@ -235,7 +235,7 @@ fn help_search_accepts_shortcut_characters_and_clears_or_keeps_filter() {
     press(&mut app, KeyCode::Char('x'));
     press(&mut app, KeyCode::Enter);
     press(&mut app, KeyCode::Esc);
-    app.open_help_modal();
+    let _ = update(&mut app, Msg::Action(Action::OpenHelp));
     let modal = app.help_modal().unwrap();
     assert!(modal.query.is_empty());
     assert_eq!(modal.scroll, 0);
@@ -245,7 +245,7 @@ fn help_search_accepts_shortcut_characters_and_clears_or_keeps_filter() {
 #[test]
 fn help_navigation_uses_viewport_and_ctrl_c_still_quits() {
     let mut app = test_app();
-    app.open_help_modal();
+    let _ = update(&mut app, Msg::Action(Action::OpenHelp));
     app.help_modal_mut().unwrap().set_dimensions(50, 10);
     for (code, expected) in [
         (KeyCode::PageDown, 10),
@@ -286,7 +286,10 @@ fn remove_completed_key_is_scoped_to_queue_pane() {
         Some(Action::RemoveCompleted)
     ));
     assert!(!matches!(
-        keymap::lookup(Focus::Queues, KeyEvent::new(KeyCode::Char('X'), KeyModifiers::NONE)),
+        keymap::lookup(
+            Focus::Queues,
+            KeyEvent::new(KeyCode::Char('X'), KeyModifiers::NONE)
+        ),
         Some(Action::RemoveCompleted)
     ));
 }
@@ -331,7 +334,10 @@ fn queue_delete_key_is_lowercase_and_scoped_to_queues() {
         Some(Action::DeleteQueue)
     ));
     assert!(!matches!(
-        keymap::lookup(Focus::Queues, KeyEvent::new(KeyCode::Char('D'), KeyModifiers::NONE)),
+        keymap::lookup(
+            Focus::Queues,
+            KeyEvent::new(KeyCode::Char('D'), KeyModifiers::NONE)
+        ),
         Some(Action::DeleteQueue)
     ));
 }
@@ -343,13 +349,13 @@ fn confirmation_modal_consumes_cancel_before_global_quit() {
         crate::icons::IconSet::new(crate::icons::GlyphMode::Unicode),
         false,
     );
-    app.open_confirmation(ConfirmationModal::new(
+    app.modal = Some(Modal::Confirmation(ConfirmationModal::new(
         "Confirm",
         "Message",
         "Yes",
         "No",
         PendingConfirmationAction::DeleteDownloadFiles { download_id: 1 },
-    ));
+    )));
 
     if let Some(msg) = route_key(
         &mut app,

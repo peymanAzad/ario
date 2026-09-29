@@ -37,7 +37,7 @@ pub struct Queue {
     pub status: QueueStatus,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct CreateQueueRequest {
     pub name: String,
     pub position: i32,
@@ -51,7 +51,7 @@ pub struct CreateQueueRequest {
     pub run_missed_on_startup: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct UpdateQueueRequest {
     pub name: String,
     pub position: i32,

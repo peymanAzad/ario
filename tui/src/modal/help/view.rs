@@ -180,14 +180,20 @@ pub fn draw_help_modal(f: &mut Frame, modal: &mut HelpModal, theme: &Theme, body
 mod tests {
     use super::*;
     use crate::{
-        app::{App, Focus},
+        app::{App, Focus, update::update},
         icons::{GlyphMode, IconSet},
+        modal::{HelpModal, Modal},
+        msg::{Action, Msg},
         theme::Theme,
     };
     use ratatui::{Terminal, backend::TestBackend};
 
     fn app() -> App {
-        App::new(Theme::default_dark(), IconSet::new(GlyphMode::Unicode), false)
+        App::new(
+            Theme::default_dark(),
+            IconSet::new(GlyphMode::Unicode),
+            false,
+        )
     }
 
     fn render(app: &mut App, width: u16, height: u16) -> String {
@@ -208,7 +214,7 @@ mod tests {
     #[test]
     fn help_renders_sections_dividers_and_filtered_descriptions() {
         let mut app = app();
-        app.open_help_modal();
+        app.modal = Some(Modal::Help(HelpModal::default()));
         let output = render(&mut app, 100, 30);
         assert!(output.contains("Keybindings"));
         assert!(output.contains("Main Navigation"));
@@ -233,7 +239,7 @@ mod tests {
     #[test]
     fn resizing_and_filtering_clamp_to_the_rendered_line_count() {
         let mut app = app();
-        app.open_help_modal();
+        app.modal = Some(Modal::Help(HelpModal::default()));
         render(&mut app, 40, 12);
         app.help_modal_mut().unwrap().scroll_down(usize::MAX);
         let narrow_end = app.help_modal().unwrap().scroll;
@@ -256,11 +262,11 @@ mod tests {
                 let output = render(&mut app, width, 24);
                 assert!(output.lines().last().unwrap().starts_with("?:Help"));
             }
-            app.open_create_queue_modal();
+            let _ = update(&mut app, Msg::Action(Action::OpenCreateQueue));
             let output = render(&mut app, 40, 12);
             assert!(output.lines().last().unwrap().starts_with("s:Save"));
-            app.cancel_queue_modal();
-            app.open_help_modal();
+            app.modal = None;
+            app.modal = Some(Modal::Help(HelpModal::default()));
             for (width, height) in [(7, 4), (30, 12), (80, 24), (120, 40)] {
                 let output = render(&mut app, width, height);
                 let footer = output.lines().last().unwrap();
