@@ -1,5 +1,6 @@
 use super::{App, PendingConfirmationAction};
 use crate::effects::Effect;
+use crate::modal::Modal;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfirmationModal {
@@ -31,28 +32,40 @@ impl App {
         modal: ConfirmationModal,
         action: PendingConfirmationAction,
     ) {
-        self.confirmation_modal = Some(modal);
-        self.pending_confirmation_action = Some(action);
+        self.modal = Some(Modal::Confirmation { modal, action });
     }
 
     pub fn cancel_confirmation(&mut self) {
-        self.confirmation_modal = None;
-        self.pending_confirmation_action = None;
+        if matches!(self.modal, Some(Modal::Confirmation { .. })) {
+            self.modal = None;
+        }
     }
 
     pub fn take_confirm_action(&mut self) -> Option<PendingConfirmationAction> {
-        self.confirmation_modal = None;
-        self.pending_confirmation_action.take()
+        match self.modal.take() {
+            Some(Modal::Confirmation { action, .. }) => Some(action),
+            other => {
+                self.modal = other;
+                None
+            }
+        }
     }
 
-    pub fn confirm_confirmation(&mut self) -> Vec<Effect> {
-        match self.take_confirm_action() {
-            Some(PendingConfirmationAction::DeleteDownloadFiles { download_id }) => {
+    pub fn execute_confirmation(&mut self, action: PendingConfirmationAction) -> Vec<Effect> {
+        match action {
+            PendingConfirmationAction::DeleteDownloadFiles { download_id } => {
                 self.delete_download_files(download_id)
             }
-            Some(PendingConfirmationAction::DeleteQueue { queue_id }) => {
+            PendingConfirmationAction::DeleteQueue { queue_id } => {
                 self.confirm_delete_queue(queue_id)
             }
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn confirm_confirmation(&mut self) -> Vec<Effect> {
+        match self.take_confirm_action() {
+            Some(action) => self.execute_confirmation(action),
             None => vec![],
         }
     }

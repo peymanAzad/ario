@@ -1,4 +1,5 @@
 use super::App;
+use crate::modal::Modal;
 
 pub struct KeybindingSection {
     pub title: &'static str,
@@ -170,7 +171,7 @@ pub fn filtered_sections(query: &str) -> Vec<(&'static str, Vec<(&'static str, &
         .collect()
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct HelpModal {
     pub query: String,
     pub editing_search: bool,
@@ -202,7 +203,7 @@ impl HelpModal {
 impl App {
     pub fn open_help_modal(&mut self) {
         if !self.has_open_modal() {
-            self.help_modal = Some(HelpModal::default());
+            self.modal = Some(Modal::Help(HelpModal::default()));
         }
     }
 }

@@ -186,12 +186,12 @@ fn resume_does_not_issue_a_request_for_active_downloads() {
 fn destructive_delete_requires_confirmation() {
     let mut app = app_with_status(DownloadStatus::Completed);
     app.request_delete_selected_files();
-    let modal = app.confirmation_modal.as_ref().unwrap();
+    let modal = app.confirmation_modal().unwrap();
     assert!(modal.title.contains("Remove"));
     assert!(modal.message.contains("cannot be undone"));
 
     app.cancel_confirmation();
-    assert!(app.confirmation_modal.is_none());
+    assert!(app.confirmation_modal().is_none());
 }
 
 #[test]
@@ -202,5 +202,5 @@ fn destructive_delete_without_a_selection_is_a_no_op() {
         false,
     );
     app.request_delete_selected_files();
-    assert!(app.confirmation_modal.is_none());
+    assert!(app.confirmation_modal().is_none());
 }

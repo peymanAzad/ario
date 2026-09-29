@@ -216,17 +216,17 @@ mod tests {
         assert!(output.contains("/: search keybindings"));
         assert!(output.lines().last().unwrap().starts_with("?:Help"));
 
-        app.help_modal.as_mut().unwrap().query = "keeping downloaded files".into();
+        app.help_modal_mut().unwrap().query = "keeping downloaded files".into();
         let output = render(&mut app, 60, 24);
         assert!(output.contains("Delete download, keeping"));
         assert!(output.contains("downloaded files"));
         assert!(!output.contains("Main Navigation"));
         assert!(!output.contains("Queue Editor"));
 
-        app.help_modal.as_mut().unwrap().query = "nonexistent shortcut".into();
+        app.help_modal_mut().unwrap().query = "nonexistent shortcut".into();
         let output = render(&mut app, 60, 24);
         assert!(output.contains("No matching keybindings"));
-        assert_eq!(app.help_modal.as_ref().unwrap().scroll, 0);
+        assert_eq!(app.help_modal().unwrap().scroll, 0);
     }
 
     #[test]
@@ -234,16 +234,16 @@ mod tests {
         let mut app = app();
         app.open_help_modal();
         render(&mut app, 40, 12);
-        app.help_modal.as_mut().unwrap().scroll_down(usize::MAX);
-        let narrow_end = app.help_modal.as_ref().unwrap().scroll;
+        app.help_modal_mut().unwrap().scroll_down(usize::MAX);
+        let narrow_end = app.help_modal().unwrap().scroll;
         let output = render(&mut app, 120, 50);
-        let modal = app.help_modal.as_ref().unwrap();
+        let modal = app.help_modal().unwrap();
         assert!(modal.scroll < narrow_end);
         assert_eq!(modal.scroll, modal.max_scroll());
         assert!(output.contains("Close help"));
-        app.help_modal.as_mut().unwrap().query = "keeping downloaded files".into();
+        app.help_modal_mut().unwrap().query = "keeping downloaded files".into();
         render(&mut app, 120, 50);
-        assert_eq!(app.help_modal.as_ref().unwrap().scroll, 0);
+        assert_eq!(app.help_modal().unwrap().scroll, 0);
     }
 
     #[test]

@@ -69,20 +69,21 @@ pub fn render(app: &mut App, f: &mut Frame) {
     draw_categories_list(f, app, left_layout[1]);
     draw_downloads_table(f, app, body_layout[1]);
 
-    if let Some(modal) = &app.confirmation_modal {
-        draw_confirmation_modal(f, app, modal);
-    } else if let Some(modal) = &app.queue_modal {
-        draw_queue_modal(f, app, modal);
-    } else if let Some(modal) = &app.download_modal {
-        draw_download_modal(f, app, modal);
-    } else if let Some(modal) = &app.torrent_modal {
-        draw_torrent_file_modal(f, app, modal);
-    } else if let Some(modal) = &app.modal {
-        draw_clipboard_import_modal(f, app, modal);
+    match &app.modal {
+        Some(crate::modal::Modal::Confirmation { modal, .. }) => {
+            draw_confirmation_modal(f, app, modal);
+        }
+        Some(crate::modal::Modal::Queue(modal)) => draw_queue_modal(f, app, modal),
+        Some(crate::modal::Modal::TorrentFile(modal)) => draw_torrent_file_modal(f, app, modal),
+        Some(crate::modal::Modal::ClipboardImport(modal)) => {
+            draw_clipboard_import_modal(f, app, modal)
+        }
+        Some(crate::modal::Modal::DownloadEdit(modal)) => draw_download_modal(f, app, modal),
+        Some(crate::modal::Modal::Help(_)) | None => {}
     }
 
     draw_toasts(f, app);
-    if let Some(modal) = &mut app.help_modal {
+    if let Some(crate::modal::Modal::Help(modal)) = &mut app.modal {
         help_modal::draw_help_modal(f, modal, &app.theme, main_layout[1]);
     }
     draw_footer(f, app, main_layout[2]);

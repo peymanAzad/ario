@@ -2,11 +2,13 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::{
     app::{App, Focus, ModalTab, queue_modal::QueueModalTab},
+    modal::Modal,
     msg::{Action, Msg},
 };
 
 pub fn route_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
-    if app.confirmation_modal.is_some() {
+    // Confirmation cancels before global Ctrl+C quit; other modals still quit on Ctrl+C.
+    if matches!(app.modal, Some(Modal::Confirmation { .. })) {
         return handle_confirmation_key(app, key_event);
     }
 
@@ -16,24 +18,20 @@ pub fn route_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
         return Some(Msg::Action(Action::Quit));
     }
 
-    if app.help_modal.is_some() {
+    if matches!(app.modal, Some(Modal::Help(_))) {
         handle_help_modal_key(app, key_event);
         return None;
     }
-
-    if app.queue_modal.is_some() {
+    if matches!(app.modal, Some(Modal::Queue(_))) {
         return handle_queue_modal_key(app, key_event);
     }
-
-    if app.torrent_modal.is_some() {
+    if matches!(app.modal, Some(Modal::TorrentFile(_))) {
         return handle_torrent_modal_key(app, key_event);
     }
-
-    if app.modal.is_some() {
+    if matches!(app.modal, Some(Modal::ClipboardImport(_))) {
         return handle_clipboard_modal_key(app, key_event);
     }
-
-    if app.download_modal.is_some() {
+    if matches!(app.modal, Some(Modal::DownloadEdit(_))) {
         return handle_download_modal_key(app, key_event);
     }
 
@@ -89,17 +87,13 @@ pub fn route_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
 }
 
 pub fn paste(app: &mut App, text: &str) {
-    if app.torrent_modal.is_some() {
+    if matches!(app.modal, Some(Modal::TorrentFile(_))) {
         app.paste_torrent_path(text);
-    } else if app
-        .queue_modal
-        .as_ref()
-        .is_some_and(|modal| modal.editing_text)
-    {
+    } else if app.queue_modal().is_some_and(|modal| modal.editing_text) {
         for character in text.chars().filter(|character| !character.is_control()) {
             app.queue_modal_text_input(character);
         }
-    } else if let Some(modal) = &mut app.help_modal
+    } else if let Some(modal) = app.help_modal_mut()
         && modal.editing_search
     {
         modal
@@ -111,8 +105,7 @@ pub fn paste(app: &mut App, text: &str) {
 
 fn handle_torrent_modal_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
     let editing = app
-        .torrent_modal
-        .as_ref()
+        .torrent_modal()
         .is_some_and(|modal| modal.editing_path);
     if editing {
         match key_event.code {
@@ -139,7 +132,7 @@ fn handle_torrent_modal_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
             None
         }
         KeyCode::Enter
-            if app.torrent_modal.as_ref().is_some_and(|modal| {
+            if app.torrent_modal().is_some_and(|modal| {
                 modal.tab == crate::app::torrent_file_modal::TorrentFileModalTab::Torrent
             }) =>
         {
@@ -173,7 +166,7 @@ fn handle_torrent_modal_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
 }
 
 fn handle_help_modal_key(app: &mut App, key_event: KeyEvent) {
-    let modal = app.help_modal.as_mut().expect("help is open");
+    let modal = app.help_modal_mut().expect("help is open");
     if modal.editing_search {
         match key_event.code {
             KeyCode::Esc => {
@@ -216,7 +209,7 @@ fn handle_help_modal_key(app: &mut App, key_event: KeyEvent) {
         KeyCode::PageUp => modal.scroll_up(modal.viewport_height),
         KeyCode::Home => modal.scroll = 0,
         KeyCode::End => modal.scroll = modal.max_scroll(),
-        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => app.help_modal = None,
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => app.modal = None,
         _ => {}
     }
 }
@@ -279,15 +272,15 @@ fn handle_clipboard_modal_key(app: &mut App, key_event: KeyEvent) -> Option<Msg>
             app.modal_adjust_right();
             None
         }
-        KeyCode::Char(' ') if app.modal.as_ref().map(|m| m.tab) == Some(ModalTab::Urls) => {
+        KeyCode::Char(' ') if app.clipboard_modal().map(|m| m.tab) == Some(ModalTab::Urls) => {
             app.modal_toggle_selected_url();
             None
         }
-        KeyCode::Char('a') if app.modal.as_ref().map(|m| m.tab) == Some(ModalTab::Urls) => {
+        KeyCode::Char('a') if app.clipboard_modal().map(|m| m.tab) == Some(ModalTab::Urls) => {
             app.modal_select_all();
             None
         }
-        KeyCode::Char('n') if app.modal.as_ref().map(|m| m.tab) == Some(ModalTab::Urls) => {
+        KeyCode::Char('n') if app.clipboard_modal().map(|m| m.tab) == Some(ModalTab::Urls) => {
             app.modal_select_none();
             None
         }
@@ -297,8 +290,7 @@ fn handle_clipboard_modal_key(app: &mut App, key_event: KeyEvent) -> Option<Msg>
 
 fn handle_queue_modal_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
     let editing = app
-        .queue_modal
-        .as_ref()
+        .queue_modal()
         .map(|m| m.editing_text)
         .unwrap_or(false);
 
@@ -314,8 +306,7 @@ fn handle_queue_modal_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
     }
 
     let on_items_tab = app
-        .queue_modal
-        .as_ref()
+        .queue_modal()
         .map(|m| m.tab == QueueModalTab::DownloadItems)
         .unwrap_or(false);
 
