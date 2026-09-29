@@ -1,5 +1,5 @@
 use crate::{
-    app::help_modal::{HelpModal, filtered_sections},
+    modal::help::{HelpModal, filtered_sections},
     theme::Theme,
 };
 use ratatui::{
@@ -14,7 +14,7 @@ use unicode_width::UnicodeWidthStr;
 
 /// Pre-wrap into physical lines so navigation and resize clamping use exactly
 /// the same line count as rendering, including narrow terminal layouts.
-pub(super) fn wrap_text(text: &str, width: usize) -> Vec<String> {
+pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return Vec::new();
     }
@@ -182,6 +182,7 @@ mod tests {
     use crate::{
         app::{App, Focus},
         icons::{GlyphMode, IconSet},
+        theme::Theme,
     };
     use ratatui::{Terminal, backend::TestBackend};
 

@@ -1,9 +1,7 @@
 pub mod categories;
 pub mod clipboard_import_modal;
-pub mod confirmation_modal;
 pub mod download_edit_modal;
 pub mod downloads;
-pub mod help_modal;
 pub mod keys;
 pub mod lifecycle;
 pub mod queue_modal;
@@ -22,14 +20,12 @@ use crate::app::lifecycle::{
 };
 
 use crate::app::clipboard_import_modal::ClipboardImportModal;
-use crate::app::confirmation_modal::ConfirmationModal;
 use crate::app::download_edit_modal::DownloadEditModal;
-use crate::app::help_modal::HelpModal;
 use crate::app::queue_modal::QueueModal;
 use crate::app::torrent_file_modal::TorrentFileModal;
 use crate::effects::{ApiRequest, Effect};
 use crate::icons::IconSet;
-use crate::modal::Modal;
+use crate::modal::{ConfirmationModal, Ctx, HelpModal, Modal};
 use crate::theme::Theme;
 pub use crate::toast::ToastLevel;
 use crate::toast::ToastStack;
@@ -209,6 +205,7 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
     pub fn help_modal(&self) -> Option<&HelpModal> {
         match &self.modal {
             Some(Modal::Help(m)) => Some(m),
@@ -216,6 +213,7 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
     pub fn help_modal_mut(&mut self) -> Option<&mut HelpModal> {
         match &mut self.modal {
             Some(Modal::Help(m)) => Some(m),
@@ -223,17 +221,27 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
     pub fn confirmation_modal(&self) -> Option<&ConfirmationModal> {
         match &self.modal {
-            Some(Modal::Confirmation { modal, .. }) => Some(modal),
+            Some(Modal::Confirmation(m)) => Some(m),
             _ => None,
         }
     }
 
+    #[allow(dead_code)]
     pub fn pending_confirmation_action(&self) -> Option<&PendingConfirmationAction> {
-        match &self.modal {
-            Some(Modal::Confirmation { action, .. }) => Some(action),
-            _ => None,
+        self.confirmation_modal().map(|m| &m.action)
+    }
+
+    #[allow(dead_code)]
+    pub fn modal_ctx(&self) -> Ctx<'_> {
+        Ctx {
+            queues: &self.queues,
+            selected_queue: self.selected_queue,
+            aria2_global_options: self.aria2_global_options.as_ref(),
+            theme: &self.theme,
+            icons: &self.icons,
         }
     }
 

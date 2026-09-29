@@ -1,5 +1,13 @@
-use super::App;
-use crate::modal::Modal;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::{Frame, layout::Rect};
+use unicode_segmentation::UnicodeSegmentation;
+
+use crate::app::App;
+use crate::modal::{Component, Ctx, Modal, ModalOutcome};
+
+mod view;
+
+pub use view::wrap_text;
 
 pub struct KeybindingSection {
     pub title: &'static str,
@@ -197,6 +205,104 @@ impl HelpModal {
 
     pub fn scroll_up(&mut self, lines: usize) {
         self.scroll = self.scroll.saturating_sub(lines);
+    }
+}
+
+impl Component for HelpModal {
+    fn handle_key(&mut self, key: KeyEvent, _ctx: &Ctx<'_>) -> ModalOutcome {
+        if self.editing_search {
+            match key.code {
+                KeyCode::Esc => {
+                    self.query.clear();
+                    self.scroll = 0;
+                    self.editing_search = false;
+                    return ModalOutcome::Continue;
+                }
+                KeyCode::Enter => {
+                    self.editing_search = false;
+                    return ModalOutcome::Continue;
+                }
+                KeyCode::Backspace => {
+                    if let Some((index, _)) = self.query.grapheme_indices(true).next_back() {
+                        self.query.truncate(index);
+                    }
+                    self.scroll = 0;
+                    return ModalOutcome::Continue;
+                }
+                KeyCode::Char(c) => {
+                    if !c.is_control()
+                        && !key
+                            .modifiers
+                            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                    {
+                        self.query.push(c);
+                        self.scroll = 0;
+                    }
+                    return ModalOutcome::Continue;
+                }
+                _ => {}
+            }
+        }
+        match key.code {
+            KeyCode::Char('/') => {
+                self.editing_search = true;
+                ModalOutcome::Continue
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.scroll_down(1);
+                ModalOutcome::Continue
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.scroll_up(1);
+                ModalOutcome::Continue
+            }
+            KeyCode::PageDown => {
+                self.scroll_down(self.viewport_height);
+                ModalOutcome::Continue
+            }
+            KeyCode::PageUp => {
+                self.scroll_up(self.viewport_height);
+                ModalOutcome::Continue
+            }
+            KeyCode::Home => {
+                self.scroll = 0;
+                ModalOutcome::Continue
+            }
+            KeyCode::End => {
+                self.scroll = self.max_scroll();
+                ModalOutcome::Continue
+            }
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => ModalOutcome::Close,
+            _ => ModalOutcome::Continue,
+        }
+    }
+
+    fn handle_paste(&mut self, text: &str) {
+        if self.editing_search {
+            self.query
+                .extend(text.chars().filter(|character| !character.is_control()));
+            self.scroll = 0;
+        }
+    }
+
+    fn render(&mut self, f: &mut Frame, area: Rect, ctx: &Ctx<'_>) {
+        view::draw_help_modal(f, self, ctx.theme, area);
+    }
+
+    fn hints(&self) -> Vec<(&'static str, &'static str)> {
+        if self.editing_search {
+            vec![
+                ("Enter", "Keep"),
+                ("Esc", "Clear"),
+                ("Backspace", "Erase"),
+            ]
+        } else {
+            vec![
+                ("Esc/q/?", "Close"),
+                ("/", "Search"),
+                ("j/k", "Scroll"),
+            ]
+        }
     }
 }
 

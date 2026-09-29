@@ -2,14 +2,14 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::{
     app::{App, Focus, ModalTab, queue_modal::QueueModalTab},
-    modal::Modal,
+    modal::{Modal, ModalOutcome},
     msg::{Action, Msg},
 };
 
 pub fn route_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
     // Confirmation cancels before global Ctrl+C quit; other modals still quit on Ctrl+C.
-    if matches!(app.modal, Some(Modal::Confirmation { .. })) {
-        return handle_confirmation_key(app, key_event);
+    if matches!(app.modal, Some(Modal::Confirmation(_))) {
+        return dispatch_component_modal_key(app, key_event);
     }
 
     if key_event.modifiers == KeyModifiers::CONTROL
@@ -19,7 +19,7 @@ pub fn route_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
     }
 
     if matches!(app.modal, Some(Modal::Help(_))) {
-        handle_help_modal_key(app, key_event);
+        let _ = dispatch_component_modal_key(app, key_event);
         return None;
     }
     if matches!(app.modal, Some(Modal::Queue(_))) {
@@ -93,13 +93,44 @@ pub fn paste(app: &mut App, text: &str) {
         for character in text.chars().filter(|character| !character.is_control()) {
             app.queue_modal_text_input(character);
         }
-    } else if let Some(modal) = app.help_modal_mut()
-        && modal.editing_search
-    {
-        modal
-            .query
-            .extend(text.chars().filter(|character| !character.is_control()));
-        modal.scroll = 0;
+    } else if let Some(modal) = &mut app.modal {
+        modal.handle_paste(text);
+    }
+}
+
+fn dispatch_component_modal_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
+    let App {
+        modal,
+        queues,
+        selected_queue,
+        aria2_global_options,
+        theme,
+        icons,
+        ..
+    } = app;
+    let outcome = {
+        let Some(active) = modal.as_mut() else {
+            return None;
+        };
+        let ctx = crate::modal::Ctx {
+            queues,
+            selected_queue: *selected_queue,
+            aria2_global_options: aria2_global_options.as_ref(),
+            theme,
+            icons,
+        };
+        active.handle_key(key_event, &ctx)
+    };
+    match outcome {
+        ModalOutcome::Continue => None,
+        ModalOutcome::Close => {
+            *modal = None;
+            None
+        }
+        ModalOutcome::Emit(action) => {
+            *modal = None;
+            Some(Msg::Action(action))
+        }
     }
 }
 
@@ -159,72 +190,6 @@ fn handle_torrent_modal_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
         }
         KeyCode::Right | KeyCode::Char('l') => {
             app.torrent_modal_adjust_right();
-            None
-        }
-        _ => None,
-    }
-}
-
-fn handle_help_modal_key(app: &mut App, key_event: KeyEvent) {
-    let modal = app.help_modal_mut().expect("help is open");
-    if modal.editing_search {
-        match key_event.code {
-            KeyCode::Esc => {
-                modal.query.clear();
-                modal.scroll = 0;
-                modal.editing_search = false;
-                return;
-            }
-            KeyCode::Enter => {
-                modal.editing_search = false;
-                return;
-            }
-            KeyCode::Backspace => {
-                use unicode_segmentation::UnicodeSegmentation;
-                if let Some((index, _)) = modal.query.grapheme_indices(true).next_back() {
-                    modal.query.truncate(index);
-                }
-                modal.scroll = 0;
-                return;
-            }
-            KeyCode::Char(c) => {
-                if !c.is_control()
-                    && !key_event
-                        .modifiers
-                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-                {
-                    modal.query.push(c);
-                    modal.scroll = 0;
-                }
-                return;
-            }
-            _ => {}
-        }
-    }
-    match key_event.code {
-        KeyCode::Char('/') => modal.editing_search = true,
-        KeyCode::Down | KeyCode::Char('j') => modal.scroll_down(1),
-        KeyCode::Up | KeyCode::Char('k') => modal.scroll_up(1),
-        KeyCode::PageDown => modal.scroll_down(modal.viewport_height),
-        KeyCode::PageUp => modal.scroll_up(modal.viewport_height),
-        KeyCode::Home => modal.scroll = 0,
-        KeyCode::End => modal.scroll = modal.max_scroll(),
-        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => app.modal = None,
-        _ => {}
-    }
-}
-
-fn handle_confirmation_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
-    match key_event.code {
-        KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
-            app.take_confirm_action().map(|action| Msg::Action(Action::Confirm(action)))
-        }
-        KeyCode::Esc
-        | KeyCode::Char('n')
-        | KeyCode::Char('N')
-        | KeyCode::Char('c')
-        | KeyCode::Char('C') => {
-            app.cancel_confirmation();
             None
         }
         _ => None,
