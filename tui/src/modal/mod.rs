@@ -103,4 +103,15 @@ impl Modal {
             _ => None,
         }
     }
+
+    pub fn hints(&self) -> Vec<(&'static str, &'static str)> {
+        match self {
+            Modal::Confirmation(m) => m.hints(),
+            Modal::Help(m) => m.hints(),
+            Modal::Queue(m) => m.hints(),
+            Modal::TorrentFile(m) => m.hints(),
+            Modal::ClipboardImport(m) => m.hints(),
+            Modal::DownloadEdit(m) => m.hints(),
+        }
+    }
 }

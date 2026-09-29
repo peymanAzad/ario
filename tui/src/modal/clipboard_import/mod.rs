@@ -11,6 +11,23 @@ use crate::toast::ToastLevel;
 
 pub(crate) mod view;
 
+/// Help section for the clipboard import modal.
+pub const HELP: &[(&str, &str)] = &[
+    (
+        "Tab / Shift+Tab",
+        "Switch between URLs and Fine Tuning tabs",
+    ),
+    ("j / Down", "Select next URL or field"),
+    ("k / Up", "Select previous URL or field"),
+    ("h / Left", "Choose previous queue or decrease field value"),
+    ("l / Right", "Choose next queue or increase field value"),
+    ("Space", "Toggle selected URL (URLs tab)"),
+    ("a / n", "Select all / none (URLs tab)"),
+    ("s", "Start selected downloads now"),
+    ("w", "Save selected downloads for later"),
+    ("c / Esc", "Cancel import"),
+];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModalTab {
     Urls,
@@ -160,6 +177,16 @@ impl Component for ClipboardImportModal {
 
     fn render(&mut self, f: &mut Frame, _area: Rect, ctx: &Ctx<'_>) {
         view::draw_clipboard_import_modal(f, self, ctx);
+    }
+
+    fn hints(&self) -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("s", "Start"),
+            ("w", "Save"),
+            ("c/Esc", "Cancel"),
+            ("Tab", "Tab"),
+            ("j/k", "Navigate"),
+        ]
     }
 }
 

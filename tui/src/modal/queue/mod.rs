@@ -21,6 +21,34 @@ mod view;
 
 const TIME_STEP_MIN: i64 = 5;
 
+/// Help section for the queue editor modal.
+pub const HELP: &[(&str, &str)] = &[
+    ("Tab / Shift+Tab", "Switch to next / previous tab"),
+    ("j / Down", "Select next field or download item"),
+    ("k / Up", "Select previous field or download item"),
+    ("h / Left", "Decrease value or select previous weekday"),
+    ("l / Right", "Increase value or select next weekday"),
+    ("Enter", "Edit queue name"),
+    (
+        "Space",
+        "Toggle highlighted weekday (Scheduler weekly days row)",
+    ),
+    (
+        "J / K",
+        "Move selected download item down / up (Download Items tab)",
+    ),
+    ("s", "Save queue"),
+    ("c / Esc", "Cancel queue editing"),
+];
+
+/// Help section for queue-name text editing (nested in the queue editor).
+pub const HELP_TEXT_EDITING: &[(&str, &str)] = &[
+    ("Characters", "Type queue name"),
+    ("Backspace", "Delete last character"),
+    ("Enter", "Accept text edit"),
+    ("Esc", "Discard text edit and return to queue editor"),
+];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueueModalTab {
     Common,
@@ -450,6 +478,23 @@ impl Component for QueueModal {
 
     fn render(&mut self, f: &mut Frame, _area: Rect, ctx: &Ctx<'_>) {
         view::draw_queue_modal(f, self, ctx);
+    }
+
+    fn hints(&self) -> Vec<(&'static str, &'static str)> {
+        if self.name_input.editing {
+            vec![
+                ("Enter", "Accept"),
+                ("Esc", "Discard"),
+                ("Backspace", "Erase"),
+            ]
+        } else {
+            vec![
+                ("s", "Save"),
+                ("c/Esc", "Cancel"),
+                ("Tab", "Tab"),
+                ("j/k", "Navigate"),
+            ]
+        }
     }
 }
 

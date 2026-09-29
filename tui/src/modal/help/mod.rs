@@ -3,6 +3,11 @@ use ratatui::{Frame, layout::Rect};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::app::App;
+use crate::keymap;
+use crate::modal::clipboard_import::HELP as CLIPBOARD_HELP;
+use crate::modal::confirmation::HELP as CONFIRMATION_HELP;
+use crate::modal::download_edit::HELP as DOWNLOAD_EDIT_HELP;
+use crate::modal::queue::{HELP as QUEUE_HELP, HELP_TEXT_EDITING};
 use crate::modal::{Component, Ctx, Modal, ModalOutcome};
 
 mod view;
@@ -14,153 +19,82 @@ pub struct KeybindingSection {
     pub bindings: &'static [(&'static str, &'static str)],
 }
 
-/// Reference for the context-sensitive handlers in update.rs. Aliases share a row.
-pub const KEYBINDINGS: &[KeybindingSection] = &[
-    KeybindingSection {
-        title: "Main Navigation",
-        bindings: &[
-            ("?", "Open keybindings help (main screen only)"),
-            ("1 / 2 / 3", "Focus Queues / Categories / Downloads"),
-            ("Tab / Shift+Tab", "Focus next / previous pane"),
-            ("a", "Add a local .torrent file"),
-            ("v", "Import URLs and magnet links from clipboard"),
-            ("q / Esc", "Quit from the main screen"),
-            ("Ctrl+C", "Quit, except in confirmations where it cancels"),
-        ],
-    },
-    KeybindingSection {
-        title: "Downloads",
-        bindings: &[
-            ("j / Down", "Select next download"),
-            ("k / Up", "Select previous download"),
-            ("Enter", "Open completed file; edit other downloads"),
-            ("f", "Open folder of completed download"),
-            ("p", "Pause active download"),
-            (
-                "r",
-                "Start pending, resume paused, retry failed/removed, or restart completed download",
-            ),
-            ("d", "Delete download, keeping downloaded files"),
-            ("D", "Delete download and files after confirmation"),
-        ],
-    },
-    KeybindingSection {
-        title: "Queues",
-        bindings: &[
-            ("j / Down", "Select next queue"),
-            ("k / Up", "Select previous queue"),
-            ("n", "Create a queue"),
-            ("Enter", "Edit selected queue (except All)"),
-            ("p / r", "Pause / resume selected queue (except All)"),
-            (
-                "x",
-                "Remove completed downloads from selected queue, or all queues in All",
-            ),
-            (
-                "d",
-                "Delete selected queue (except All and Main Queue); confirm if it contains downloads",
-            ),
-        ],
-    },
-    KeybindingSection {
-        title: "Categories",
-        bindings: &[
-            ("j / Down", "Select next category"),
-            ("k / Up", "Select previous category"),
-        ],
-    },
+impl Clone for KeybindingSection {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl Copy for KeybindingSection {}
+
+/// Help section for the help modal itself.
+pub const HELP: &[(&str, &str)] = &[
+    ("j / Down", "Scroll down (outside search editing)"),
+    ("k / Up", "Scroll up (outside search editing)"),
+    ("PageDown / PageUp", "Scroll down / up one page"),
+    ("Home / End", "Jump to beginning / end"),
+    (
+        "/",
+        "Edit search; filter keys, descriptions, and section titles as you type",
+    ),
+    ("Characters", "Type search query while search editing"),
+    ("Backspace", "Delete last search character"),
+    ("Enter", "Finish search editing and keep filter"),
+    (
+        "Esc",
+        "Clear filter and exit search editing; otherwise close help",
+    ),
+    ("q / ?", "Close help (outside search editing)"),
+];
+
+/// Modal help sections composed onto the BINDINGS-derived main-screen sections.
+const MODAL_SECTIONS: &[KeybindingSection] = &[
     KeybindingSection {
         title: "Clipboard Import",
-        bindings: &[
-            (
-                "Tab / Shift+Tab",
-                "Switch between URLs and Fine Tuning tabs",
-            ),
-            ("j / Down", "Select next URL or field"),
-            ("k / Up", "Select previous URL or field"),
-            ("h / Left", "Choose previous queue or decrease field value"),
-            ("l / Right", "Choose next queue or increase field value"),
-            ("Space", "Toggle selected URL (URLs tab)"),
-            ("a / n", "Select all / none (URLs tab)"),
-            ("s", "Start selected downloads now"),
-            ("w", "Save selected downloads for later"),
-            ("c / Esc", "Cancel import"),
-        ],
+        bindings: CLIPBOARD_HELP,
     },
     KeybindingSection {
         title: "Queue Editor",
-        bindings: &[
-            ("Tab / Shift+Tab", "Switch to next / previous tab"),
-            ("j / Down", "Select next field or download item"),
-            ("k / Up", "Select previous field or download item"),
-            ("h / Left", "Decrease value or select previous weekday"),
-            ("l / Right", "Increase value or select next weekday"),
-            ("Enter", "Edit queue name"),
-            (
-                "Space",
-                "Toggle highlighted weekday (Scheduler weekly days row)",
-            ),
-            (
-                "J / K",
-                "Move selected download item down / up (Download Items tab)",
-            ),
-            ("s", "Save queue"),
-            ("c / Esc", "Cancel queue editing"),
-        ],
+        bindings: QUEUE_HELP,
     },
     KeybindingSection {
         title: "Text Editing",
-        bindings: &[
-            ("Characters", "Type queue name"),
-            ("Backspace", "Delete last character"),
-            ("Enter", "Accept text edit"),
-            ("Esc", "Discard text edit and return to queue editor"),
-        ],
+        bindings: HELP_TEXT_EDITING,
     },
     KeybindingSection {
         title: "Download Editor",
-        bindings: &[
-            ("j / Down", "Select next field"),
-            ("k / Up", "Select previous field"),
-            ("h / Left", "Decrease value or choose previous queue"),
-            ("l / Right", "Increase value or choose next queue"),
-            ("s", "Save download settings"),
-            ("c / Esc", "Cancel download editing"),
-        ],
+        bindings: DOWNLOAD_EDIT_HELP,
     },
     KeybindingSection {
         title: "Confirmations",
-        bindings: &[
-            ("Enter / y / Y", "Confirm action"),
-            ("Esc / n / N / c / C", "Cancel action (also Ctrl+C)"),
-        ],
+        bindings: CONFIRMATION_HELP,
     },
     KeybindingSection {
         title: "Help",
-        bindings: &[
-            ("j / Down", "Scroll down (outside search editing)"),
-            ("k / Up", "Scroll up (outside search editing)"),
-            ("PageDown / PageUp", "Scroll down / up one page"),
-            ("Home / End", "Jump to beginning / end"),
-            (
-                "/",
-                "Edit search; filter keys, descriptions, and section titles as you type",
-            ),
-            ("Characters", "Type search query while search editing"),
-            ("Backspace", "Delete last search character"),
-            ("Enter", "Finish search editing and keep filter"),
-            (
-                "Esc",
-                "Clear filter and exit search editing; otherwise close help",
-            ),
-            ("q / ?", "Close help (outside search editing)"),
-        ],
+        bindings: HELP,
     },
 ];
 
+/// All help sections (main-screen from keymap BINDINGS + modal HELP constants).
+fn all_sections() -> &'static [KeybindingSection] {
+    use std::sync::OnceLock;
+    static SECTIONS: OnceLock<Vec<KeybindingSection>> = OnceLock::new();
+    SECTIONS.get_or_init(|| {
+        let mut sections: Vec<KeybindingSection> = keymap::main_help_sections()
+            .into_iter()
+            .map(|(title, bindings)| KeybindingSection {
+                title,
+                bindings: Box::leak(bindings.into_boxed_slice()),
+            })
+            .collect();
+        sections.extend(MODAL_SECTIONS.iter().copied());
+        sections
+    })
+}
+
 pub fn filtered_sections(query: &str) -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
     let query = query.to_lowercase();
-    KEYBINDINGS
+    all_sections()
         .iter()
         .filter_map(|section| {
             let section_matches = section.title.to_lowercase().contains(&query);
@@ -320,21 +254,22 @@ mod tests {
 
     #[test]
     fn search_matches_keys_descriptions_and_whole_sections() {
-        assert_eq!(filtered_sections("").len(), KEYBINDINGS.len());
+        let sections = all_sections();
+        assert_eq!(filtered_sections("").len(), sections.len());
         assert_eq!(
-            KEYBINDINGS
+            sections
                 .iter()
                 .take(4)
                 .map(|section| section.title)
                 .collect::<Vec<_>>(),
             ["Main Navigation", "Downloads", "Queues", "Categories"]
         );
-        let sections = filtered_sections("cAtEgOrIeS");
-        let category = sections
+        let filtered = filtered_sections("cAtEgOrIeS");
+        let category = filtered
             .iter()
             .find(|(title, _)| *title == "Categories")
             .unwrap();
-        assert_eq!(category.1, KEYBINDINGS[3].bindings);
+        assert_eq!(category.1, sections[3].bindings);
         assert!(
             filtered_sections("backspace")
                 .iter()

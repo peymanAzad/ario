@@ -5,6 +5,7 @@ mod config;
 mod effects;
 mod event;
 mod icons;
+mod keymap;
 mod modal;
 mod msg;
 mod runtime;

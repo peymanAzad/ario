@@ -12,6 +12,16 @@ use crate::msg::Action;
 
 mod view;
 
+/// Help section for the download editor modal.
+pub const HELP: &[(&str, &str)] = &[
+    ("j / Down", "Select next field"),
+    ("k / Up", "Select previous field"),
+    ("h / Left", "Decrease value or choose previous queue"),
+    ("l / Right", "Increase value or choose next queue"),
+    ("s", "Save download settings"),
+    ("c / Esc", "Cancel download editing"),
+];
+
 #[derive(Debug)]
 pub struct DownloadEditModal {
     pub download_id: i64,
@@ -108,6 +118,15 @@ impl Component for DownloadEditModal {
 
     fn render(&mut self, f: &mut Frame, _area: Rect, ctx: &Ctx<'_>) {
         view::draw_download_modal(f, self, ctx);
+    }
+
+    fn hints(&self) -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("s", "Save"),
+            ("c/Esc", "Cancel"),
+            ("j/k", "Navigate"),
+            ("h/l", "Adjust"),
+        ]
     }
 }
 
