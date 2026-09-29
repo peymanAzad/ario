@@ -2,6 +2,7 @@ mod api;
 mod app;
 mod clipboard;
 mod config;
+mod daemon;
 mod effects;
 mod event;
 mod icons;
@@ -9,7 +10,6 @@ mod keymap;
 mod modal;
 mod msg;
 mod runtime;
-mod server_process;
 mod theme;
 mod toast;
 mod tui;
@@ -18,15 +18,14 @@ mod ui;
 use std::sync::Arc;
 
 use app::App;
+use daemon::{
+    ServerProcess, ServerProcessConfig, finish_server_process, managed_server_target,
+    resolve_binary_path,
+};
 use event::EventHandler;
 use ratatui::{Terminal, backend::CrosstermBackend};
-use server_process::{
-    ServerProcess, ServerProcessConfig, managed_server_target, resolve_binary_path,
-};
 use theme::Theme;
 use tui::Tui;
-
-use crate::config::{ManagedExitAction, StopManagedDaemon};
 
 const TICK_RATE_MS: u64 = 500;
 
@@ -111,66 +110,4 @@ fn main() -> anyhow::Result<()> {
 
     run_result?;
     exit_result
-}
-
-fn finish_server_process(
-    process: Option<&Arc<ServerProcess>>,
-    api_base: &str,
-    policy: StopManagedDaemon,
-) {
-    let Some(process) = process else { return };
-
-    // Prevent a graceful daemon exit from racing with the respawner.
-    process.stop_supervisor();
-    if policy == StopManagedDaemon::Never {
-        process.detach();
-        return;
-    }
-
-    let health = api::health(api_base).ok();
-    let tui_managed = health.as_ref().map(|h| h.tui_managed);
-    let owns_child = process.owns_process() && process.has_child();
-    match config::managed_exit_action(policy, tui_managed, owns_child) {
-        ManagedExitAction::Detach => {
-            if health.is_none() {
-                eprintln!("ario_daemon kept running: health check failed");
-            }
-            process.detach();
-        }
-        ManagedExitAction::TerminateOwned => process.terminate_owned(),
-        ManagedExitAction::ShutdownIfIdle => {
-            apply_shutdown_result(process, api::shutdown_if_idle(api_base), false)
-        }
-        ManagedExitAction::ForceShutdown => {
-            apply_shutdown_result(process, api::shutdown(api_base), true)
-        }
-    }
-}
-
-fn apply_shutdown_result(
-    process: &ServerProcess,
-    result: anyhow::Result<common::lifecycle::ShutdownIfIdleResponse>,
-    force: bool,
-) {
-    match result {
-        Ok(result) => match result.outcome {
-            common::lifecycle::ShutdownOutcome::ShuttingDown => process.wait_for_shutdown(),
-            common::lifecycle::ShutdownOutcome::KeptRunning => {
-                eprintln!(
-                    "ario_daemon kept running: {} active download(s), {} scheduled queue(s)",
-                    result.active_downloads, result.scheduled_queues
-                );
-                process.detach();
-            }
-            common::lifecycle::ShutdownOutcome::NotManaged => process.detach(),
-        },
-        Err(e) if force && process.owns_process() && process.has_child() => {
-            eprintln!("ario_daemon shutdown request failed: {e}; terminating owned process");
-            process.terminate_owned();
-        }
-        Err(e) => {
-            eprintln!("ario_daemon kept running: shutdown check failed: {e}");
-            process.detach();
-        }
-    }
 }
