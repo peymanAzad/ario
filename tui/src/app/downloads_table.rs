@@ -1,5 +1,6 @@
 use super::*;
 use crate::app::{PendingConfirmationAction, confirmation_modal::ConfirmationModal};
+use crate::effects::{ApiRequest, Effect};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DownloadAction {
@@ -54,60 +55,36 @@ impl App {
         self.pausing_downloads.contains(&download_id)
     }
 
-    pub fn pause_selected(&mut self) {
+    pub fn pause_selected(&mut self) -> Vec<Effect> {
         if self.current_download_action() != Some(DownloadAction::Pause) {
-            return;
+            return vec![];
         }
         let Some(download) = self.current_download() else {
-            return;
+            return vec![];
         };
         let id = download.download.id;
         self.pausing_downloads.insert(id);
-        let api_base = self.api_base.clone();
-        let sender = self.event_sender.clone();
-        thread::spawn(move || {
-            let result = api::pause_download(&api_base, id);
-            let _ = sender.send(Event::App(AppEvent::DownloadPaused {
-                download_id: id,
-                result,
-            }));
-        });
+        vec![Effect::Api(ApiRequest::PauseDownload(id))]
     }
 
-    pub fn resume_selected(&mut self) {
+    pub fn resume_selected(&mut self) -> Vec<Effect> {
         let Some(action) = self.current_download_action() else {
-            return;
+            return vec![];
         };
         if action.key() != 'r' {
-            return;
+            return vec![];
         }
-        if let Some(id) = self.current_download().map(|d| d.download.id) {
-            let api_base = self.api_base.clone();
-            let sender = self.event_sender.clone();
-            thread::spawn(move || {
-                if let Err(e) = api::resume_download(&api_base, id) {
-                    let _ = sender.send(Event::App(AppEvent::Toast {
-                        message: e.to_string(),
-                        level: ToastLevel::Error,
-                    }));
-                }
-            });
-        }
+        let Some(id) = self.current_download().map(|d| d.download.id) else {
+            return vec![];
+        };
+        vec![Effect::Api(ApiRequest::ResumeDownload(id))]
     }
 
-    pub fn delete_selected(&mut self) {
-        if let Some(id) = self.current_download().map(|d| d.download.id) {
-            let api_base = self.api_base.clone();
-            let sender = self.event_sender.clone();
-            thread::spawn(move || {
-                if let Err(e) = api::delete_download(&api_base, id) {
-                    let _ = sender.send(Event::App(AppEvent::Toast {
-                        message: e.to_string(),
-                        level: ToastLevel::Error,
-                    }));
-                }
-            });
-        }
+    pub fn delete_selected(&mut self) -> Vec<Effect> {
+        let Some(id) = self.current_download().map(|d| d.download.id) else {
+            return vec![];
+        };
+        vec![Effect::Api(ApiRequest::DeleteDownload(id))]
     }
 
     pub fn request_delete_selected_files(&mut self) {
@@ -136,13 +113,8 @@ impl App {
         );
     }
 
-    pub fn delete_download_files(&mut self, download_id: i64) {
-        let api_base = self.api_base.clone();
-        let sender = self.event_sender.clone();
-        thread::spawn(move || {
-            let result = api::delete_download_files(&api_base, download_id);
-            let _ = sender.send(Event::App(AppEvent::DownloadFilesDeleted(result)));
-        });
+    pub fn delete_download_files(&mut self, download_id: i64) -> Vec<Effect> {
+        vec![Effect::Api(ApiRequest::DeleteDownloadFiles(download_id))]
     }
 }
 
@@ -155,15 +127,11 @@ mod tests {
         enums::{FileCategory, SourceType},
         finetune::FineTune,
     };
-    use std::{sync::mpsc, time::Duration};
 
-    fn app_with_status(status: DownloadStatus) -> (App, mpsc::Receiver<Event>) {
-        let (sender, receiver) = mpsc::channel();
+    fn app_with_status(status: DownloadStatus) -> App {
         let mut app = App::new(
-            "http://127.0.0.1:1".into(),
             Theme::default_dark(),
             crate::icons::IconSet::new(crate::icons::GlyphMode::Unicode),
-            sender,
             false,
         );
         app.downloads.push(DownloadLiveStatus {
@@ -191,7 +159,7 @@ mod tests {
             download_speed: 0,
             eta_seconds: None,
         });
-        (app, receiver)
+        app
     }
 
     #[test]
@@ -231,32 +199,28 @@ mod tests {
             DownloadStatus::Completed,
             DownloadStatus::Removed,
         ] {
-            let (mut app, receiver) = app_with_status(status);
-            app.pause_selected();
-            assert!(receiver.recv_timeout(Duration::from_millis(50)).is_err());
+            let mut app = app_with_status(status);
+            assert!(app.pause_selected().is_empty());
         }
     }
 
     #[test]
     fn pause_is_marked_pending_and_duplicate_requests_are_suppressed() {
-        let (mut app, receiver) = app_with_status(DownloadStatus::Active);
+        let mut app = app_with_status(DownloadStatus::Active);
 
-        app.pause_selected();
+        let effects = app.pause_selected();
         assert!(app.is_download_pausing(1));
         assert_eq!(app.current_download_action(), None);
-        app.pause_selected();
-
-        let event = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
         assert!(matches!(
-            event,
-            Event::App(AppEvent::DownloadPaused { download_id: 1, .. })
+            effects.as_slice(),
+            [Effect::Api(ApiRequest::PauseDownload(1))]
         ));
-        assert!(receiver.recv_timeout(Duration::from_millis(100)).is_err());
+        assert!(app.pause_selected().is_empty());
     }
 
     #[test]
     fn successful_pause_result_replaces_row_and_updates_totals() {
-        let (mut app, _receiver) = app_with_status(DownloadStatus::Active);
+        let mut app = app_with_status(DownloadStatus::Active);
         app.pausing_downloads.insert(1);
         app.downloads[0].download_speed = 60;
         app.downloads[0].eta_seconds = Some(1);
@@ -283,7 +247,7 @@ mod tests {
 
     #[test]
     fn accepted_pause_remains_pending_while_server_still_reports_active() {
-        let (mut app, _receiver) = app_with_status(DownloadStatus::Active);
+        let mut app = app_with_status(DownloadStatus::Active);
         app.pausing_downloads.insert(1);
         app.downloads[0].download_speed = 60;
         app.active_downloads = 1;
@@ -300,7 +264,7 @@ mod tests {
 
     #[test]
     fn refresh_unlocks_resume_only_after_server_reports_paused() {
-        let (mut app, _receiver) = app_with_status(DownloadStatus::Active);
+        let mut app = app_with_status(DownloadStatus::Active);
         app.pausing_downloads.insert(1);
         let mut paused = app.downloads[0].clone();
         paused.download.status = DownloadStatus::Paused;
@@ -322,7 +286,7 @@ mod tests {
 
     #[test]
     fn failed_pause_result_restores_actions_and_reports_error() {
-        let (mut app, _receiver) = app_with_status(DownloadStatus::Active);
+        let mut app = app_with_status(DownloadStatus::Active);
         app.pausing_downloads.insert(1);
 
         app.apply_download_paused(1, Err(anyhow::anyhow!("pause failed")));
@@ -336,19 +300,17 @@ mod tests {
 
     #[test]
     fn resume_does_not_issue_a_request_for_active_downloads() {
-        let (mut app, receiver) = app_with_status(DownloadStatus::Active);
-        app.resume_selected();
-        assert!(receiver.recv_timeout(Duration::from_millis(50)).is_err());
+        let mut app = app_with_status(DownloadStatus::Active);
+        assert!(app.resume_selected().is_empty());
     }
 
     #[test]
     fn destructive_delete_requires_confirmation() {
-        let (mut app, receiver) = app_with_status(DownloadStatus::Completed);
+        let mut app = app_with_status(DownloadStatus::Completed);
         app.request_delete_selected_files();
         let modal = app.confirmation_modal.as_ref().unwrap();
         assert!(modal.title.contains("Remove"));
         assert!(modal.message.contains("cannot be undone"));
-        assert!(receiver.recv_timeout(Duration::from_millis(50)).is_err());
 
         app.cancel_confirmation();
         assert!(app.confirmation_modal.is_none());
@@ -356,12 +318,9 @@ mod tests {
 
     #[test]
     fn destructive_delete_without_a_selection_is_a_no_op() {
-        let (sender, _receiver) = mpsc::channel();
         let mut app = App::new(
-            "http://127.0.0.1:1".into(),
             Theme::default_dark(),
             crate::icons::IconSet::new(crate::icons::GlyphMode::Unicode),
-            sender,
             false,
         );
         app.request_delete_selected_files();

@@ -2,28 +2,28 @@ mod api;
 mod app;
 mod clipboard;
 mod config;
+mod effects;
 mod event;
 mod icons;
+mod msg;
+mod runtime;
 mod server_process;
 mod theme;
 mod toast;
 mod tui;
 mod ui;
-mod update;
 
 use std::sync::Arc;
 
 use app::App;
-use event::{Event, EventHandler};
+use event::EventHandler;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use server_process::{
     ServerProcess, ServerProcessConfig, managed_server_target, resolve_binary_path,
 };
 use theme::Theme;
 use tui::Tui;
-use update::{paste, update};
 
-use crate::app::AppEvent;
 use crate::config::{ManagedExitAction, StopManagedDaemon};
 
 const TICK_RATE_MS: u64 = 500;
@@ -76,10 +76,8 @@ fn main() -> anyhow::Result<()> {
     let terminal = Terminal::new(backend)?;
     let events = EventHandler::new(TICK_RATE_MS);
     let mut app = App::new(
-        api_base,
         resolved_theme,
         icons::IconSet::new(glyph_mode),
-        events.sender(),
         managed,
     );
 
@@ -87,7 +85,7 @@ fn main() -> anyhow::Result<()> {
     if let Err(error) = tui.enter() {
         finish_server_process(
             server_process.as_ref(),
-            &app.api_base,
+            &api_base,
             tui_config.on_app_exit.stop_managed_daemon,
         );
         return Err(error);
@@ -98,62 +96,14 @@ fn main() -> anyhow::Result<()> {
         if let Some(process) = &server_process {
             process.start_supervisor(tui.events.sender());
         }
-        while !app.should_quit {
-            tui.draw(&mut app)?;
-            match tui.events.next()? {
-                Event::Tick => app.refresh(),
-                Event::Key(key_event) => update(&mut app, key_event),
-                Event::Paste(text) => paste(&mut app, &text),
-                Event::Mouse => {}
-                Event::Resize => {}
-                Event::App(AppEvent::Refreshed {
-                    downloads,
-                    queues,
-                    server_reachable,
-                    aria2_reachable,
-                    download_speed,
-                    active_downloads,
-                    aria2_global_options,
-                    lifecycle_revision,
-                }) => app.apply_refresh(
-                    downloads,
-                    queues,
-                    server_reachable,
-                    aria2_reachable,
-                    download_speed,
-                    active_downloads,
-                    aria2_global_options,
-                    lifecycle_revision,
-                ),
-                Event::App(AppEvent::Lifecycle(state)) => app.apply_lifecycle(state),
-                Event::App(AppEvent::QueueDownloadsLoaded { queue_id, result }) => {
-                    app.apply_queue_downloads_loaded(queue_id, result)
-                }
-                Event::App(AppEvent::QueueSaved(result)) => app.apply_queue_saved(result),
-                Event::App(AppEvent::Toast { message, level }) => app.apply_toast(message, level),
-                Event::App(AppEvent::DownloadFilesDeleted(result)) => {
-                    app.apply_download_files_deleted(result)
-                }
-                Event::App(AppEvent::TorrentAdded(result)) => app.apply_torrent_added(result),
-                Event::App(AppEvent::DownloadPaused {
-                    download_id,
-                    result,
-                }) => app.apply_download_paused(download_id, result),
-                Event::App(AppEvent::QueueDeleteResolved {
-                    queue_id,
-                    queue_name,
-                    result,
-                }) => app.apply_queue_delete_result(queue_id, queue_name, result),
-            }
-        }
-        Ok(())
+        runtime::run(&mut tui, &mut app, &api_base)
     })();
 
     let exit_result = tui.exit();
 
     finish_server_process(
         server_process.as_ref(),
-        &app.api_base,
+        &api_base,
         tui_config.on_app_exit.stop_managed_daemon,
     );
 

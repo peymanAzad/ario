@@ -228,17 +228,9 @@ mod tests {
         scheduler::Scheduler,
     };
     use ratatui::{Terminal, backend::TestBackend};
-    use std::sync::mpsc;
 
     fn test_app(mode: GlyphMode) -> App {
-        let (sender, _receiver) = mpsc::channel();
-        App::new(
-            "http://127.0.0.1:1".into(),
-            Theme::default_dark(),
-            IconSet::new(mode),
-            sender,
-            false,
-        )
+        App::new(Theme::default_dark(), IconSet::new(mode), false)
     }
 
     fn queue(name: &str, status: QueueStatus, scheduled: bool) -> Queue {

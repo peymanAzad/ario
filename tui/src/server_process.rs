@@ -10,8 +10,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::api;
-use crate::app::AppEvent;
 use crate::event::Event;
+use crate::msg::Msg;
 use crate::toast::ToastLevel;
 
 const DEFAULT_PORT: u16 = 47812;
@@ -127,11 +127,11 @@ impl ServerProcess {
     }
 
     fn lifecycle(event_sender: &Sender<Event>, state: crate::app::LifecycleState) {
-        let _ = event_sender.send(Event::App(AppEvent::Lifecycle(state)));
+        let _ = event_sender.send(Event::Msg(Msg::Lifecycle(state)));
     }
 
     fn notify(event_sender: &Sender<Event>, message: impl Into<String>) {
-        let _ = event_sender.send(Event::App(AppEvent::Toast {
+        let _ = event_sender.send(Event::Msg(Msg::Toast {
             message: message.into(),
             level: ToastLevel::Error,
         }));
@@ -426,6 +426,7 @@ fn daemon_binary_name() -> &'static str {
 mod tests {
     use super::*;
     use crate::app::LifecycleState;
+    use crate::msg::Msg;
     use std::sync::atomic::AtomicU64;
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -601,7 +602,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut saw_exit = false;
         while Instant::now() < deadline {
-            if let Ok(Event::App(AppEvent::Toast { message, .. })) =
+            if let Ok(Event::Msg(Msg::Toast { message, .. })) =
                 receiver.recv_timeout(Duration::from_millis(100))
             {
                 if message.contains("exited: exit status: 1") && message.contains(".log") {
@@ -655,7 +656,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(7);
         let mut saw_timeout = false;
         while Instant::now() < deadline {
-            if let Ok(Event::App(AppEvent::Lifecycle(LifecycleState::Failed(message)))) =
+            if let Ok(Event::Msg(Msg::Lifecycle(LifecycleState::Failed(message)))) =
                 receiver.recv_timeout(Duration::from_millis(100))
             {
                 if message.contains("five seconds") {
@@ -670,7 +671,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut connected = false;
         while Instant::now() < deadline {
-            if let Ok(Event::App(AppEvent::Lifecycle(LifecycleState::Connected))) =
+            if let Ok(Event::Msg(Msg::Lifecycle(LifecycleState::Connected))) =
                 receiver.recv_timeout(Duration::from_millis(100))
             {
                 connected = true;
@@ -699,7 +700,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut connected = false;
         while Instant::now() < deadline {
-            if let Ok(Event::App(AppEvent::Lifecycle(LifecycleState::Connected))) =
+            if let Ok(Event::Msg(Msg::Lifecycle(LifecycleState::Connected))) =
                 receiver.recv_timeout(Duration::from_millis(100))
             {
                 connected = true;
@@ -723,7 +724,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(11);
         let mut gave_up = false;
         while Instant::now() < deadline {
-            if let Ok(Event::App(AppEvent::Lifecycle(LifecycleState::Failed(message)))) =
+            if let Ok(Event::Msg(Msg::Lifecycle(LifecycleState::Failed(message)))) =
                 receiver.recv_timeout(Duration::from_millis(100))
             {
                 if message.contains("crash-looping") {

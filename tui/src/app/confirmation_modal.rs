@@ -1,4 +1,5 @@
 use super::{App, PendingConfirmationAction};
+use crate::effects::Effect;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfirmationModal {
@@ -39,17 +40,20 @@ impl App {
         self.pending_confirmation_action = None;
     }
 
-    pub fn confirm_confirmation(&mut self) {
-        let action = self.pending_confirmation_action.take();
+    pub fn take_confirm_action(&mut self) -> Option<PendingConfirmationAction> {
         self.confirmation_modal = None;
-        match action {
+        self.pending_confirmation_action.take()
+    }
+
+    pub fn confirm_confirmation(&mut self) -> Vec<Effect> {
+        match self.take_confirm_action() {
             Some(PendingConfirmationAction::DeleteDownloadFiles { download_id }) => {
                 self.delete_download_files(download_id)
             }
             Some(PendingConfirmationAction::DeleteQueue { queue_id }) => {
                 self.confirm_delete_queue(queue_id)
             }
-            None => {}
+            None => vec![],
         }
     }
 }

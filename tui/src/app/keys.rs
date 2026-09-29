@@ -1,122 +1,89 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::{App, Focus, ModalTab, queue_modal::QueueModalTab};
+use crate::{
+    app::{App, Focus, ModalTab, queue_modal::QueueModalTab},
+    msg::{Action, Msg},
+};
 
-pub fn update(app: &mut App, key_event: KeyEvent) {
+pub fn route_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
     if app.confirmation_modal.is_some() {
-        handle_confirmation_key(app, key_event);
-        return;
+        return handle_confirmation_key(app, key_event);
     }
 
     if key_event.modifiers == KeyModifiers::CONTROL
         && matches!(key_event.code, KeyCode::Char('c') | KeyCode::Char('C'))
     {
-        app.quit();
-        return;
+        return Some(Msg::Action(Action::Quit));
     }
 
     if app.help_modal.is_some() {
         handle_help_modal_key(app, key_event);
-        return;
+        return None;
     }
 
     if app.queue_modal.is_some() {
-        handle_queue_modal_key(app, key_event);
-        return;
+        return handle_queue_modal_key(app, key_event);
     }
 
     if app.torrent_modal.is_some() {
-        handle_torrent_modal_key(app, key_event);
-        return;
+        return handle_torrent_modal_key(app, key_event);
     }
 
     if app.modal.is_some() {
-        handle_clipboard_modal_key(app, key_event);
-        return;
+        return handle_clipboard_modal_key(app, key_event);
     }
 
     if app.download_modal.is_some() {
-        handle_download_modal_key(app, key_event);
-        return;
+        return handle_download_modal_key(app, key_event);
     }
 
     match key_event.code {
-        KeyCode::Char('?') => {
-            app.open_help_modal();
-            return;
-        }
-        KeyCode::Esc | KeyCode::Char('q') => {
-            app.quit();
-            return;
-        }
-        KeyCode::Char('1') => {
-            app.focus = Focus::Queues;
-            return;
-        }
-        KeyCode::Char('2') => {
-            app.focus = Focus::Categories;
-            return;
-        }
-        KeyCode::Char('3') => {
-            app.focus = Focus::Downloads;
-            return;
-        }
-        KeyCode::Tab => {
-            app.focus = app.focus.next();
-            return;
-        }
-        KeyCode::BackTab => {
-            app.focus = app.focus.prev();
-            return;
-        }
-        KeyCode::Char('v') => {
-            app.open_clipboard_import();
-            return;
-        }
-        KeyCode::Char('a') => {
-            app.open_torrent_file_modal();
-            return;
-        }
+        KeyCode::Char('?') => return Some(Msg::Action(Action::OpenHelp)),
+        KeyCode::Esc | KeyCode::Char('q') => return Some(Msg::Action(Action::Quit)),
+        KeyCode::Char('1') => return Some(Msg::Action(Action::Focus(Focus::Queues))),
+        KeyCode::Char('2') => return Some(Msg::Action(Action::Focus(Focus::Categories))),
+        KeyCode::Char('3') => return Some(Msg::Action(Action::Focus(Focus::Downloads))),
+        KeyCode::Tab => return Some(Msg::Action(Action::FocusNext)),
+        KeyCode::BackTab => return Some(Msg::Action(Action::FocusPrev)),
+        KeyCode::Char('v') => return Some(Msg::Action(Action::OpenClipboardImport)),
+        KeyCode::Char('a') => return Some(Msg::Action(Action::OpenTorrentFile)),
         _ => {}
     }
 
     if is_remove_completed_key(app.focus, key_event.code) {
-        app.remove_completed_downloads();
-        return;
+        return Some(Msg::Action(Action::RemoveCompleted));
     }
     if is_delete_files_key(app.focus, key_event.code) {
-        app.request_delete_selected_files();
-        return;
+        return Some(Msg::Action(Action::DeleteDownloadFiles));
     }
     if is_delete_queue_key(app.focus, key_event.code) {
-        app.request_delete_selected_queue();
-        return;
+        return Some(Msg::Action(Action::DeleteQueue));
     }
 
     match app.focus {
         Focus::Queues => match key_event.code {
-            KeyCode::Down | KeyCode::Char('j') => app.select_next_queue(),
-            KeyCode::Up | KeyCode::Char('k') => app.select_prev_queue(),
-            KeyCode::Char('n') => app.open_create_queue_modal(),
-            KeyCode::Enter => app.open_edit_queue_modal(),
-            KeyCode::Char('p') => app.pause_selected_queue(),
-            KeyCode::Char('r') => app.resume_selected_queue(),
-            _ => {}
+            KeyCode::Down | KeyCode::Char('j') => Some(Msg::Action(Action::SelectNext)),
+            KeyCode::Up | KeyCode::Char('k') => Some(Msg::Action(Action::SelectPrev)),
+            KeyCode::Char('n') => Some(Msg::Action(Action::OpenCreateQueue)),
+            KeyCode::Enter => Some(Msg::Action(Action::OpenEditQueue)),
+            KeyCode::Char('p') => Some(Msg::Action(Action::PauseQueue)),
+            KeyCode::Char('r') => Some(Msg::Action(Action::ResumeQueue)),
+            _ => None,
         },
         Focus::Categories => match key_event.code {
-            KeyCode::Down | KeyCode::Char('j') => app.select_next_category(),
-            KeyCode::Up | KeyCode::Char('k') => app.select_prev_category(),
-            _ => {}
+            KeyCode::Down | KeyCode::Char('j') => Some(Msg::Action(Action::SelectNext)),
+            KeyCode::Up | KeyCode::Char('k') => Some(Msg::Action(Action::SelectPrev)),
+            _ => None,
         },
         Focus::Downloads => match key_event.code {
-            KeyCode::Down | KeyCode::Char('j') => app.select_next_download(),
-            KeyCode::Up | KeyCode::Char('k') => app.select_prev_download(),
-            KeyCode::Enter => app.activate_selected_download(),
-            KeyCode::Char('f') => app.open_selected_download_folder(),
-            KeyCode::Char('p') => app.pause_selected(),
-            KeyCode::Char('r') => app.resume_selected(),
-            KeyCode::Char('d') => app.delete_selected(),
-            _ => {}
+            KeyCode::Down | KeyCode::Char('j') => Some(Msg::Action(Action::SelectNext)),
+            KeyCode::Up | KeyCode::Char('k') => Some(Msg::Action(Action::SelectPrev)),
+            KeyCode::Enter => Some(Msg::Action(Action::ActivateDownload)),
+            KeyCode::Char('f') => Some(Msg::Action(Action::OpenDownloadFolder)),
+            KeyCode::Char('p') => Some(Msg::Action(Action::PauseDownload)),
+            KeyCode::Char('r') => Some(Msg::Action(Action::ResumeDownload)),
+            KeyCode::Char('d') => Some(Msg::Action(Action::DeleteDownload)),
+            _ => None,
         },
     }
 }
@@ -142,7 +109,7 @@ pub fn paste(app: &mut App, text: &str) {
     }
 }
 
-fn handle_torrent_modal_key(app: &mut App, key_event: KeyEvent) {
+fn handle_torrent_modal_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
     let editing = app
         .torrent_modal
         .as_ref()
@@ -162,26 +129,46 @@ fn handle_torrent_modal_key(app: &mut App, key_event: KeyEvent) {
             }
             _ => {}
         }
-        return;
+        return None;
     }
 
     match key_event.code {
-        KeyCode::Esc | KeyCode::Char('c') => app.cancel_torrent_file_modal(),
-        KeyCode::Tab | KeyCode::BackTab => app.torrent_modal_next_tab(),
+        KeyCode::Esc | KeyCode::Char('c') => Some(Msg::Action(Action::CancelModal)),
+        KeyCode::Tab | KeyCode::BackTab => {
+            app.torrent_modal_next_tab();
+            None
+        }
         KeyCode::Enter
             if app.torrent_modal.as_ref().is_some_and(|modal| {
                 modal.tab == crate::app::torrent_file_modal::TorrentFileModalTab::Torrent
             }) =>
         {
-            app.torrent_modal_commit_path()
+            app.torrent_modal_commit_path();
+            None
         }
-        KeyCode::Char('s') => app.start_torrent_now(),
-        KeyCode::Char('w') => app.save_torrent_for_later(),
-        KeyCode::Down | KeyCode::Char('j') => app.torrent_modal_move_down(),
-        KeyCode::Up | KeyCode::Char('k') => app.torrent_modal_move_up(),
-        KeyCode::Left | KeyCode::Char('h') => app.torrent_modal_adjust_left(),
-        KeyCode::Right | KeyCode::Char('l') => app.torrent_modal_adjust_right(),
-        _ => {}
+        KeyCode::Char('s') => app
+            .take_submit_torrent_action(true)
+            .map(Msg::Action),
+        KeyCode::Char('w') => app
+            .take_submit_torrent_action(false)
+            .map(Msg::Action),
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.torrent_modal_move_down();
+            None
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.torrent_modal_move_up();
+            None
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            app.torrent_modal_adjust_left();
+            None
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            app.torrent_modal_adjust_right();
+            None
+        }
+        _ => None,
     }
 }
 
@@ -234,15 +221,20 @@ fn handle_help_modal_key(app: &mut App, key_event: KeyEvent) {
     }
 }
 
-fn handle_confirmation_key(app: &mut App, key_event: KeyEvent) {
+fn handle_confirmation_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
     match key_event.code {
-        KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => app.confirm_confirmation(),
+        KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+            app.take_confirm_action().map(|action| Msg::Action(Action::Confirm(action)))
+        }
         KeyCode::Esc
         | KeyCode::Char('n')
         | KeyCode::Char('N')
         | KeyCode::Char('c')
-        | KeyCode::Char('C') => app.cancel_confirmation(),
-        _ => {}
+        | KeyCode::Char('C') => {
+            app.cancel_confirmation();
+            None
+        }
+        _ => None,
     }
 }
 
@@ -258,31 +250,52 @@ fn is_delete_queue_key(focus: Focus, key_code: KeyCode) -> bool {
     focus == Focus::Queues && key_code == KeyCode::Char('d')
 }
 
-fn handle_clipboard_modal_key(app: &mut App, key_event: KeyEvent) {
+fn handle_clipboard_modal_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
     match key_event.code {
-        KeyCode::Esc | KeyCode::Char('c') => app.cancel_modal(),
-        KeyCode::Tab => app.modal_next_tab(),
-        KeyCode::BackTab => app.modal_prev_tab(),
-        KeyCode::Char('s') => app.start_modal_now(),
-        KeyCode::Char('w') => app.save_modal_for_later(),
-        KeyCode::Down | KeyCode::Char('j') => app.modal_move_down(),
-        KeyCode::Up | KeyCode::Char('k') => app.modal_move_up(),
-        KeyCode::Left | KeyCode::Char('h') => app.modal_adjust_left(),
-        KeyCode::Right | KeyCode::Char('l') => app.modal_adjust_right(),
+        KeyCode::Esc | KeyCode::Char('c') => Some(Msg::Action(Action::CancelModal)),
+        KeyCode::Tab => {
+            app.modal_next_tab();
+            None
+        }
+        KeyCode::BackTab => {
+            app.modal_prev_tab();
+            None
+        }
+        KeyCode::Char('s') => app.take_submit_downloads_action(true).map(Msg::Action),
+        KeyCode::Char('w') => app.take_submit_downloads_action(false).map(Msg::Action),
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.modal_move_down();
+            None
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.modal_move_up();
+            None
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            app.modal_adjust_left();
+            None
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            app.modal_adjust_right();
+            None
+        }
         KeyCode::Char(' ') if app.modal.as_ref().map(|m| m.tab) == Some(ModalTab::Urls) => {
-            app.modal_toggle_selected_url()
+            app.modal_toggle_selected_url();
+            None
         }
         KeyCode::Char('a') if app.modal.as_ref().map(|m| m.tab) == Some(ModalTab::Urls) => {
-            app.modal_select_all()
+            app.modal_select_all();
+            None
         }
         KeyCode::Char('n') if app.modal.as_ref().map(|m| m.tab) == Some(ModalTab::Urls) => {
-            app.modal_select_none()
+            app.modal_select_none();
+            None
         }
-        _ => {}
+        _ => None,
     }
 }
 
-fn handle_queue_modal_key(app: &mut App, key_event: KeyEvent) {
+fn handle_queue_modal_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
     let editing = app
         .queue_modal
         .as_ref()
@@ -297,7 +310,7 @@ fn handle_queue_modal_key(app: &mut App, key_event: KeyEvent) {
             KeyCode::Char(c) => app.queue_modal_text_input(c),
             _ => {}
         }
-        return;
+        return None;
     }
 
     let on_items_tab = app
@@ -307,38 +320,73 @@ fn handle_queue_modal_key(app: &mut App, key_event: KeyEvent) {
         .unwrap_or(false);
 
     match key_event.code {
-        KeyCode::Esc | KeyCode::Char('c') => app.cancel_queue_modal(),
-        KeyCode::Tab => app.queue_modal_next_tab(),
-        KeyCode::BackTab => app.queue_modal_prev_tab(),
-        // Enter starts text editing on the queue name. Scheduler values use
-        // left/right adjustment controls, and elsewhere Enter is a no-op.
-        KeyCode::Enter => app.queue_modal_start_text_edit(),
-        KeyCode::Char('s') => app.save_queue_modal(),
-        // Reordering uses dedicated shifted keys rather than left/right,
-        // since left/right has no natural meaning for moving an item up
-        // or down a vertical list.
-        KeyCode::Char('J') if on_items_tab => app.queue_modal_move_item_down(),
-        KeyCode::Char('K') if on_items_tab => app.queue_modal_move_item_up(),
-        KeyCode::Down | KeyCode::Char('j') => app.queue_modal_move_down(),
-        KeyCode::Up | KeyCode::Char('k') => app.queue_modal_move_up(),
-        KeyCode::Left | KeyCode::Char('h') => app.queue_modal_adjust_left(),
-        KeyCode::Right | KeyCode::Char('l') => app.queue_modal_adjust_right(),
-        // Space: toggles the highlighted day (Scheduler tab, Weekly days
-        // row) — a no-op elsewhere, since the method itself checks context.
-        KeyCode::Char(' ') => app.queue_modal_toggle_day(),
-        _ => {}
+        KeyCode::Esc | KeyCode::Char('c') => Some(Msg::Action(Action::CancelModal)),
+        KeyCode::Tab => {
+            app.queue_modal_next_tab();
+            None
+        }
+        KeyCode::BackTab => {
+            app.queue_modal_prev_tab();
+            None
+        }
+        KeyCode::Enter => {
+            app.queue_modal_start_text_edit();
+            None
+        }
+        KeyCode::Char('s') => app.take_save_queue_action().map(Msg::Action),
+        KeyCode::Char('J') if on_items_tab => {
+            app.queue_modal_move_item_down();
+            None
+        }
+        KeyCode::Char('K') if on_items_tab => {
+            app.queue_modal_move_item_up();
+            None
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.queue_modal_move_down();
+            None
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.queue_modal_move_up();
+            None
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            app.queue_modal_adjust_left();
+            None
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            app.queue_modal_adjust_right();
+            None
+        }
+        KeyCode::Char(' ') => {
+            app.queue_modal_toggle_day();
+            None
+        }
+        _ => None,
     }
 }
 
-fn handle_download_modal_key(app: &mut App, key_event: KeyEvent) {
+fn handle_download_modal_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
     match key_event.code {
-        KeyCode::Esc | KeyCode::Char('c') => app.cancel_download_modal(),
-        KeyCode::Char('s') => app.save_download_modal(),
-        KeyCode::Down | KeyCode::Char('j') => app.download_modal_move_down(),
-        KeyCode::Up | KeyCode::Char('k') => app.download_modal_move_up(),
-        KeyCode::Left | KeyCode::Char('h') => app.download_modal_adjust_left(),
-        KeyCode::Right | KeyCode::Char('l') => app.download_modal_adjust_right(),
-        _ => {}
+        KeyCode::Esc | KeyCode::Char('c') => Some(Msg::Action(Action::CancelModal)),
+        KeyCode::Char('s') => app.take_save_download_edit_action().map(Msg::Action),
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.download_modal_move_down();
+            None
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.download_modal_move_up();
+            None
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            app.download_modal_adjust_left();
+            None
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            app.download_modal_adjust_right();
+            None
+        }
+        _ => None,
     }
 }
 
@@ -346,24 +394,22 @@ fn handle_download_modal_key(app: &mut App, key_event: KeyEvent) {
 mod tests {
     use super::*;
     use crate::{
-        app::{PendingConfirmationAction, confirmation_modal::ConfirmationModal},
+        app::{PendingConfirmationAction, confirmation_modal::ConfirmationModal, update::update},
         theme::Theme,
     };
-    use std::sync::mpsc;
 
     fn test_app() -> App {
-        let (sender, _receiver) = mpsc::channel();
         App::new(
-            "http://127.0.0.1:1".into(),
             Theme::default_dark(),
             crate::icons::IconSet::new(crate::icons::GlyphMode::Unicode),
-            sender,
             false,
         )
     }
 
     fn press(app: &mut App, code: KeyCode) {
-        update(app, KeyEvent::new(code, KeyModifiers::NONE));
+        if let Some(msg) = route_key(app, KeyEvent::new(code, KeyModifiers::NONE)) {
+            let _ = update(app, msg);
+        }
     }
 
     #[test]
@@ -373,10 +419,11 @@ mod tests {
                 let mut app = test_app();
                 app.focus = focus;
                 // Terminals can report '?' with Shift set.
-                update(
-                    &mut app,
-                    KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT),
-                );
+                if let Some(msg) =
+                    route_key(&mut app, KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT))
+                {
+                    let _ = update(&mut app, msg);
+                }
                 assert!(app.help_modal.is_some());
                 for code in [
                     KeyCode::Char('1'),
@@ -605,10 +652,12 @@ mod tests {
             assert_eq!(app.help_modal.as_ref().unwrap().scroll, expected);
         }
         press(&mut app, KeyCode::Char('/'));
-        update(
+        if let Some(msg) = route_key(
             &mut app,
             KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
-        );
+        ) {
+            let _ = update(&mut app, msg);
+        }
         assert!(app.should_quit);
     }
 
@@ -644,12 +693,9 @@ mod tests {
 
     #[test]
     fn confirmation_modal_consumes_cancel_before_global_quit() {
-        let (sender, _receiver) = mpsc::channel();
         let mut app = App::new(
-            "http://127.0.0.1:1".into(),
             Theme::default_dark(),
             crate::icons::IconSet::new(crate::icons::GlyphMode::Unicode),
-            sender,
             false,
         );
         app.open_confirmation(
@@ -657,10 +703,12 @@ mod tests {
             PendingConfirmationAction::DeleteDownloadFiles { download_id: 1 },
         );
 
-        update(
+        if let Some(msg) = route_key(
             &mut app,
             KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
-        );
+        ) {
+            let _ = update(&mut app, msg);
+        }
         assert!(app.confirmation_modal.is_none());
         assert!(!app.should_quit);
     }

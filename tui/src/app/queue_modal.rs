@@ -6,9 +6,10 @@ use chrono::{
 };
 
 use crate::app::App;
+use crate::effects::{ApiRequest, Effect};
 use common::{
     download::Download,
-    enums::{Recurrence, SortField},
+    enums::Recurrence,
     queue::{CreateQueueRequest, DEFAULT_RETRY_WAIT_SECONDS, UpdateQueueRequest},
 };
 
@@ -163,15 +164,15 @@ impl App {
         });
     }
 
-    pub fn open_edit_queue_modal(&mut self) {
+    pub fn open_edit_queue_modal(&mut self) -> Vec<Effect> {
         if self.has_open_modal() {
-            return;
+            return vec![];
         }
         if self.selected_queue == 0 {
-            return;
+            return vec![];
         }
         let Some(queue) = self.queues.get(self.selected_queue - 1).cloned() else {
-            return;
+            return vec![];
         };
 
         let (default_start_date, default_start_time, default_end_date, default_end_time) =
@@ -248,25 +249,9 @@ impl App {
             error: None,
         });
 
-        // Non-blocking fetch of this queue's downloads for the Download
-        // Items tab — same background-thread-plus-event pattern as
-        // everything else that talks to the server.
-        let api_base = self.api_base.clone();
-        let sender = self.event_sender.clone();
-        let filter = DownloadFilter {
-            queue_id: Some(queue.id),
-            category: None,
-            status: None,
-            sort_by: Some(SortField::QueuePosition),
-            sort_desc: false,
-        };
-        thread::spawn(move || {
-            let result = api::list_downloads(&api_base, &filter);
-            let _ = sender.send(Event::App(AppEvent::QueueDownloadsLoaded {
-                queue_id: queue.id,
-                result,
-            }));
-        });
+        vec![Effect::Api(ApiRequest::ListQueueDownloads {
+            queue_id: queue.id,
+        })]
     }
 
     /// Applies the background fetch triggered by `open_edit_queue_modal`.
@@ -286,11 +271,11 @@ impl App {
         }
     }
 
-    pub fn apply_queue_saved(&mut self, result: anyhow::Result<()>) {
+    pub fn apply_queue_saved(&mut self, result: anyhow::Result<()>) -> Vec<Effect> {
         if let Err(error) = result {
             self.apply_toast(error.to_string(), ToastLevel::Error);
         }
-        self.refresh();
+        self.refresh()
     }
 
     pub fn cancel_queue_modal(&mut self) {
@@ -536,36 +521,33 @@ impl App {
         }
     }
 
-    /// Save: validates, then fires the create/update request (and a
-    /// reorder call if the Download Items tab's order changed) in a
-    /// background thread. Closes the modal immediately on a successful
-    /// build of the request — errors from the request itself (as opposed
-    /// to local validation) currently just surface on the next refresh,
-    /// matching how other fire-and-forget actions in this app behave.
-    pub fn save_queue_modal(&mut self) {
+    /// Save: validates, then returns an Action for the create/update request
+    /// (and reorder ids if the Download Items tab's order changed). Closes
+    /// the modal immediately on a successful build of the request.
+    pub fn take_save_queue_action(&mut self) -> Option<crate::msg::Action> {
         let Some(modal) = &mut self.queue_modal else {
-            return;
+            return None;
         };
 
         if modal.name.trim().is_empty() {
             modal.error = Some("name can't be empty".to_string());
-            return;
+            return None;
         }
 
         let recurrence = match Self::build_recurrence(modal) {
             Ok(r) => r,
             Err(e) => {
                 modal.error = Some(e);
-                return;
+                return None;
             }
         };
 
         let modal = self.queue_modal.take().unwrap(); // known Some, just validated above
-        let api_base = self.api_base.clone();
 
         match modal.mode {
-            QueueModalMode::Create => {
-                let request = CreateQueueRequest {
+            QueueModalMode::Create => Some(crate::msg::Action::SaveQueue {
+                mode: QueueModalMode::Create,
+                create: Some(CreateQueueRequest {
                     name: modal.name,
                     position: 0,
                     max_concurrent_downloads: modal.max_concurrent_downloads,
@@ -575,37 +557,31 @@ impl App {
                     scheduler_enabled: modal.scheduler_enabled,
                     recurrence,
                     run_missed_on_startup: modal.run_missed_on_startup,
-                };
-                let sender = self.event_sender.clone();
-                thread::spawn(move || {
-                    let result = api::create_queue(&api_base, &request).map(|_| ());
-                    let _ = sender.send(Event::App(AppEvent::QueueSaved(result)));
-                });
-            }
+                }),
+                update: None,
+                ordered_ids: Vec::new(),
+            }),
             QueueModalMode::Edit { queue_id } => {
-                let request = UpdateQueueRequest {
-                    name: modal.name,
-                    position: 0,
-                    max_concurrent_downloads: modal.max_concurrent_downloads,
-                    max_retries: modal.max_retries,
-                    retry_wait_seconds: modal.retry_wait_seconds,
-                    default_finetune: modal.finetune,
-                    scheduler_enabled: modal.scheduler_enabled,
-                    recurrence,
-                    run_missed_on_startup: modal.run_missed_on_startup,
-                };
                 let ordered_ids: Vec<i64> = modal.items.iter().map(|d| d.id).collect();
-                let sender = self.event_sender.clone();
-                thread::spawn(move || {
-                    let result = api::update_queue(&api_base, queue_id, &request).and_then(|_| {
-                        if ordered_ids.is_empty() {
-                            Ok(())
-                        } else {
-                            api::reorder_queue(&api_base, queue_id, &ordered_ids)
-                        }
-                    });
-                    let _ = sender.send(Event::App(AppEvent::QueueSaved(result)));
-                });
+                Some(crate::msg::Action::SaveQueue {
+                    mode: QueueModalMode::Edit { queue_id },
+                    create: None,
+                    update: Some((
+                        queue_id,
+                        UpdateQueueRequest {
+                            name: modal.name,
+                            position: 0,
+                            max_concurrent_downloads: modal.max_concurrent_downloads,
+                            max_retries: modal.max_retries,
+                            retry_wait_seconds: modal.retry_wait_seconds,
+                            default_finetune: modal.finetune,
+                            scheduler_enabled: modal.scheduler_enabled,
+                            recurrence,
+                            run_missed_on_startup: modal.run_missed_on_startup,
+                        },
+                    )),
+                    ordered_ids,
+                })
             }
         }
     }

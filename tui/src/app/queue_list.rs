@@ -1,9 +1,10 @@
 use super::*;
 use crate::app::{PendingConfirmationAction, confirmation_modal::ConfirmationModal};
+use crate::effects::{ApiRequest, Effect};
 
 const MAIN_QUEUE_ID: i64 = 1;
 
-fn queue_start_message(stop: Option<chrono::DateTime<chrono::Utc>>) -> String {
+pub(crate) fn queue_start_message(stop: Option<chrono::DateTime<chrono::Utc>>) -> String {
     stop.map(|stop| {
         format!(
             "Queue started. Will pause at {}",
@@ -15,15 +16,15 @@ fn queue_start_message(stop: Option<chrono::DateTime<chrono::Utc>>) -> String {
 }
 
 impl App {
-    pub fn select_next_queue(&mut self) {
+    pub fn select_next_queue(&mut self) -> Vec<Effect> {
         let len = self.queues.len() + 1; // +1 for "All"
         self.selected_queue = (self.selected_queue + 1).min(len - 1);
-        self.refresh();
+        self.refresh()
     }
 
-    pub fn select_prev_queue(&mut self) {
+    pub fn select_prev_queue(&mut self) -> Vec<Effect> {
         self.selected_queue = self.selected_queue.saturating_sub(1);
-        self.refresh();
+        self.refresh()
     }
 
     pub fn current_queue(&self) -> Option<&Queue> {
@@ -35,51 +36,52 @@ impl App {
             .is_some_and(|queue| queue.id != MAIN_QUEUE_ID)
     }
 
-    pub fn request_delete_selected_queue(&mut self) {
+    pub fn request_delete_selected_queue(&mut self) -> Vec<Effect> {
         if !self.can_delete_selected_queue() || self.has_open_modal() {
-            return;
+            return vec![];
         }
 
         if let Some(queue) = self.current_queue() {
-            self.delete_queue(queue.id, queue.name.clone(), false);
+            return self.delete_queue(queue.id, queue.name.clone(), false);
         }
+        vec![]
     }
 
-    pub fn confirm_delete_queue(&mut self, queue_id: i64) {
+    pub fn confirm_delete_queue(&mut self, queue_id: i64) -> Vec<Effect> {
         let Some(queue_name) = self
             .queues
             .iter()
             .find(|queue| queue.id == queue_id)
             .map(|queue| queue.name.clone())
         else {
-            return;
+            return vec![];
         };
-        self.delete_queue(queue_id, queue_name, true);
+        self.delete_queue(queue_id, queue_name, true)
     }
 
-    fn delete_queue(&self, queue_id: i64, queue_name: String, delete_downloads: bool) {
-        let api_base = self.api_base.clone();
-        let sender = self.event_sender.clone();
-        thread::spawn(move || {
-            let result = api::delete_queue(&api_base, queue_id, delete_downloads);
-            let _ = sender.send(Event::App(AppEvent::QueueDeleteResolved {
-                queue_id,
-                queue_name,
-                result,
-            }));
-        });
+    fn delete_queue(
+        &self,
+        queue_id: i64,
+        queue_name: String,
+        delete_downloads: bool,
+    ) -> Vec<Effect> {
+        vec![Effect::Api(ApiRequest::DeleteQueue {
+            id: queue_id,
+            name: queue_name,
+            delete_downloads,
+        })]
     }
 
     pub fn apply_queue_delete_result(
         &mut self,
         queue_id: i64,
         queue_name: String,
-        result: anyhow::Result<api::DeleteQueueOutcome>,
-    ) {
+        result: anyhow::Result<crate::api::DeleteQueueOutcome>,
+    ) -> Vec<Effect> {
         match result {
-            Ok(api::DeleteQueueOutcome::NeedsConfirmation) => {
+            Ok(crate::api::DeleteQueueOutcome::NeedsConfirmation) => {
                 if !self.queues.iter().any(|queue| queue.id == queue_id) || self.has_open_modal() {
-                    return;
+                    return vec![];
                 }
                 self.open_confirmation(
                     ConfirmationModal::new(
@@ -92,8 +94,9 @@ impl App {
                     ),
                     PendingConfirmationAction::DeleteQueue { queue_id },
                 );
+                vec![]
             }
-            Ok(api::DeleteQueueOutcome::Deleted) => {
+            Ok(crate::api::DeleteQueueOutcome::Deleted) => {
                 let selected_id = self.current_queue().map(|queue| queue.id);
                 let deleted_row = self
                     .queues
@@ -115,60 +118,36 @@ impl App {
                     format!("queue \"{queue_name}\" removed"),
                     ToastLevel::Success,
                 );
-                self.refresh();
+                self.refresh()
             }
-            Err(error) => self.toasts.push(error.to_string(), ToastLevel::Error),
+            Err(error) => {
+                self.toasts.push(error.to_string(), ToastLevel::Error);
+                vec![]
+            }
         }
     }
 
-    pub fn resume_selected_queue(&mut self) {
+    pub fn resume_selected_queue(&mut self) -> Vec<Effect> {
         if self.selected_queue == 0 {
-            return;
+            return vec![];
         }
-        if let Some(id) = self.current_queue().map(|d| d.id) {
-            let api_base = self.api_base.clone();
-            let sender = self.event_sender.clone();
-            thread::spawn(move || match api::resume_queue(&api_base, id) {
-                Err(e) => {
-                    let _ = sender.send(Event::App(AppEvent::Toast {
-                        message: e.to_string(),
-                        level: ToastLevel::Error,
-                    }));
-                }
-                Ok(()) => {
-                    let stop = api::list_queues(&api_base)
-                        .ok()
-                        .and_then(|queues| queues.into_iter().find(|q| q.id == id))
-                        .and_then(|q| q.scheduled_stop_at);
-                    let message = queue_start_message(stop);
-                    let _ = sender.send(Event::App(AppEvent::Toast {
-                        message,
-                        level: ToastLevel::Success,
-                    }));
-                }
-            });
-        }
+        let Some(id) = self.current_queue().map(|d| d.id) else {
+            return vec![];
+        };
+        vec![Effect::Api(ApiRequest::ResumeQueue(id))]
     }
 
-    pub fn pause_selected_queue(&mut self) {
+    pub fn pause_selected_queue(&mut self) -> Vec<Effect> {
         if self.selected_queue == 0 {
-            return;
+            return vec![];
         }
-        if let Some(id) = self.current_queue().map(|d| d.id) {
-            let api_base = self.api_base.clone();
-            let sender = self.event_sender.clone();
-            thread::spawn(move || {
-                if let Err(e) = api::pause_queue(&api_base, id) {
-                    let _ = sender.send(Event::App(AppEvent::Toast {
-                        message: e.to_string(),
-                        level: ToastLevel::Error,
-                    }));
-                }
-            });
-        }
+        let Some(id) = self.current_queue().map(|d| d.id) else {
+            return vec![];
+        };
+        vec![Effect::Api(ApiRequest::PauseQueue(id))]
     }
 
-    pub fn remove_completed_downloads(&mut self) {
+    pub fn remove_completed_downloads(&mut self) -> Vec<Effect> {
         let queue_id = if self.selected_queue == 0 {
             None
         } else {
@@ -177,26 +156,17 @@ impl App {
 
         // A stale queue selection cannot safely be interpreted as "All".
         if self.selected_queue != 0 && queue_id.is_none() {
-            return;
+            return vec![];
         }
 
-        let api_base = self.api_base.clone();
-        let sender = self.event_sender.clone();
-        thread::spawn(move || {
-            if let Err(e) = api::delete_completed_downloads(&api_base, queue_id) {
-                let _ = sender.send(Event::App(AppEvent::Toast {
-                    message: e.to_string(),
-                    level: ToastLevel::Error,
-                }));
-            }
-        });
+        vec![Effect::Api(ApiRequest::DeleteCompleted(queue_id))]
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{event::Event, theme::Theme};
+    use crate::theme::Theme;
     use chrono::Utc;
     use common::{
         enums::{QueueStatus, Recurrence},
@@ -204,7 +174,6 @@ mod tests {
         queue::QueueSettings,
         scheduler::Scheduler,
     };
-    use std::{sync::mpsc, time::Duration};
 
     fn queue(id: i64, name: &str) -> Queue {
         Queue {
@@ -249,13 +218,10 @@ mod tests {
         assert_eq!(queue_start_message(None), "Queue started");
     }
 
-    fn app() -> (App, mpsc::Receiver<Event>) {
-        let (sender, receiver) = mpsc::channel();
+    fn app() -> App {
         let mut app = App::new(
-            "http://127.0.0.1:1".into(),
             Theme::default_dark(),
             crate::icons::IconSet::new(crate::icons::GlyphMode::Unicode),
-            sender,
             false,
         );
         app.queues = vec![
@@ -263,29 +229,27 @@ mod tests {
             queue(2, "Second"),
             queue(3, "Third"),
         ];
-        (app, receiver)
+        app
     }
 
     #[test]
     fn all_and_main_queue_are_not_deletable() {
-        let (mut app, receiver) = app();
+        let mut app = app();
         assert!(!app.can_delete_selected_queue());
-        app.request_delete_selected_queue();
+        assert!(app.request_delete_selected_queue().is_empty());
 
         app.selected_queue = 1;
         assert!(!app.can_delete_selected_queue());
-        app.request_delete_selected_queue();
-
-        assert!(receiver.recv_timeout(Duration::from_millis(50)).is_err());
+        assert!(app.request_delete_selected_queue().is_empty());
     }
 
     #[test]
     fn populated_queue_result_opens_confirmation_with_retention_copy() {
-        let (mut app, _receiver) = app();
-        app.apply_queue_delete_result(
+        let mut app = app();
+        let _ = app.apply_queue_delete_result(
             2,
             "Second".into(),
-            Ok(api::DeleteQueueOutcome::NeedsConfirmation),
+            Ok(crate::api::DeleteQueueOutcome::NeedsConfirmation),
         );
 
         let modal = app.confirmation_modal.as_ref().unwrap();
@@ -304,12 +268,12 @@ mod tests {
 
     #[test]
     fn late_queue_confirmation_does_not_replace_help() {
-        let (mut app, _receiver) = app();
+        let mut app = app();
         app.open_help_modal();
-        app.apply_queue_delete_result(
+        let _ = app.apply_queue_delete_result(
             2,
             "Second".into(),
-            Ok(api::DeleteQueueOutcome::NeedsConfirmation),
+            Ok(crate::api::DeleteQueueOutcome::NeedsConfirmation),
         );
         assert!(app.help_modal.is_some());
         assert!(app.confirmation_modal.is_none());
@@ -318,9 +282,13 @@ mod tests {
 
     #[test]
     fn successful_delete_selects_the_next_queue_or_previous_at_end() {
-        let (mut app, _receiver) = app();
+        let mut app = app();
         app.selected_queue = 2;
-        app.apply_queue_delete_result(2, "Second".into(), Ok(api::DeleteQueueOutcome::Deleted));
+        let _ = app.apply_queue_delete_result(
+            2,
+            "Second".into(),
+            Ok(crate::api::DeleteQueueOutcome::Deleted),
+        );
         assert_eq!(
             app.queues.iter().map(|queue| queue.id).collect::<Vec<_>>(),
             vec![1, 3]
@@ -332,14 +300,18 @@ mod tests {
 
         // Avoid a second refresh while the first test refresh is in flight.
         app.selected_queue = 2;
-        app.apply_queue_delete_result(3, "Third".into(), Ok(api::DeleteQueueOutcome::Deleted));
+        let _ = app.apply_queue_delete_result(
+            3,
+            "Third".into(),
+            Ok(crate::api::DeleteQueueOutcome::Deleted),
+        );
         assert_eq!(app.current_queue().map(|queue| queue.id), Some(1));
     }
 
     #[test]
     fn delete_error_is_shown_as_a_toast() {
-        let (mut app, _receiver) = app();
-        app.apply_queue_delete_result(2, "Second".into(), Err(anyhow::anyhow!("boom")));
+        let mut app = app();
+        let _ = app.apply_queue_delete_result(2, "Second".into(), Err(anyhow::anyhow!("boom")));
         assert!(
             app.toasts
                 .iter()

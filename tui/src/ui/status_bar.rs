@@ -163,21 +163,13 @@ mod tests {
         theme::Theme,
     };
     use ratatui::{Terminal, backend::TestBackend, style::Color};
-    use std::sync::mpsc;
 
     fn app(managed: bool) -> App {
         app_with_glyphs(managed, GlyphMode::Ascii)
     }
 
     fn app_with_glyphs(managed: bool, mode: GlyphMode) -> App {
-        let (sender, _receiver) = mpsc::channel();
-        App::new(
-            "http://127.0.0.1:1".into(),
-            Theme::default_dark(),
-            IconSet::new(mode),
-            sender,
-            managed,
-        )
+        App::new(Theme::default_dark(), IconSet::new(mode), managed)
     }
 
     fn rendered_status_bar(app: &App) -> String {

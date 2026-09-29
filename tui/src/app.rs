@@ -4,14 +4,14 @@ pub mod confirmation_modal;
 pub mod download_edit_modal;
 pub mod downloads_table;
 pub mod help_modal;
+pub mod keys;
 pub mod queue_list;
 pub mod queue_modal;
 pub mod torrent_file_modal;
+pub mod update;
 
 use std::{
     collections::{HashSet, VecDeque},
-    sync::mpsc::Sender,
-    thread,
     time::{Duration, Instant},
 };
 
@@ -20,50 +20,15 @@ use crate::app::confirmation_modal::ConfirmationModal;
 use crate::app::download_edit_modal::DownloadEditModal;
 use crate::app::queue_modal::QueueModal;
 use crate::app::torrent_file_modal::TorrentFileModal;
+use crate::effects::{ApiRequest, Effect};
 use crate::icons::IconSet;
 use crate::theme::Theme;
 pub use crate::toast::ToastLevel;
 use crate::toast::ToastStack;
-use crate::{api, event::Event};
-use common::download::{AddDownloadInput, AddDownloadsRequest, DownloadFilter, DownloadLiveStatus};
+use common::download::{DownloadFilter, DownloadLiveStatus};
 use common::enums::{AllocStrategy, DownloadStatus, FileCategory, StreamPieceSelector};
 use common::finetune::{Aria2GlobalOptions, FineTune};
 use common::queue::Queue;
-
-#[derive(Debug)]
-pub enum AppEvent {
-    Lifecycle(LifecycleState),
-    Refreshed {
-        downloads: anyhow::Result<Vec<DownloadLiveStatus>>,
-        queues: anyhow::Result<Vec<Queue>>,
-        server_reachable: bool,
-        aria2_reachable: bool,
-        download_speed: u64,
-        active_downloads: u64,
-        aria2_global_options: Option<Aria2GlobalOptions>,
-        lifecycle_revision: u64,
-    },
-    QueueDownloadsLoaded {
-        queue_id: i64,
-        result: anyhow::Result<Vec<DownloadLiveStatus>>,
-    },
-    QueueSaved(anyhow::Result<()>),
-    Toast {
-        message: String,
-        level: ToastLevel,
-    },
-    DownloadFilesDeleted(anyhow::Result<common::download::DeleteDownloadFilesResult>),
-    TorrentAdded(anyhow::Result<DownloadLiveStatus>),
-    DownloadPaused {
-        download_id: i64,
-        result: anyhow::Result<DownloadLiveStatus>,
-    },
-    QueueDeleteResolved {
-        queue_id: i64,
-        queue_name: String,
-        result: anyhow::Result<api::DeleteQueueOutcome>,
-    },
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LifecycleState {
@@ -135,7 +100,6 @@ pub struct ImportUrlEntry {
 }
 
 pub struct App {
-    pub api_base: String,
     pub downloads: Vec<DownloadLiveStatus>,
     pub queues: Vec<Queue>,
     pub selected_download: usize,
@@ -164,7 +128,6 @@ pub struct App {
     pub toasts: ToastStack,
     /// When true, TUI may spawn/supervise ario_daemon for a local URL.
     manages_server: bool,
-    event_sender: Sender<Event>,
     refresh_in_flight: bool,
     lifecycle_revision: u64,
     pending_confirmation_action: Option<PendingConfirmationAction>,
@@ -173,15 +136,8 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(
-        api_base: String,
-        theme: Theme,
-        icons: IconSet,
-        event_sender: Sender<Event>,
-        manages_server: bool,
-    ) -> Self {
+    pub fn new(theme: Theme, icons: IconSet, manages_server: bool) -> Self {
         Self {
-            api_base,
             downloads: Vec::new(),
             queues: Vec::new(),
             selected_download: 0,
@@ -207,7 +163,6 @@ impl App {
             download_modal: None,
             confirmation_modal: None,
             help_modal: None,
-            event_sender,
             manages_server,
             refresh_in_flight: false,
             lifecycle_revision: 0,
@@ -257,80 +212,17 @@ impl App {
         }
     }
 
-    pub fn refresh(&mut self) {
+    pub fn refresh(&mut self) -> Vec<Effect> {
         self.toasts.prune();
-
         if self.refresh_in_flight {
-            return;
+            return vec![];
         }
         self.refresh_in_flight = true;
-
-        let api_base = self.api_base.clone();
-        let filter = self.current_filter();
-        let sender = self.event_sender.clone();
-        let manages_server = self.manages_server;
-        let lifecycle_revision = self.lifecycle_revision;
-
-        thread::spawn(move || {
-            let health = api::health(&api_base);
-            let (
-                server_reachable,
-                aria2_reachable,
-                download_speed,
-                active_downloads,
-                aria2_global_options,
-            ) = match health {
-                Ok(h) => (
-                    true,
-                    h.aria2_reachable,
-                    h.download_speed,
-                    h.active_downloads,
-                    h.aria2_global_options,
-                ),
-                Err(_) => (false, false, 0, 0, None),
-            };
-
-            let downloads = api::list_downloads(&api_base, &filter);
-            let queues = api::list_queues(&api_base);
-            // A managed daemon may have been restarted by the supervisor between requests.
-            let (
-                server_reachable,
-                aria2_reachable,
-                download_speed,
-                active_downloads,
-                aria2_global_options,
-            ) = if !server_reachable && manages_server {
-                match api::health(&api_base) {
-                    Ok(h) => (
-                        true,
-                        h.aria2_reachable,
-                        h.download_speed,
-                        h.active_downloads,
-                        h.aria2_global_options,
-                    ),
-                    Err(_) => (false, false, 0, 0, None),
-                }
-            } else {
-                (
-                    server_reachable,
-                    aria2_reachable,
-                    download_speed,
-                    active_downloads,
-                    aria2_global_options,
-                )
-            };
-
-            let _ = sender.send(Event::App(AppEvent::Refreshed {
-                downloads,
-                queues,
-                server_reachable,
-                aria2_reachable,
-                download_speed,
-                active_downloads,
-                aria2_global_options,
-                lifecycle_revision,
-            }));
-        });
+        vec![Effect::Api(ApiRequest::Refresh {
+            filter: self.current_filter(),
+            manages_server: self.manages_server,
+            lifecycle_revision: self.lifecycle_revision,
+        })]
     }
 
     pub fn apply_refresh(
@@ -480,7 +372,7 @@ impl App {
     pub fn apply_download_files_deleted(
         &mut self,
         result: anyhow::Result<common::download::DeleteDownloadFilesResult>,
-    ) {
+    ) -> Vec<Effect> {
         match result {
             Ok(result) if result.missing_payloads > 0 || !result.metadata_complete => {
                 let mut message = if result.missing_payloads > 0 {
@@ -504,10 +396,13 @@ impl App {
             ),
             Err(error) => self.toasts.push(error.to_string(), ToastLevel::Error),
         }
-        self.refresh();
+        self.refresh()
     }
 
-    pub fn apply_torrent_added(&mut self, result: anyhow::Result<DownloadLiveStatus>) {
+    pub fn apply_torrent_added(
+        &mut self,
+        result: anyhow::Result<DownloadLiveStatus>,
+    ) -> Vec<Effect> {
         match result {
             Ok(result) if matches!(result.download.status, DownloadStatus::Error(_)) => {
                 let DownloadStatus::Error(message) = result.download.status else {
@@ -527,7 +422,7 @@ impl App {
             ),
             Err(error) => self.toasts.push(error.to_string(), ToastLevel::Error),
         }
-        self.refresh();
+        self.refresh()
     }
 
     pub fn apply_download_paused(
@@ -649,16 +544,12 @@ fn cycle<T: PartialEq + Clone>(
 mod tests {
     use super::*;
     use common::download::DeleteDownloadFilesResult;
-    use std::sync::mpsc;
     use std::time::Instant;
 
     fn app() -> App {
-        let (sender, _receiver) = mpsc::channel();
         App::new(
-            "http://127.0.0.1:1".into(),
             Theme::default_dark(),
             crate::icons::IconSet::new(crate::icons::GlyphMode::Unicode),
-            sender,
             false,
         )
     }

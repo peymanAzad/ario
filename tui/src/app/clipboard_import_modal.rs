@@ -1,4 +1,5 @@
 use super::*;
+use common::download::{AddDownloadInput, AddDownloadsRequest};
 
 pub struct ClipboardImportModal {
     pub tab: ModalTab,
@@ -136,10 +137,12 @@ impl App {
         }
     }
 
-    fn submit_modal(&mut self, start_immediately: bool) {
-        let Some(modal) = self.modal.take() else {
-            return;
-        };
+    /// Validates and takes the clipboard modal, returning a submit Action.
+    pub fn take_submit_downloads_action(
+        &mut self,
+        start_immediately: bool,
+    ) -> Option<crate::msg::Action> {
+        let modal = self.modal.take()?;
 
         let inputs: Vec<AddDownloadInput> = modal
             .entries
@@ -149,7 +152,7 @@ impl App {
             .collect();
 
         if inputs.is_empty() {
-            return;
+            return None;
         }
 
         let queue_id = self
@@ -164,33 +167,12 @@ impl App {
             Some(modal.finetune)
         };
 
-        let request = AddDownloadsRequest {
+        Some(crate::msg::Action::SubmitDownloads(AddDownloadsRequest {
             inputs,
             queue_id,
             finetune_override,
             start_immediately,
-        };
-
-        let api_base = self.api_base.clone();
-        let sender = self.event_sender.clone();
-        thread::spawn(move || {
-            if let Err(e) = api::add_downloads(&api_base, &request) {
-                let _ = sender.send(Event::App(AppEvent::Toast {
-                    message: e.to_string(),
-                    level: ToastLevel::Error,
-                }));
-            }
-        });
-
-        self.refresh();
-    }
-
-    pub fn start_modal_now(&mut self) {
-        self.submit_modal(true);
-    }
-
-    pub fn save_modal_for_later(&mut self) {
-        self.submit_modal(false);
+        }))
     }
 }
 
