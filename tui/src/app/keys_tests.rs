@@ -67,17 +67,17 @@ fn help_opens_from_every_pane_and_consumes_main_screen_actions() {
 fn add_shortcut_opens_torrent_modal_and_accepts_paste() {
     let mut app = test_app();
     press(&mut app, KeyCode::Char('a'));
-    assert!(app.torrent_modal().unwrap().editing_path);
+    assert!(app.torrent_modal().unwrap().path_input.editing);
 
     paste(&mut app, "  ~/Downloads/example.torrent  ");
     assert_eq!(
-        app.torrent_modal().unwrap().path_input,
+        app.torrent_modal().unwrap().path_input.buffer,
         "~/Downloads/example.torrent"
     );
 
     press(&mut app, KeyCode::Esc);
     assert!(app.torrent_modal().is_some());
-    assert!(!app.torrent_modal().unwrap().editing_path);
+    assert!(!app.torrent_modal().unwrap().path_input.editing);
     press(&mut app, KeyCode::Esc);
     assert!(app.torrent_modal().is_none());
     assert!(!app.should_quit);
@@ -90,19 +90,19 @@ fn torrent_path_focus_can_move_to_tabs_and_back_without_validation() {
 
     press(&mut app, KeyCode::Tab);
     let modal = app.torrent_modal().unwrap();
-    assert!(!modal.editing_path);
+    assert!(!modal.path_input.editing);
     assert_eq!(modal.tab, TorrentFileModalTab::FineTuning);
 
     press(&mut app, KeyCode::BackTab);
     let modal = app.torrent_modal().unwrap();
-    assert!(!modal.editing_path);
+    assert!(!modal.path_input.editing);
     assert_eq!(modal.tab, TorrentFileModalTab::Torrent);
 
     press(&mut app, KeyCode::Enter);
-    assert!(app.torrent_modal().unwrap().editing_path);
+    assert!(app.torrent_modal().unwrap().path_input.editing);
     press(&mut app, KeyCode::Esc);
     assert!(app.torrent_modal().is_some());
-    assert!(!app.torrent_modal().unwrap().editing_path);
+    assert!(!app.torrent_modal().unwrap().path_input.editing);
 }
 
 #[test]
@@ -113,10 +113,10 @@ fn existing_modals_block_help_and_text_editing_keeps_question_mark() {
     app.open_help_modal();
     assert!(app.help_modal().is_none());
     press(&mut app, KeyCode::Enter);
-    let before = app.queue_modal().unwrap().text_buffer.clone();
+    let before = app.queue_modal().unwrap().name_input.buffer.clone();
     press(&mut app, KeyCode::Char('?'));
     assert_eq!(
-        app.queue_modal().unwrap().text_buffer,
+        app.queue_modal().unwrap().name_input.buffer,
         format!("{before}?")
     );
     assert!(app.help_modal().is_none());
@@ -126,9 +126,8 @@ fn existing_modals_block_help_and_text_editing_keeps_question_mark() {
         tab: ModalTab::Urls,
         entries: vec![],
         url_cursor: 0,
-        queue_cursor: 0,
-        finetune: Default::default(),
-        finetune_cursor: 0,
+        queue_picker: crate::modal::widgets::QueuePicker { cursor: 0 },
+        finetune_editor: crate::modal::widgets::FineTuneEditor::new(Default::default()),
     }));
     press(&mut app, KeyCode::Char('?'));
     app.open_help_modal();
@@ -137,9 +136,9 @@ fn existing_modals_block_help_and_text_editing_keeps_question_mark() {
 
     app.modal = Some(crate::modal::Modal::DownloadEdit(DownloadEditModal {
         download_id: 1,
-        finetune: Default::default(),
-        cursor: 0,
-        queue_cursor: 0,
+        finetune_editor: crate::modal::widgets::FineTuneEditor::new(Default::default()),
+        queue_picker: crate::modal::widgets::QueuePicker { cursor: 0 },
+        focusing_queue: false,
         original_queue_id: 1,
         error: None,
     }));
@@ -202,7 +201,7 @@ fn one_time_schedule_uses_adjustable_date_and_time_fields() {
     );
 
     press(&mut app, KeyCode::Enter);
-    assert!(!app.queue_modal().unwrap().editing_text);
+    assert!(!app.queue_modal().unwrap().name_input.editing);
 }
 
 #[test]

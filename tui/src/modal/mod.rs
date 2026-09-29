@@ -4,6 +4,7 @@ pub mod download_edit;
 pub mod help;
 pub mod queue;
 pub mod torrent_file;
+pub mod widgets;
 
 use crossterm::event::KeyEvent;
 use ratatui::{Frame, layout::Rect};

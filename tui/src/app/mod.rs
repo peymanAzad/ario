@@ -25,8 +25,8 @@ use crate::theme::Theme;
 pub use crate::toast::ToastLevel;
 use crate::toast::ToastStack;
 use common::download::{DownloadFilter, DownloadLiveStatus};
-use common::enums::{AllocStrategy, DownloadStatus, FileCategory, StreamPieceSelector};
-use common::finetune::{Aria2GlobalOptions, FineTune};
+use common::enums::{DownloadStatus, FileCategory};
+use common::finetune::Aria2GlobalOptions;
 use common::queue::Queue;
 
 
@@ -494,76 +494,6 @@ impl App {
             }
         }
     }
-}
-
-pub(crate) fn adjust_finetune_field(f: &mut FineTune, cursor: usize, forward: bool) {
-    match cursor {
-        0 => f.connections_per_download = adjust_opt_u32(f.connections_per_download, forward, 16),
-        1 => {
-            f.max_connections_per_server = adjust_opt_u32(f.max_connections_per_server, forward, 16)
-        }
-        2 => f.alloc_strategy = cycle(&ALLOC_STRATEGY_ORDER, &f.alloc_strategy, forward),
-        3 => {
-            f.stream_piece_selector =
-                cycle(&STREAM_SELECTOR_ORDER, &f.stream_piece_selector, forward)
-        }
-        4 => f.max_retries = adjust_opt_u32_including_zero(f.max_retries, forward, 20),
-        5 => {
-            f.retry_wait_seconds = adjust_opt_u32_including_zero(f.retry_wait_seconds, forward, 300)
-        }
-        _ => {}
-    }
-}
-
-fn adjust_opt_u32_including_zero(current: Option<u32>, forward: bool, max: u32) -> Option<u32> {
-    match (current, forward) {
-        (None, true) => Some(0),
-        (None, false) => None,
-        (Some(0), false) => None,
-        (Some(value), true) => Some(value.saturating_add(1).min(max)),
-        (Some(value), false) => Some(value - 1),
-    }
-}
-
-pub fn adjust_opt_u32(current: Option<u32>, forward: bool, max: u32) -> Option<u32> {
-    let val = current.unwrap_or(0);
-    let new_val = if forward {
-        (val + 1).min(max)
-    } else {
-        val.saturating_sub(1)
-    };
-    if new_val == 0 { None } else { Some(new_val) }
-}
-
-const ALLOC_STRATEGY_ORDER: [Option<AllocStrategy>; 5] = [
-    None,
-    Some(AllocStrategy::None),
-    Some(AllocStrategy::Prealloc),
-    Some(AllocStrategy::Falloc),
-    Some(AllocStrategy::Trunc),
-];
-
-const STREAM_SELECTOR_ORDER: [Option<StreamPieceSelector>; 5] = [
-    None,
-    Some(StreamPieceSelector::Default),
-    Some(StreamPieceSelector::InOrder),
-    Some(StreamPieceSelector::Random),
-    Some(StreamPieceSelector::Geom),
-];
-
-fn cycle<T: PartialEq + Clone>(
-    order: &[Option<T>],
-    current: &Option<T>,
-    forward: bool,
-) -> Option<T> {
-    let idx = order.iter().position(|v| v == current).unwrap_or(0);
-    let len = order.len();
-    let new_idx = if forward {
-        (idx + 1) % len
-    } else {
-        (idx + len - 1) % len
-    };
-    order[new_idx].clone()
 }
 
 #[cfg(test)]

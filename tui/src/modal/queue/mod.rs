@@ -11,8 +11,9 @@ use common::{
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{Frame, layout::Rect};
 
-use crate::app::{App, ToastLevel, adjust_finetune_field};
+use crate::app::{App, ToastLevel};
 use crate::effects::{ApiRequest, Effect};
+use crate::modal::widgets::{FineTuneEditor, TextInput};
 use crate::modal::{Component, Ctx, Modal, ModalOutcome};
 use crate::msg::Action;
 
@@ -86,11 +87,10 @@ pub struct QueueModal {
     pub max_concurrent_downloads: u32,
     pub max_retries: u32,
     pub retry_wait_seconds: u32,
-    pub finetune: FineTune,
+    pub finetune_editor: FineTuneEditor,
     /// 0 = name, 1 = max_concurrent_downloads, 2 = max_retries,
-    /// 3 = retry_wait_seconds, 4-7 = the remaining finetune fields
-    /// (same 4-field order as the clipboard modal's
-    /// Fine Tuning tab, reusing `adjust_finetune_field`).
+    /// 3 = retry_wait_seconds, 4-7 = finetune fields 0..=3
+    /// (connections / max connections / alloc / stream selector).
     pub common_cursor: usize,
 
     // ---- Scheduler tab ----
@@ -119,8 +119,7 @@ pub struct QueueModal {
     pub scheduler_cursor: usize,
 
     // ---- Name text-editing state ----
-    pub editing_text: bool,
-    pub text_buffer: String,
+    pub name_input: TextInput,
 
     // ---- Download Items tab (Edit mode only) ----
     /// Local snapshot fetched when the modal opened — reordered in-memory,
@@ -152,51 +151,24 @@ impl QueueModal {
     }
 
     fn start_text_edit(&mut self) {
-        let initial = match (
-            self.tab,
-            self.common_cursor,
-            self.scheduler_cursor,
-            self.recurrence_kind,
-        ) {
-            (QueueModalTab::Common, 0, _, _) => Some(self.name.clone()),
-            _ => None,
-        };
-        if let Some(text) = initial {
-            self.text_buffer = text;
-            self.editing_text = true;
-        }
-    }
-
-    fn text_input(&mut self, c: char) {
-        if self.editing_text {
-            self.text_buffer.push(c);
-        }
-    }
-
-    fn text_backspace(&mut self) {
-        if self.editing_text {
-            self.text_buffer.pop();
+        if self.tab == QueueModalTab::Common && self.common_cursor == 0 {
+            self.name_input.start(self.name.clone());
         }
     }
 
     fn confirm_text_edit(&mut self) {
-        if !self.editing_text {
+        if !self.name_input.editing {
             return;
         }
-        match (
-            self.tab,
-            self.common_cursor,
-            self.scheduler_cursor,
-            self.recurrence_kind,
-        ) {
-            (QueueModalTab::Common, 0, _, _) => self.name = self.text_buffer.clone(),
-            _ => {}
+        if self.tab == QueueModalTab::Common && self.common_cursor == 0 {
+            self.name = self.name_input.take();
+        } else {
+            self.name_input.cancel();
         }
-        self.editing_text = false;
     }
 
     fn cancel_text_edit(&mut self) {
-        self.editing_text = false;
+        self.name_input.cancel();
     }
 
     fn move_down(&mut self) {
@@ -239,7 +211,10 @@ impl QueueModal {
                     self.retry_wait_seconds =
                         adjust_u32_bounded(self.retry_wait_seconds, forward, 0, 300)
                 }
-                4..=7 => adjust_finetune_field(&mut self.finetune, self.common_cursor - 4, forward),
+                4..=7 => {
+                    self.finetune_editor.cursor = self.common_cursor - 4;
+                    self.finetune_editor.adjust(forward);
+                }
                 _ => {}
             },
             QueueModalTab::Scheduler => match (self.scheduler_cursor, self.recurrence_kind) {
@@ -363,7 +338,7 @@ impl QueueModal {
                     max_concurrent_downloads: self.max_concurrent_downloads,
                     max_retries: self.max_retries,
                     retry_wait_seconds: self.retry_wait_seconds,
-                    default_finetune: self.finetune.clone(),
+                    default_finetune: self.finetune_editor.finetune.clone(),
                     scheduler_enabled: self.scheduler_enabled,
                     recurrence,
                     run_missed_on_startup: self.run_missed_on_startup,
@@ -384,7 +359,7 @@ impl QueueModal {
                             max_concurrent_downloads: self.max_concurrent_downloads,
                             max_retries: self.max_retries,
                             retry_wait_seconds: self.retry_wait_seconds,
-                            default_finetune: self.finetune.clone(),
+                            default_finetune: self.finetune_editor.finetune.clone(),
                             scheduler_enabled: self.scheduler_enabled,
                             recurrence,
                             run_missed_on_startup: self.run_missed_on_startup,
@@ -399,17 +374,17 @@ impl QueueModal {
 
 impl Component for QueueModal {
     fn handle_key(&mut self, key: KeyEvent, _ctx: &Ctx<'_>) -> ModalOutcome {
-        if self.editing_text {
+        if self.name_input.editing {
             match key.code {
                 KeyCode::Enter => self.confirm_text_edit(),
                 KeyCode::Esc => self.cancel_text_edit(),
-                KeyCode::Backspace => self.text_backspace(),
+                KeyCode::Backspace => self.name_input.backspace(),
                 KeyCode::Char(c)
                     if !key
                         .modifiers
                         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
                 {
-                    self.text_input(c)
+                    self.name_input.input(c)
                 }
                 _ => {}
             }
@@ -466,9 +441,9 @@ impl Component for QueueModal {
     }
 
     fn handle_paste(&mut self, text: &str) {
-        if self.editing_text {
+        if self.name_input.editing {
             for character in text.chars().filter(|character| !character.is_control()) {
-                self.text_input(character);
+                self.name_input.input(character);
             }
         }
     }
@@ -493,7 +468,7 @@ impl App {
             max_concurrent_downloads: 1,
             max_retries: 3,
             retry_wait_seconds: DEFAULT_RETRY_WAIT_SECONDS,
-            finetune: FineTune::default(),
+            finetune_editor: FineTuneEditor::new(FineTune::default()),
             common_cursor: 0,
             scheduler_enabled: false,
             recurrence_kind: RecurrenceKind::Weekly,
@@ -507,8 +482,7 @@ impl App {
             run_missed_on_startup: false,
             day_cursor: 0,
             scheduler_cursor: 0,
-            editing_text: false,
-            text_buffer: String::new(),
+            name_input: TextInput::default(),
             items: Vec::new(),
             item_cursor: 0,
             error: None,
@@ -579,7 +553,7 @@ impl App {
             max_concurrent_downloads: queue.settings.max_concurrent_downloads,
             max_retries: queue.settings.max_retries,
             retry_wait_seconds: queue.settings.retry_wait_seconds,
-            finetune: queue.settings.default_finetune,
+            finetune_editor: FineTuneEditor::new(queue.settings.default_finetune),
             common_cursor: 0,
             scheduler_enabled: queue.scheduler.enabled,
             recurrence_kind,
@@ -593,8 +567,7 @@ impl App {
             run_missed_on_startup: queue.scheduler.run_missed_on_startup,
             day_cursor: 0,
             scheduler_cursor: 0,
-            editing_text: false,
-            text_buffer: String::new(),
+            name_input: TextInput::default(),
             items: Vec::new(),
             item_cursor: 0,
             error: None,

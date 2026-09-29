@@ -10,14 +10,6 @@ fn app() -> App {
 }
 
 #[test]
-fn optional_retry_values_include_default_zero_and_bounded_values() {
-    assert_eq!(adjust_opt_u32_including_zero(None, true, 20), Some(0));
-    assert_eq!(adjust_opt_u32_including_zero(Some(0), false, 20), None);
-    assert_eq!(adjust_opt_u32_including_zero(Some(20), true, 20), Some(20));
-    assert_eq!(adjust_opt_u32_including_zero(Some(1), false, 20), Some(0));
-}
-
-#[test]
 fn missing_file_result_becomes_a_warning_toast() {
     let mut app = app();
     app.apply_download_files_deleted(Ok(DeleteDownloadFilesResult {

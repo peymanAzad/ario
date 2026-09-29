@@ -2,7 +2,6 @@ use crate::{
     modal::{Ctx, download_edit::DownloadEditModal},
     ui::{centered_rect, field_style},
 };
-use common::enums::{AllocStrategy, StreamPieceSelector};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout},
@@ -37,70 +36,22 @@ pub fn draw_download_modal(f: &mut Frame, modal: &DownloadEditModal, ctx: &Ctx<'
         ])
         .split(inner);
 
-    let alloc_label = match &modal.finetune.alloc_strategy {
-        None => "(queue default)".to_string(),
-        Some(AllocStrategy::None) => "none".to_string(),
-        Some(AllocStrategy::Prealloc) => "prealloc".to_string(),
-        Some(AllocStrategy::Falloc) => "falloc".to_string(),
-        Some(AllocStrategy::Trunc) => "trunc".to_string(),
-    };
-    let selector_label = match &modal.finetune.stream_piece_selector {
-        None => "(queue default)".to_string(),
-        Some(StreamPieceSelector::Default) => "default".to_string(),
-        Some(StreamPieceSelector::InOrder) => "inorder".to_string(),
-        Some(StreamPieceSelector::Random) => "random".to_string(),
-        Some(StreamPieceSelector::Geom) => "geom".to_string(),
-    };
-
     let queue_label = ctx
         .queues
-        .get(modal.queue_cursor)
+        .get(modal.queue_picker.cursor)
         .map(|queue| queue.name.clone())
         .unwrap_or_else(|| "(unavailable)".into());
-    let rows: [(&str, String); 7] = [
-        (
-            "Connections per download",
-            modal
-                .finetune
-                .connections_per_download
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "(queue default)".into()),
-        ),
-        (
-            "Max connections per server",
-            modal
-                .finetune
-                .max_connections_per_server
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "(queue default)".into()),
-        ),
-        ("File allocation", alloc_label),
-        ("Stream piece selector", selector_label),
-        (
-            "Max retries",
-            modal
-                .finetune
-                .max_retries
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "(queue default)".into()),
-        ),
-        (
-            "Retry wait (seconds)",
-            modal
-                .finetune
-                .retry_wait_seconds
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "(queue default)".into()),
-        ),
-        ("Queue", queue_label),
-    ];
 
+    let mut rows = modal.finetune_editor.rows(None);
+    rows.push(("Queue".into(), queue_label));
+
+    let selected = modal.selected_row();
     let items: Vec<ListItem> = rows
         .iter()
         .enumerate()
         .map(|(i, (label, value))| {
             ListItem::new(format!("{label:<28} ◀ {value} ▶"))
-                .style(field_style(theme, i == modal.cursor))
+                .style(field_style(theme, i == selected))
         })
         .collect();
 
