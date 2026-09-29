@@ -155,23 +155,17 @@ fn draw_buttons(f: &mut Frame, ctx: &Ctx<'_>, area: Rect) {
     let spans = vec![
         Span::styled(
             " [s] Start Now ",
-            Style::default()
-                .fg(theme.selected_fg)
-                .bg(theme.status_ok),
+            Style::default().fg(theme.selected_fg).bg(theme.status_ok),
         ),
         Span::raw("  "),
         Span::styled(
             " [w] Save For Later ",
-            Style::default()
-                .fg(theme.selected_fg)
-                .bg(theme.accent),
+            Style::default().fg(theme.selected_fg).bg(theme.accent),
         ),
         Span::raw("  "),
         Span::styled(
             " [c/Esc] Cancel ",
-            Style::default()
-                .fg(theme.foreground)
-                .bg(theme.border),
+            Style::default().fg(theme.foreground).bg(theme.border),
         ),
     ];
     f.render_widget(Paragraph::new(Line::from(spans)), area);

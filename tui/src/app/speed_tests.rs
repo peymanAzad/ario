@@ -7,7 +7,11 @@ use common::finetune::Aria2GlobalOptions;
 use std::time::Instant;
 
 fn app() -> App {
-    App::new(Theme::default_dark(), IconSet::new(GlyphMode::Unicode), false)
+    App::new(
+        Theme::default_dark(),
+        IconSet::new(GlyphMode::Unicode),
+        false,
+    )
 }
 
 #[test]
@@ -15,10 +19,7 @@ fn speed_history_resets_on_connection_loss_and_caps_retained_samples() {
     let mut app = app();
     app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 100, 1, None, 0);
     assert_eq!(app.total_download_speed, 100);
-    assert_eq!(
-        app.speed.history.iter().copied().collect::<Vec<_>>(),
-        [100]
-    );
+    assert_eq!(app.speed.history.iter().copied().collect::<Vec<_>>(), [100]);
 
     app.apply_refresh(Ok(vec![]), Ok(vec![]), false, false, 50, 0, None, 0);
     assert_eq!(app.total_download_speed, 0);
@@ -51,10 +52,7 @@ fn reachable_refresh_throttles_speed_samples() {
     app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 200, 1, None, 0);
     assert_eq!(app.total_download_speed, 200);
     assert_eq!(app.displayed_download_speed(), 125);
-    assert_eq!(
-        app.speed.history.iter().copied().collect::<Vec<_>>(),
-        [100]
-    );
+    assert_eq!(app.speed.history.iter().copied().collect::<Vec<_>>(), [100]);
 
     app.speed.last_sample_at = Some(Instant::now() - SPEED_SAMPLE_INTERVAL);
     app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 300, 1, None, 0);

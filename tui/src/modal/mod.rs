@@ -6,14 +6,13 @@ pub mod queue;
 pub mod torrent_file;
 pub mod widgets;
 
-use crossterm::event::KeyEvent;
-use ratatui::{Frame, layout::Rect};
-use common::finetune::Aria2GlobalOptions;
-use common::queue::Queue;
 use crate::icons::IconSet;
 use crate::msg::Action;
 use crate::theme::Theme;
-use crate::toast::ToastLevel;
+use common::finetune::Aria2GlobalOptions;
+use common::queue::Queue;
+use crossterm::event::KeyEvent;
+use ratatui::{Frame, layout::Rect};
 
 pub use clipboard_import::ClipboardImportModal;
 #[allow(unused_imports)]
@@ -24,9 +23,9 @@ pub use help::HelpModal;
 pub use queue::{QueueModal, QueueModalMode};
 #[allow(unused_imports)]
 pub use queue::{QueueModalTab, RecurrenceKind};
-pub use torrent_file::{TorrentFileModal, MAX_TORRENT_BYTES};
 #[allow(unused_imports)]
 pub use torrent_file::TorrentFileModalTab;
+pub use torrent_file::{MAX_TORRENT_BYTES, TorrentFileModal};
 
 #[derive(Debug)]
 pub enum Modal {
@@ -42,6 +41,11 @@ pub enum ModalOutcome {
     Continue,
     Close,
     Emit(Action),
+    /// Keep the modal open and surface a toast through `Msg::Toast`.
+    Notify {
+        message: String,
+        level: crate::toast::ToastLevel,
+    },
 }
 
 #[allow(dead_code)]
@@ -80,9 +84,7 @@ impl Modal {
             Modal::Help(m) => m.handle_paste(text),
             Modal::Queue(m) => m.handle_paste(text),
             Modal::TorrentFile(m) => m.handle_paste(text),
-            Modal::Confirmation(_)
-            | Modal::ClipboardImport(_)
-            | Modal::DownloadEdit(_) => {}
+            Modal::Confirmation(_) | Modal::ClipboardImport(_) | Modal::DownloadEdit(_) => {}
         }
     }
 
@@ -94,13 +96,6 @@ impl Modal {
             Modal::TorrentFile(m) => m.render(f, area, ctx),
             Modal::ClipboardImport(m) => m.render(f, area, ctx),
             Modal::DownloadEdit(m) => m.render(f, area, ctx),
-        }
-    }
-
-    pub fn take_pending_toast(&mut self) -> Option<(String, ToastLevel)> {
-        match self {
-            Modal::TorrentFile(m) => m.take_pending_toast(),
-            _ => None,
         }
     }
 

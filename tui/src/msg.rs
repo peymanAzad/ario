@@ -16,6 +16,16 @@ use crate::{
     toast::ToastLevel,
 };
 
+/// Create vs update payload for [`Action::SaveQueue`].
+#[derive(Clone, Debug)]
+pub enum QueueSaveRequest {
+    Create(CreateQueueRequest),
+    Update {
+        id: i64,
+        request: UpdateQueueRequest,
+    },
+}
+
 #[derive(Debug)]
 pub enum Msg {
     Tick,
@@ -23,10 +33,7 @@ pub enum Msg {
     Action(Action),
     Lifecycle(LifecycleState),
     Api(ApiResult),
-    Toast {
-        message: String,
-        level: ToastLevel,
-    },
+    Toast { message: String, level: ToastLevel },
 }
 
 #[derive(Clone, Debug)]
@@ -53,6 +60,7 @@ pub enum Action {
     ResumeQueue,
     DeleteQueue,
     RemoveCompleted,
+    CloseModal,
     SubmitDownloads(AddDownloadsRequest),
     SubmitTorrent {
         path: PathBuf,
@@ -60,15 +68,13 @@ pub enum Action {
     },
     SaveQueue {
         mode: QueueModalMode,
-        create: Option<CreateQueueRequest>,
-        update: Option<(i64, UpdateQueueRequest)>,
+        request: QueueSaveRequest,
         ordered_ids: Vec<i64>,
     },
     SaveDownloadEdit {
         id: i64,
         finetune: FineTune,
         queue_id: i64,
-        original_queue_id: i64,
     },
     Confirm(PendingConfirmationAction),
 }
@@ -107,6 +113,7 @@ pub enum ApiResult {
         result: anyhow::Result<Option<DateTime<Utc>>>,
     },
     Failed {
+        context: String,
         error: String,
     },
     /// Successful fire-and-forget call that should trigger a refresh.
@@ -114,10 +121,11 @@ pub enum ApiResult {
 }
 
 impl ApiResult {
-    pub fn from_unit(result: anyhow::Result<()>) -> Self {
+    pub fn from_unit(context: &str, result: anyhow::Result<()>) -> Self {
         match result {
             Ok(()) => Self::Done,
             Err(error) => Self::Failed {
+                context: context.to_string(),
                 error: error.to_string(),
             },
         }

@@ -89,10 +89,7 @@ fn pause_is_marked_pending_and_duplicate_requests_are_suppressed() {
     let effects = app.pause_selected();
     assert!(app.is_download_pausing(1));
     assert_eq!(app.current_download_action(), None);
-    assert!(matches!(
-        effects.as_slice(),
-        [Effect::Api(ApiRequest::PauseDownload(1))]
-    ));
+    assert_eq!(effects, vec![Effect::Api(ApiRequest::PauseDownload(1))]);
     assert!(app.pause_selected().is_empty());
 }
 
@@ -190,7 +187,7 @@ fn destructive_delete_requires_confirmation() {
     assert!(modal.title.contains("Remove"));
     assert!(modal.message.contains("cannot be undone"));
 
-    app.cancel_confirmation();
+    app.modal = None;
     assert!(app.confirmation_modal().is_none());
 }
 

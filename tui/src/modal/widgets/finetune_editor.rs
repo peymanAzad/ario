@@ -42,12 +42,9 @@ impl FineTuneEditor {
         let alloc = match &self.finetune.alloc_strategy {
             Some(strategy) => alloc_strategy_label(strategy),
             None => match globals {
-                Some(options) => aria2_global_label(
-                    options
-                        .alloc_strategy
-                        .as_ref()
-                        .map(alloc_strategy_label),
-                ),
+                Some(options) => {
+                    aria2_global_label(options.alloc_strategy.as_ref().map(alloc_strategy_label))
+                }
                 None => queue_default(),
             },
         };
@@ -81,10 +78,7 @@ impl FineTuneEditor {
             ),
             ("File allocation".into(), alloc),
             ("Stream piece selector".into(), selector),
-            (
-                "Max retries".into(),
-                num(self.finetune.max_retries, None),
-            ),
+            ("Max retries".into(), num(self.finetune.max_retries, None)),
             (
                 "Retry wait (seconds)".into(),
                 num(self.finetune.retry_wait_seconds, None),

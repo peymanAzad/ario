@@ -196,8 +196,7 @@ fn immediate_exit_reports_status_and_retries_after_backoff() {
 fn failed_spawn_recovers_after_backoff() {
     let mut process = isolated_process(false_binary(), "http://127.0.0.1:1".into());
     let script = process.config.log_path.with_extension("sh");
-    Arc::get_mut(&mut process).unwrap().config.binary_path =
-        script.to_string_lossy().into_owned();
+    Arc::get_mut(&mut process).unwrap().config.binary_path = script.to_string_lossy().into_owned();
     let (sender, _receiver) = std::sync::mpsc::channel();
     process.start_supervisor(sender);
     thread::sleep(Duration::from_millis(300));

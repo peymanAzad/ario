@@ -43,7 +43,7 @@ pub struct DownloadLiveStatus {
     pub eta_seconds: Option<u64>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum AddDownloadInput {
     /// A plain HTTP(S) or magnet URL.
     Url(String),
@@ -51,7 +51,7 @@ pub enum AddDownloadInput {
     TorrentFile { filename: String, data: Vec<u8> },
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AddDownloadsRequest {
     pub inputs: Vec<AddDownloadInput>,
     pub queue_id: i64,
@@ -62,7 +62,7 @@ pub struct AddDownloadsRequest {
 }
 
 /// Metadata sent alongside a raw `.torrent` file in the multipart upload API.
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct TorrentUploadMetadata {
     pub queue_id: i64,
     /// `None` = use the queue's `default_finetune` as-is.
@@ -75,7 +75,7 @@ fn default_start_immediately() -> bool {
     true
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct DownloadFilter {
     pub queue_id: Option<i64>,
     pub status: Option<DownloadStatus>,

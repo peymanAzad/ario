@@ -6,16 +6,14 @@ use common::{
     download::{Download, DownloadLiveStatus},
     enums::Recurrence,
     finetune::FineTune,
-    queue::{CreateQueueRequest, DEFAULT_RETRY_WAIT_SECONDS, UpdateQueueRequest},
+    queue::{CreateQueueRequest, DEFAULT_RETRY_WAIT_SECONDS, Queue, UpdateQueueRequest},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{Frame, layout::Rect};
 
-use crate::app::{App, ToastLevel};
-use crate::effects::{ApiRequest, Effect};
 use crate::modal::widgets::{FineTuneEditor, TextInput};
-use crate::modal::{Component, Ctx, Modal, ModalOutcome};
-use crate::msg::Action;
+use crate::modal::{Component, Ctx, ModalOutcome};
+use crate::msg::{Action, QueueSaveRequest};
 
 mod view;
 
@@ -360,7 +358,7 @@ impl QueueModal {
         match self.mode {
             QueueModalMode::Create => ModalOutcome::Emit(Action::SaveQueue {
                 mode: QueueModalMode::Create,
-                create: Some(CreateQueueRequest {
+                request: QueueSaveRequest::Create(CreateQueueRequest {
                     name: self.name.clone(),
                     position: 0,
                     max_concurrent_downloads: self.max_concurrent_downloads,
@@ -371,17 +369,15 @@ impl QueueModal {
                     recurrence,
                     run_missed_on_startup: self.run_missed_on_startup,
                 }),
-                update: None,
                 ordered_ids: Vec::new(),
             }),
             QueueModalMode::Edit { queue_id } => {
                 let ordered_ids: Vec<i64> = self.items.iter().map(|d| d.id).collect();
                 ModalOutcome::Emit(Action::SaveQueue {
                     mode: QueueModalMode::Edit { queue_id },
-                    create: None,
-                    update: Some((
-                        queue_id,
-                        UpdateQueueRequest {
+                    request: QueueSaveRequest::Update {
+                        id: queue_id,
+                        request: UpdateQueueRequest {
                             name: self.name.clone(),
                             position: 0,
                             max_concurrent_downloads: self.max_concurrent_downloads,
@@ -392,7 +388,7 @@ impl QueueModal {
                             recurrence,
                             run_missed_on_startup: self.run_missed_on_startup,
                         },
-                    )),
+                    },
                     ordered_ids,
                 })
             }
@@ -498,15 +494,11 @@ impl Component for QueueModal {
     }
 }
 
-impl App {
-    pub fn open_create_queue_modal(&mut self) {
-        if self.has_open_modal() {
-            return;
-        }
-
+impl QueueModal {
+    pub(crate) fn create() -> Self {
         let (once_start_date, once_start_time, once_end_date, once_end_time) =
             default_once_window();
-        self.modal = Some(Modal::Queue(QueueModal {
+        Self {
             mode: QueueModalMode::Create,
             tab: QueueModalTab::Common,
             name: String::new(),
@@ -531,20 +523,10 @@ impl App {
             items: Vec::new(),
             item_cursor: 0,
             error: None,
-        }));
+        }
     }
 
-    pub fn open_edit_queue_modal(&mut self) -> Vec<Effect> {
-        if self.has_open_modal() {
-            return vec![];
-        }
-        if self.selected_queue == 0 {
-            return vec![];
-        }
-        let Some(queue) = self.queues.get(self.selected_queue - 1).cloned() else {
-            return vec![];
-        };
-
+    pub(crate) fn edit(queue: &Queue) -> Self {
         let (default_start_date, default_start_time, default_end_date, default_end_time) =
             default_once_window();
         let (
@@ -591,14 +573,14 @@ impl App {
             ),
         };
 
-        self.modal = Some(Modal::Queue(QueueModal {
+        Self {
             mode: QueueModalMode::Edit { queue_id: queue.id },
             tab: QueueModalTab::Common,
-            name: queue.name,
+            name: queue.name.clone(),
             max_concurrent_downloads: queue.settings.max_concurrent_downloads,
             max_retries: queue.settings.max_retries,
             retry_wait_seconds: queue.settings.retry_wait_seconds,
-            finetune_editor: FineTuneEditor::new(queue.settings.default_finetune),
+            finetune_editor: FineTuneEditor::new(queue.settings.default_finetune.clone()),
             common_cursor: 0,
             scheduler_enabled: queue.scheduler.enabled,
             recurrence_kind,
@@ -616,44 +598,21 @@ impl App {
             items: Vec::new(),
             item_cursor: 0,
             error: None,
-        }));
-
-        vec![Effect::Api(ApiRequest::ListQueueDownloads {
-            queue_id: queue.id,
-        })]
+        }
     }
 
-    /// Applies the background fetch triggered by `open_edit_queue_modal`.
-    /// Only takes effect if the queue modal is still open — if the user
-    /// cancelled before this arrived, there's nothing to populate.
-    pub fn apply_queue_downloads_loaded(
+    /// Fills the download list when this modal is still editing `queue_id`.
+    pub(crate) fn apply_loaded_downloads(
         &mut self,
         queue_id: i64,
         result: anyhow::Result<Vec<DownloadLiveStatus>>,
     ) {
-        let Some(Modal::Queue(modal)) = &mut self.modal else {
-            return;
-        };
         let matches = matches!(
-            modal.mode,
+            self.mode,
             QueueModalMode::Edit { queue_id: open_id } if open_id == queue_id
         );
         if matches && let Ok(list) = result {
-            modal.set_items(list.into_iter().map(|d| d.download).collect());
-        }
-    }
-
-    pub fn apply_queue_saved(&mut self, result: anyhow::Result<()>) -> Vec<Effect> {
-        if let Err(error) = result {
-            self.apply_toast(error.to_string(), ToastLevel::Error);
-        }
-        self.refresh()
-    }
-
-    #[allow(dead_code)]
-    pub fn cancel_queue_modal(&mut self) {
-        if matches!(self.modal, Some(Modal::Queue(_))) {
-            self.modal = None;
+            self.set_items(list.into_iter().map(|d| d.download).collect());
         }
     }
 }

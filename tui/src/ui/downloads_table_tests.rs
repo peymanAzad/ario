@@ -1,4 +1,5 @@
 use super::*;
+use crate::ui::format::wrap_name;
 use crate::{
     icons::{GlyphMode, IconSet},
     theme::Theme,
@@ -8,7 +9,6 @@ use common::{download::Download, enums::SourceType, finetune::FineTune};
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
-use crate::ui::format::wrap_name;
 
 fn app(mode: GlyphMode) -> App {
     let mut app = App::new(Theme::default_dark(), IconSet::new(mode), false);
@@ -170,9 +170,7 @@ fn middle_truncation_preserves_suffixes_and_graphemes() {
             let short = middle_truncate(text, width, marker);
             assert!(short.width() <= width);
             for grapheme in short.graphemes(true) {
-                assert!(
-                    text.graphemes(true).any(|g| g == grapheme) || marker.contains(grapheme)
-                );
+                assert!(text.graphemes(true).any(|g| g == grapheme) || marker.contains(grapheme));
             }
         }
     }
@@ -316,8 +314,7 @@ fn empty_state_shortcut_colors_match_the_footer() {
 fn selected_download_error_wraps_beneath_filename_with_error_style() {
     let mut app = app(GlyphMode::Unicode);
     app.downloads[0].download.status = DownloadStatus::Error(
-        "connection closed unexpectedly while receiving the archive from the remote server"
-            .into(),
+        "connection closed unexpectedly while receiving the archive from the remote server".into(),
     );
 
     let buffer = render(&app, 60, 12);
@@ -361,8 +358,7 @@ fn responsive_layout_preserves_name_space_and_handles_tiny_terminals() {
     assert_eq!(column_widths(32), vec![22, 9]);
     for mode in [GlyphMode::Ascii, GlyphMode::Unicode, GlyphMode::NerdFont] {
         let mut app = app(mode);
-        app.downloads[0].download.filename =
-            Some(format!("{}.part03.rar", "series".repeat(50)));
+        app.downloads[0].download.filename = Some(format!("{}.part03.rar", "series".repeat(50)));
         for width in [1, 2, 5, 10, 24, 34, 47, 57, 58, 100, 160] {
             for height in [1, 2, 3, 5, 6, 12] {
                 let buffer = render(&app, width, height);

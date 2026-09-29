@@ -94,7 +94,7 @@ fn populated_queue_result_opens_confirmation_with_retention_copy() {
         Some(&PendingConfirmationAction::DeleteQueue { queue_id: 2 })
     );
 
-    app.cancel_confirmation();
+    app.modal = None;
     assert!(app.confirmation_modal().is_none());
     assert_eq!(app.queues.len(), 3);
 }
@@ -102,7 +102,7 @@ fn populated_queue_result_opens_confirmation_with_retention_copy() {
 #[test]
 fn late_queue_confirmation_does_not_replace_help() {
     let mut app = app();
-    app.open_help_modal();
+    app.modal = Some(crate::modal::Modal::Help(crate::modal::HelpModal::default()));
     let _ = app.apply_queue_delete_result(
         2,
         "Second".into(),
@@ -127,9 +127,11 @@ fn successful_delete_selects_the_next_queue_or_previous_at_end() {
         vec![1, 3]
     );
     assert_eq!(app.current_queue().map(|queue| queue.id), Some(3));
-    assert!(app.toasts.iter().any(|toast| {
-        toast.level == ToastLevel::Success && toast.message.contains("Second")
-    }));
+    assert!(
+        app.toasts.iter().any(|toast| {
+            toast.level == ToastLevel::Success && toast.message.contains("Second")
+        })
+    );
 
     // Avoid a second refresh while the first test refresh is in flight.
     app.selected_queue = 2;

@@ -1,7 +1,7 @@
 use super::*;
-use crate::app::{PendingConfirmationAction};
-use crate::modal::ConfirmationModal;
+use crate::app::PendingConfirmationAction;
 use crate::effects::{ApiRequest, Effect};
+use crate::modal::ConfirmationModal;
 
 const MAIN_QUEUE_ID: i64 = 1;
 
@@ -9,8 +9,7 @@ pub(crate) fn queue_start_message(stop: Option<chrono::DateTime<chrono::Utc>>) -
     stop.map(|stop| {
         format!(
             "Queue started. Will pause at {}",
-            stop.with_timezone(&chrono::Local)
-                .format("%Y-%m-%d %H:%M")
+            stop.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M")
         )
     })
     .unwrap_or_else(|| "Queue started".into())

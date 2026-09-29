@@ -5,15 +5,35 @@ use common::{download::TorrentUploadMetadata, finetune::FineTune};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{Frame, layout::Rect};
 
-use crate::app::App;
+use common::queue::Queue;
+
 use crate::modal::widgets::{FineTuneEditor, QueuePicker, TextInput};
-use crate::modal::{Component, Ctx, Modal, ModalOutcome};
+use crate::modal::{Component, Ctx, ModalOutcome};
 use crate::msg::Action;
 use crate::toast::ToastLevel;
 
 mod view;
 
 pub const MAX_TORRENT_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Help section for the torrent-file modal.
+pub const HELP: &[(&str, &str)] = &[
+    (
+        "Tab / Shift+Tab",
+        "Switch between the torrent path and fine-tuning",
+    ),
+    ("Enter", "Edit the torrent path, or accept it while editing"),
+    ("Characters", "Type the torrent path while editing"),
+    ("Backspace", "Delete the last path character while editing"),
+    ("Esc", "Stop path editing, or cancel the dialog"),
+    ("s", "Add the torrent and start it"),
+    ("w", "Add the torrent without starting it"),
+    ("j / Down", "Select the next fine-tuning field"),
+    ("k / Up", "Select the previous fine-tuning field"),
+    ("h / Left", "Choose the previous queue or decrease a field"),
+    ("l / Right", "Choose the next queue or increase a field"),
+    ("c", "Cancel"),
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TorrentFileModalTab {
@@ -28,11 +48,21 @@ pub struct TorrentFileModal {
     pub resolved_path: Option<PathBuf>,
     pub queue_picker: QueuePicker,
     pub finetune_editor: FineTuneEditor,
-    /// Toast to apply after handle_key returns Continue (path validation errors).
-    pub pending_toast: Option<(String, ToastLevel)>,
 }
 
 impl TorrentFileModal {
+    pub(crate) fn open(selected_queue: usize, queues: &[Queue]) -> Self {
+        let mut path_input = TextInput::default();
+        path_input.start(String::new());
+        Self {
+            tab: TorrentFileModalTab::Torrent,
+            path_input,
+            resolved_path: None,
+            queue_picker: QueuePicker::default_for(selected_queue, queues),
+            finetune_editor: FineTuneEditor::new(FineTune::default()),
+        }
+    }
+
     fn stop_path_editing(&mut self) {
         self.path_input.editing = false;
     }
@@ -45,20 +75,22 @@ impl TorrentFileModal {
         };
     }
 
-    fn commit_path(&mut self) {
+    fn commit_path(&mut self) -> ModalOutcome {
         if !self.path_input.editing {
             self.path_input.editing = true;
-            return;
+            return ModalOutcome::Continue;
         }
         match normalize_torrent_path(&self.path_input.buffer) {
             Ok(path) => {
                 self.path_input.buffer = path.to_string_lossy().into_owned();
                 self.resolved_path = Some(path);
                 self.path_input.editing = false;
+                ModalOutcome::Continue
             }
-            Err(error) => {
-                self.pending_toast = Some((error.to_string(), ToastLevel::Error));
-            }
+            Err(error) => ModalOutcome::Notify {
+                message: error.to_string(),
+                level: ToastLevel::Error,
+            },
         }
     }
 
@@ -88,15 +120,14 @@ impl TorrentFileModal {
         let path = match normalize_torrent_path(&self.path_input.buffer) {
             Ok(path) => path,
             Err(error) => {
-                self.pending_toast = Some((error.to_string(), ToastLevel::Error));
-                return ModalOutcome::Continue;
+                return ModalOutcome::Notify {
+                    message: error.to_string(),
+                    level: ToastLevel::Error,
+                };
             }
         };
         self.resolved_path = Some(path.clone());
-        let queue_id = self
-            .queue_picker
-            .selected_id(ctx.queues)
-            .unwrap_or(1);
+        let queue_id = self.queue_picker.selected_id(ctx.queues).unwrap_or(1);
         let finetune = &self.finetune_editor.finetune;
         let finetune_override = (*finetune != FineTune::default()).then_some(finetune.clone());
         ModalOutcome::Emit(Action::SubmitTorrent {
@@ -107,10 +138,6 @@ impl TorrentFileModal {
                 start_immediately,
             },
         })
-    }
-
-    pub fn take_pending_toast(&mut self) -> Option<(String, ToastLevel)> {
-        self.pending_toast.take()
     }
 }
 
@@ -127,8 +154,7 @@ impl Component for TorrentFileModal {
                     return ModalOutcome::Continue;
                 }
                 KeyCode::Enter => {
-                    self.commit_path();
-                    return ModalOutcome::Continue;
+                    return self.commit_path();
                 }
                 KeyCode::Backspace => {
                     self.path_input.backspace();
@@ -154,10 +180,7 @@ impl Component for TorrentFileModal {
                 self.next_tab();
                 ModalOutcome::Continue
             }
-            KeyCode::Enter if self.tab == TorrentFileModalTab::Torrent => {
-                self.commit_path();
-                ModalOutcome::Continue
-            }
+            KeyCode::Enter if self.tab == TorrentFileModalTab::Torrent => self.commit_path(),
             KeyCode::Char('s') => self.try_submit(ctx, true),
             KeyCode::Char('w') => self.try_submit(ctx, false),
             KeyCode::Down | KeyCode::Char('j') => {
@@ -193,11 +216,7 @@ impl Component for TorrentFileModal {
 
     fn hints(&self) -> Vec<(&'static str, &'static str)> {
         if self.path_input.editing {
-            vec![
-                ("Enter", "Accept"),
-                ("Esc", "Stop editing"),
-                ("Tab", "Tab"),
-            ]
+            vec![("Enter", "Accept"), ("Esc", "Stop editing"), ("Tab", "Tab")]
         } else {
             vec![
                 ("s", "Start"),
@@ -206,31 +225,6 @@ impl Component for TorrentFileModal {
                 ("Tab", "Tab"),
                 ("j/k", "Navigate"),
             ]
-        }
-    }
-}
-
-impl App {
-    pub fn open_torrent_file_modal(&mut self) {
-        if self.has_open_modal() {
-            return;
-        }
-        let mut path_input = TextInput::default();
-        path_input.start(String::new());
-        self.modal = Some(Modal::TorrentFile(TorrentFileModal {
-            tab: TorrentFileModalTab::Torrent,
-            path_input,
-            resolved_path: None,
-            queue_picker: QueuePicker::default_for(self.selected_queue, &self.queues),
-            finetune_editor: FineTuneEditor::new(FineTune::default()),
-            pending_toast: None,
-        }));
-    }
-
-    #[allow(dead_code)]
-    pub fn cancel_torrent_file_modal(&mut self) {
-        if matches!(self.modal, Some(Modal::TorrentFile(_))) {
-            self.modal = None;
         }
     }
 }
@@ -297,11 +291,12 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("sample.TORRENT");
         std::fs::write(&path, b"torrent").unwrap();
+        let canonical = path.canonicalize().unwrap();
 
         let quoted = format!("'{}'", path.display());
-        assert_eq!(normalize_torrent_path(&quoted).unwrap(), path);
+        assert_eq!(normalize_torrent_path(&quoted).unwrap(), canonical);
         let escaped = path.to_string_lossy().replace(' ', "\\ ");
-        assert_eq!(normalize_torrent_path(&escaped).unwrap(), path);
+        assert_eq!(normalize_torrent_path(&escaped).unwrap(), canonical);
 
         std::fs::remove_file(path).unwrap();
         std::fs::remove_dir(dir).unwrap();
