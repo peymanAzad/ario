@@ -131,20 +131,11 @@ fn update_action(app: &mut App, action: Action) -> Vec<Effect> {
             id,
             finetune,
             queue_id,
-        } => {
-            let mut effects = Vec::new();
-            let current_queue_id = app
-                .downloads
-                .iter()
-                .find(|download| download.download.id == id)
-                .map(|download| download.download.queue_id);
-            if current_queue_id != Some(queue_id) {
-                effects.push(Effect::Api(ApiRequest::MoveDownloadQueue { id, queue_id }));
-            }
-            effects.push(Effect::Api(ApiRequest::UpdateFinetune { id, finetune }));
-            effects.extend(app.refresh());
-            effects
-        }
+        } => vec![Effect::Api(ApiRequest::SaveDownloadEdit {
+            id,
+            queue_id,
+            finetune,
+        })],
         Action::Confirm(pending) => match pending {
             crate::app::PendingConfirmationAction::DeleteDownloadFiles { download_id } => {
                 app.delete_download_files(download_id)
@@ -189,6 +180,12 @@ fn update_api(app: &mut App, result: ApiResult) -> Vec<Effect> {
         ApiResult::QueueSaved(result) => {
             if let Err(error) = result {
                 app.apply_toast(error.to_string(), ToastLevel::Error);
+            }
+            app.refresh()
+        }
+        ApiResult::DownloadEditSaved(result) => {
+            if let Err(error) = result {
+                app.apply_toast(format!("{error:#}"), ToastLevel::Error);
             }
             app.refresh()
         }
