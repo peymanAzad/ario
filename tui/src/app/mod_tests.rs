@@ -12,6 +12,30 @@ fn app() -> App {
 }
 
 #[test]
+fn queue_start_only_notifies_when_it_has_a_scheduled_stop() {
+    let stop = chrono::DateTime::parse_from_rfc3339("2030-01-07T17:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    for deadline in [None, Some(stop)] {
+        let mut app = app();
+        update::update(
+            &mut app,
+            Msg::Api(ApiResult::QueueResumed {
+                queue_id: 1,
+                result: Ok(deadline),
+            }),
+        );
+        if deadline.is_some() {
+            let toast = app.toasts.iter().last().unwrap();
+            assert_eq!(toast.level, ToastLevel::Success);
+            assert_eq!(toast.message, queues::queue_start_message(stop));
+        } else {
+            assert!(app.toasts.is_empty());
+        }
+    }
+}
+
+#[test]
 fn empty_queue_start_shows_warning() {
     let mut app = app();
     let effects = update::update(&mut app, Msg::Api(ApiResult::QueueNothingToStart));
