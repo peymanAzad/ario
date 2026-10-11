@@ -38,7 +38,7 @@ fn start_message_includes_local_stop_date_and_time() {
     let stop = chrono::DateTime::parse_from_rfc3339("2030-01-07T17:00:00Z")
         .unwrap()
         .with_timezone(&chrono::Utc);
-    let message = queue_start_message(Some(stop));
+    let message = queue_start_message(stop);
     assert!(
         message.contains(
             &stop
@@ -48,7 +48,6 @@ fn start_message_includes_local_stop_date_and_time() {
         )
     );
     assert!(message.starts_with("Queue started. Will pause at "));
-    assert_eq!(queue_start_message(None), "Queue started");
 }
 
 fn app() -> App {

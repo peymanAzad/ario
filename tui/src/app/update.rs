@@ -207,10 +207,11 @@ fn update_api(app: &mut App, result: ApiResult) -> Vec<Effect> {
             queue_id: _,
             result,
         } => match result {
-            Ok(stop) => {
+            Ok(Some(stop)) => {
                 app.apply_toast(queue_start_message(stop), ToastLevel::Success);
                 vec![]
             }
+            Ok(None) => vec![],
             Err(error) => {
                 app.apply_toast(error.to_string(), ToastLevel::Error);
                 vec![]
