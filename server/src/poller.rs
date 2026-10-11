@@ -15,136 +15,136 @@ pub async fn run(state: AppState) {
             return;
         };
 
-        let downloads = match state.db.list_downloads(&DownloadFilter::default()) {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("poller: failed to list downloads: {e}");
-                drop(_activity);
-                tokio::time::sleep(POLL_INTERVAL).await;
-                continue;
-            }
+        poll_once(&state).await;
+        drop(_activity);
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+}
+
+/// One production reconciliation cycle; caller holds the activity gate.
+pub(crate) async fn poll_once(state: &AppState) {
+    let downloads = match state.db.list_downloads(&DownloadFilter::default()) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("poller: failed to list downloads: {e}");
+            return;
+        }
+    };
+
+    for snapshot in downloads {
+        let _control = state.control.lock().await;
+        let Ok(Some(download)) = state.db.get_download(snapshot.id) else {
+            continue;
+        };
+        let Some(gid) = download.aria2_gid.clone() else {
+            continue; // never started in aria2 — nothing to poll
         };
 
-        for snapshot in downloads {
-            let _control = state.control.lock().await;
-            let Ok(Some(download)) = state.db.get_download(snapshot.id) else {
-                continue;
-            };
-            let Some(gid) = download.aria2_gid.clone() else {
-                continue; // never started in aria2 — nothing to poll
-            };
+        if matches!(
+            download.status,
+            DownloadStatus::Completed | DownloadStatus::Error(_) | DownloadStatus::Removed
+        ) {
+            state.live_status.write().await.remove(&download.id);
+            continue;
+        }
 
-            if matches!(
-                download.status,
-                DownloadStatus::Completed | DownloadStatus::Error(_) | DownloadStatus::Removed
-            ) {
-                state.live_status.write().await.remove(&download.id);
-                continue;
-            }
-
-            match state.aria2.tell_status(&gid).await {
-                Ok(status) => {
-                    if download.source_type == SourceType::Magnet && !status.followed_by.is_empty()
-                    {
-                        match adopt_magnet_child(&state, &download, &gid, &status.followed_by).await
-                        {
-                            Ok(()) => {}
-                            Err(error) => eprintln!(
-                                "poller: failed to prepare magnet payload for download {}: {error}",
-                                download.id
-                            ),
-                        }
-                        continue;
+        match state.aria2.tell_status(&gid).await {
+            Ok(status) => {
+                if download.source_type == SourceType::Magnet && !status.followed_by.is_empty() {
+                    match adopt_magnet_child(&state, &download, &gid, &status.followed_by).await {
+                        Ok(()) => {}
+                        Err(error) => eprintln!(
+                            "poller: failed to prepare magnet payload for download {}: {error}",
+                            download.id
+                        ),
                     }
+                    continue;
+                }
 
-                    let (payloads, controls) = status.artifact_paths();
-                    if !payloads.is_empty() {
-                        let artifacts: Vec<DownloadArtifact> = payloads
-                            .into_iter()
-                            .map(|path| DownloadArtifact {
-                                path,
-                                kind: DownloadArtifactKind::Payload,
-                            })
-                            .chain(controls.into_iter().map(|path| DownloadArtifact {
-                                path,
-                                kind: DownloadArtifactKind::Control,
-                            }))
-                            .collect();
-                        if let Err(error) =
-                            state.db.replace_download_artifacts(download.id, &artifacts)
-                        {
-                            eprintln!(
-                                "poller: failed to store artifacts for download {}: {error}",
-                                download.id
-                            );
-                        }
-                    }
-                    let completed_length = crate::live_status::coalesce_completed_length(
-                        status.completed_length.parse().unwrap_or(0),
-                        download.completed_length,
-                    );
-                    let total_length: u64 = status.total_length.parse().unwrap_or(0);
-                    let download_speed: u64 = status.download_speed.parse().unwrap_or(0);
-
-                    if download.completed_length != Some(completed_length)
-                        && let Err(error) = state
-                            .db
-                            .update_download_completed_length(download.id, completed_length)
+                let (payloads, controls) = status.artifact_paths();
+                if !payloads.is_empty() {
+                    let artifacts: Vec<DownloadArtifact> = payloads
+                        .into_iter()
+                        .map(|path| DownloadArtifact {
+                            path,
+                            kind: DownloadArtifactKind::Payload,
+                        })
+                        .chain(controls.into_iter().map(|path| DownloadArtifact {
+                            path,
+                            kind: DownloadArtifactKind::Control,
+                        }))
+                        .collect();
+                    if let Err(error) = state.db.replace_download_artifacts(download.id, &artifacts)
                     {
                         eprintln!(
-                            "poller: failed to persist completed_length for download {}: {error}",
+                            "poller: failed to store artifacts for download {}: {error}",
                             download.id
                         );
                     }
-
-                    let candidates = candidates_from_aria_files(&status.files);
-                    if !candidates.is_empty()
-                        && let Ok(route) = route_for_candidates(&state.config.settings, &candidates)
-                    {
-                        let size = (total_length > 0).then_some(total_length);
-                        let _ = state.db.update_download_resolved_info(
-                            download.id,
-                            &route.filename,
-                            size,
-                            &route.category,
-                        );
-                    }
-
-                    reconcile_transfer_state(
-                        &state,
-                        &download,
-                        &status.status,
-                        completed_length,
-                        download_speed,
-                        status.error_message.as_deref(),
-                    )
-                    .await;
                 }
-                Err(e) => {
+                let completed_length = crate::live_status::coalesce_completed_length(
+                    status.completed_length.parse().unwrap_or(0),
+                    download.completed_length,
+                );
+                let total_length: u64 = status.total_length.parse().unwrap_or(0);
+                let download_speed: u64 = status.download_speed.parse().unwrap_or(0);
+
+                if download.completed_length != Some(completed_length)
+                    && let Err(error) = state
+                        .db
+                        .update_download_completed_length(download.id, completed_length)
+                {
                     eprintln!(
-                        "poller: tellStatus failed for download {} (gid {gid}): {e}",
+                        "poller: failed to persist completed_length for download {}: {error}",
                         download.id
                     );
                 }
+
+                let candidates = candidates_from_aria_files(&status.files);
+                if !candidates.is_empty()
+                    && let Ok(route) = route_for_candidates(&state.config.settings, &candidates)
+                {
+                    let size = (total_length > 0).then_some(total_length);
+                    let _ = state.db.update_download_resolved_info(
+                        download.id,
+                        &route.filename,
+                        size,
+                        &route.category,
+                    );
+                }
+
+                reconcile_transfer_state(
+                    &state,
+                    &download,
+                    &status.status,
+                    completed_length,
+                    download_speed,
+                    status.error_message.as_deref(),
+                )
+                .await;
+            }
+            Err(e) => {
+                eprintln!(
+                    "poller: tellStatus failed for download {} (gid {gid}): {e}",
+                    download.id
+                );
             }
         }
-        {
-            let _control = state.control.lock().await;
-            match state.db.list_queues() {
-                Ok(queues) => {
-                    for queue in queues {
-                        if let Err(error) =
-                            crate::scheduler::reconcile_queue(&state, queue.id, state.now()).await
-                        {
-                            eprintln!("queue {}: reconciliation failed: {error}", queue.id);
-                        }
+    }
+    {
+        let _control = state.control.lock().await;
+        match state.db.list_queues() {
+            Ok(queues) => {
+                for queue in queues {
+                    if let Err(error) =
+                        crate::scheduler::reconcile_queue(&state, queue.id, state.now()).await
+                    {
+                        eprintln!("queue {}: reconciliation failed: {error}", queue.id);
                     }
                 }
-                Err(error) => eprintln!("poller: failed to list queues: {error}"),
             }
+            Err(error) => eprintln!("poller: failed to list queues: {error}"),
         }
-        drop(_activity);
-        tokio::time::sleep(POLL_INTERVAL).await;
     }
 }
 

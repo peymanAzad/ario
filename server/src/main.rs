@@ -57,17 +57,7 @@ async fn main() -> anyhow::Result<()> {
         .with_aria2_global_options(aria2_global_options);
     tokio::spawn(poller::run(state.clone()));
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
-
-    let app = Router::new()
-        .merge(routes::downloads::router())
-        .merge(routes::queues::router())
-        .merge(routes::misc::router())
-        .layer(cors)
-        .with_state(state.clone());
+    let app = router(state.clone());
 
     let listen_addr = SocketAddr::new(launch.host, launch.port);
     let listener = tokio::net::TcpListener::bind(listen_addr).await?;
@@ -89,6 +79,24 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+pub(crate) fn router(state: AppState) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
+    Router::new()
+        .merge(routes::downloads::router())
+        .merge(routes::queues::router())
+        .merge(routes::misc::router())
+        .layer(cors)
+        .with_state(state)
+}
+
+#[cfg(test)]
+#[path = "tests/mod.rs"]
+mod integration_tests;
 
 async fn load_aria2_global_options(
     client: &Aria2Client,
