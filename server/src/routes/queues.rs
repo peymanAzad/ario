@@ -230,6 +230,11 @@ async fn resume_queue(
         .db
         .get_queue(id)?
         .ok_or_else(|| AppError::NotFound(format!("queue {id}")))?;
+    if state.db.list_startable_downloads(id, true)?.is_empty() {
+        return Err(AppError::Conflict(
+            "Queue has no pending or paused downloads".into(),
+        ));
+    }
     crate::scheduler::prepare_start(&state, &queue, state.now()).await?;
     state.db.set_queue_scheduler_suppression(id, None)?;
     state
@@ -351,6 +356,72 @@ mod control_tests {
                 completed_at: None,
             })
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn queues_without_startable_downloads_are_rejected_without_mutation() {
+        use http_body_util::BodyExt;
+        for statuses in [
+            vec![],
+            vec![DownloadStatus::Completed],
+            vec![DownloadStatus::Error("failed".into())],
+            vec![DownloadStatus::Removed],
+            vec![
+                DownloadStatus::Completed,
+                DownloadStatus::Error("failed".into()),
+            ],
+        ] {
+            let state = state();
+            for status in statuses {
+                let id = download(&state);
+                state.db.update_download_status(id, &status).unwrap();
+            }
+            let mut queue = state.db.get_queue(1).unwrap().unwrap();
+            queue.scheduler.enabled = true;
+            queue.scheduler.recurrence = Recurrence::Once {
+                start: state.now() - Duration::hours(1),
+                end: state.now() + Duration::hours(1),
+            };
+            state.db.update_queue(&queue).unwrap();
+            let occurrence = current_schedule_occurrence(&queue.scheduler.recurrence, state.now());
+            state
+                .db
+                .set_queue_scheduler_suppression(1, occurrence.as_deref())
+                .unwrap();
+            state
+                .db
+                .set_queue_started_occurrence(1, Some("previous-run"))
+                .unwrap();
+            let response = router()
+                .with_state(state.clone())
+                .oneshot(
+                    Request::post("/queues/1/resume")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let body: common::api::ApiResponse<()> = serde_json::from_slice(&bytes).unwrap();
+            assert!(matches!(body, common::api::ApiResponse::Error { message }
+                if message == "Queue has no pending or paused downloads"));
+            let queue = state.db.get_queue(1).unwrap().unwrap();
+            assert_eq!(queue.status, QueueStatus::Paused);
+            assert!(queue.scheduled_stop_at.is_none());
+            assert_eq!(
+                state.db.get_queue_scheduler_suppression(1).unwrap(),
+                occurrence
+            );
+            assert_eq!(
+                state.db.get_queue_started_occurrence(1).unwrap().as_deref(),
+                Some("previous-run")
+            );
+            assert_eq!(
+                effective_queue_status(&state.db, &queue, state.now()).unwrap(),
+                QueueStatus::Paused
+            );
+        }
     }
 
     #[tokio::test]

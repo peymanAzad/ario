@@ -171,7 +171,7 @@ fn execute(base: &str, request: ApiRequest) -> ApiResult {
             ApiResult::from_unit("pause queue", api::pause_queue(base, id))
         }
         ApiRequest::ResumeQueue(id) => match api::resume_queue(base, id) {
-            Ok(()) => {
+            Ok(api::QueueResumeOutcome::Started) => {
                 let stop = api::list_queues(base)
                     .ok()
                     .and_then(|queues| queues.into_iter().find(|queue| queue.id == id))
@@ -181,6 +181,7 @@ fn execute(base: &str, request: ApiRequest) -> ApiResult {
                     result: Ok(stop),
                 }
             }
+            Ok(api::QueueResumeOutcome::NothingToStart) => ApiResult::QueueNothingToStart,
             Err(error) => ApiResult::Failed {
                 context: "resume queue".to_string(),
                 error: error.to_string(),
@@ -371,6 +372,19 @@ mod tests {
             requests
         });
         (base, server)
+    }
+
+    #[test]
+    fn empty_queue_start_produces_warning_result_without_fetching_queues() {
+        let (base, server) = mock_server(vec![(
+            "409 Conflict",
+            r#"{"result":"error","message":"Queue has no pending or paused downloads"}"#.into(),
+        )]);
+        assert!(matches!(
+            execute(&base, ApiRequest::ResumeQueue(1)),
+            ApiResult::QueueNothingToStart
+        ));
+        assert_eq!(server.join().unwrap().len(), 1);
     }
 
     #[test]

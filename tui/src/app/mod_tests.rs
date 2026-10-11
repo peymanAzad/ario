@@ -12,6 +12,16 @@ fn app() -> App {
 }
 
 #[test]
+fn empty_queue_start_shows_warning() {
+    let mut app = app();
+    let effects = update::update(&mut app, Msg::Api(ApiResult::QueueNothingToStart));
+    assert!(effects.is_empty());
+    let toast = app.toasts.iter().last().unwrap();
+    assert_eq!(toast.level, ToastLevel::Warning);
+    assert_eq!(toast.message, "Queue has no pending or paused downloads");
+}
+
+#[test]
 fn missing_file_result_becomes_a_warning_toast() {
     let mut app = app();
     app.apply_download_files_deleted(Ok(DeleteDownloadFilesResult {
