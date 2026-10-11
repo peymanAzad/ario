@@ -216,6 +216,13 @@ fn update_api(app: &mut App, result: ApiResult) -> Vec<Effect> {
                 vec![]
             }
         },
+        ApiResult::QueueNothingToStart => {
+            app.apply_toast(
+                "Queue has no pending or paused downloads".into(),
+                ToastLevel::Warning,
+            );
+            vec![]
+        }
         ApiResult::Failed { context, error } => {
             app.apply_toast(format!("{context}: {error}"), ToastLevel::Error);
             vec![]

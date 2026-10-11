@@ -14,6 +14,12 @@ pub enum DeleteQueueOutcome {
     NeedsConfirmation,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueueResumeOutcome {
+    Started,
+    NothingToStart,
+}
+
 #[derive(Deserialize)]
 pub struct HealthResponse {
     #[allow(dead_code)]
@@ -114,13 +120,15 @@ pub fn pause_queue(base: &str, queue_id: i64) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn resume_queue(base: &str, queue_id: i64) -> anyhow::Result<()> {
-    ensure_success(
-        client()
-            .post(format!("{base}/queues/{queue_id}/resume"))
-            .send()?,
-    )?;
-    Ok(())
+pub fn resume_queue(base: &str, queue_id: i64) -> anyhow::Result<QueueResumeOutcome> {
+    let response = client()
+        .post(format!("{base}/queues/{queue_id}/resume"))
+        .send()?;
+    if response.status() == reqwest::StatusCode::CONFLICT {
+        return Ok(QueueResumeOutcome::NothingToStart);
+    }
+    ensure_success(response)?;
+    Ok(QueueResumeOutcome::Started)
 }
 
 pub fn delete_queue(

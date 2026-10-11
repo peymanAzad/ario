@@ -113,6 +113,7 @@ pub enum ApiResult {
         queue_id: i64,
         result: anyhow::Result<Option<DateTime<Utc>>>,
     },
+    QueueNothingToStart,
     Failed {
         context: String,
         error: String,

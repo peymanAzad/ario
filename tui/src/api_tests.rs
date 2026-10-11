@@ -54,7 +54,7 @@ fn expired_start_errors_expose_server_message_for_queue_individual_and_immediate
     for path in ["/queues/1/resume", "/downloads/2/resume", "/downloads"] {
         let (base, server) = mock_response("400 Bad Request", &body);
         let result = match path {
-            "/queues/1/resume" => resume_queue(&base, 1),
+            "/queues/1/resume" => resume_queue(&base, 1).map(|_| ()),
             "/downloads/2/resume" => resume_download(&base, 2),
             _ => add_downloads(
                 &base,
@@ -111,12 +111,25 @@ fn unrecognized_error_bodies_fall_back_to_actual_status() {
 }
 
 #[test]
+fn queue_resume_conflict_reports_nothing_to_start() {
+    let (base, server) = mock_response(
+        "409 Conflict",
+        r#"{"result":"error","message":"Queue has no pending or paused downloads"}"#,
+    );
+    assert_eq!(
+        resume_queue(&base, 1).unwrap(),
+        QueueResumeOutcome::NothingToStart
+    );
+    server.join().unwrap();
+}
+
+#[test]
 fn successful_responses_keep_json_and_empty_bodies_intact() {
     let (base, server) = mock_response("200 OK", "[]");
     assert!(list_queues(&base).unwrap().is_empty());
     server.join().unwrap();
     let (base, server) = mock_response("204 No Content", "");
-    resume_queue(&base, 1).unwrap();
+    assert_eq!(resume_queue(&base, 1).unwrap(), QueueResumeOutcome::Started);
     server.join().unwrap();
 }
 
