@@ -202,3 +202,59 @@ impl Component for ClipboardImportModal {
         ]
     }
 }
+
+impl ClipboardImportModal {
+    pub(crate) fn handle_intent(
+        &mut self,
+        intent: crate::mouse::ModalIntent,
+        ctx: &Ctx<'_>,
+    ) -> ModalOutcome {
+        use crate::mouse::{Command as C, ModalIntent as I};
+        match intent {
+            I::Tab(index) => {
+                self.tab = if index == 0 {
+                    ModalTab::Urls
+                } else {
+                    ModalTab::FineTuning
+                }
+            }
+            I::Field(index) => {
+                if self.tab == ModalTab::Urls {
+                    self.url_cursor = index.min(self.entries.len().saturating_sub(1));
+                } else {
+                    self.finetune_editor.cursor = index.min(5);
+                }
+            }
+            I::ToggleUrl(index) => {
+                self.url_cursor = index;
+                self.toggle_selected_url();
+            }
+            I::Adjust { field, forward } => {
+                if self.tab == ModalTab::FineTuning
+                    && let Some(index) = field
+                {
+                    self.finetune_editor.cursor = index.min(5);
+                }
+                self.adjust(forward, ctx.queues.len());
+            }
+            I::Navigate(forward) => {
+                if forward {
+                    self.move_down()
+                } else {
+                    self.move_up()
+                }
+            }
+            I::Command(command) => match command {
+                C::Start => return self.try_submit(ctx, true),
+                C::Later | C::Save => return self.try_submit(ctx, false),
+                C::Cancel => return ModalOutcome::Close,
+                C::All => self.select_all(),
+                C::None => self.select_none(),
+                C::NextTab | C::PrevTab => self.next_tab(),
+                _ => {}
+            },
+            _ => {}
+        }
+        ModalOutcome::Continue
+    }
+}

@@ -332,3 +332,63 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 }
+
+impl TorrentFileModal {
+    pub(crate) fn handle_intent(
+        &mut self,
+        intent: crate::mouse::ModalIntent,
+        ctx: &Ctx<'_>,
+    ) -> ModalOutcome {
+        use crate::mouse::{Command as C, ModalIntent as I};
+        match intent {
+            I::Text => self.path_input.editing = true,
+            I::Queue => self.stop_path_editing(),
+            I::Tab(index) => {
+                self.stop_path_editing();
+                self.tab = if index == 0 {
+                    TorrentFileModalTab::Torrent
+                } else {
+                    TorrentFileModalTab::FineTuning
+                };
+            }
+            I::Field(index) => {
+                self.stop_path_editing();
+                if self.tab == TorrentFileModalTab::FineTuning {
+                    self.finetune_editor.cursor = index.min(5);
+                }
+            }
+            I::Adjust { field, forward } => {
+                self.stop_path_editing();
+                if self.tab == TorrentFileModalTab::FineTuning
+                    && let Some(index) = field
+                {
+                    self.finetune_editor.cursor = index.min(5);
+                }
+                self.adjust(forward, ctx.queues.len());
+            }
+            I::Navigate(forward) => {
+                self.stop_path_editing();
+                if forward {
+                    self.move_down()
+                } else {
+                    self.move_up()
+                }
+            }
+            I::Command(command) => match command {
+                C::Start => return self.try_submit(ctx, true),
+                C::Later | C::Save => return self.try_submit(ctx, false),
+                C::Cancel => return ModalOutcome::Close,
+                C::NextTab | C::PrevTab => self.next_tab(),
+                C::Accept => return self.commit_path(),
+                C::Discard => self.stop_path_editing(),
+                C::Erase => {
+                    self.path_input.backspace();
+                    self.resolved_path = None;
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+        ModalOutcome::Continue
+    }
+}

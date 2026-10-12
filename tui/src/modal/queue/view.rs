@@ -1,16 +1,17 @@
+use crate::mouse::{self, Command as C, ModalIntent as I, ScrollTarget as S};
 use crate::{
     modal::{
         Ctx,
         queue::{QueueModal, QueueModalMode, QueueModalTab, RecurrenceKind},
     },
-    ui::{centered_rect, field_style},
+    ui::centered_rect,
 };
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph},
 };
 
 pub fn draw_queue_modal(f: &mut Frame, modal: &QueueModal, ctx: &Ctx<'_>) {
@@ -45,11 +46,11 @@ pub fn draw_queue_modal(f: &mut Frame, modal: &QueueModal, ctx: &Ctx<'_>) {
         ])
         .split(inner);
 
-    draw_queue_modal_tab_bar(f, theme, modal, layout[0]);
+    draw_queue_modal_tab_bar(f, ctx, modal, layout[0]);
     match modal.tab {
         QueueModalTab::Common => draw_queue_modal_common_tab(f, ctx, modal, layout[1]),
-        QueueModalTab::Scheduler => draw_queue_modal_scheduler_tab(f, theme, modal, layout[1]),
-        QueueModalTab::DownloadItems => draw_queue_modal_items_tab(f, theme, modal, layout[1]),
+        QueueModalTab::Scheduler => draw_queue_modal_scheduler_tab(f, ctx, modal, layout[1]),
+        QueueModalTab::DownloadItems => draw_queue_modal_items_tab(f, ctx, modal, layout[1]),
     }
 
     if let Some(err) = &modal.error {
@@ -59,15 +60,11 @@ pub fn draw_queue_modal(f: &mut Frame, modal: &QueueModal, ctx: &Ctx<'_>) {
         );
     }
 
-    draw_queue_modal_buttons(f, theme, modal, layout[3]);
+    draw_queue_modal_buttons(f, ctx, modal, layout[3]);
 }
 
-fn draw_queue_modal_tab_bar(
-    f: &mut Frame,
-    theme: &crate::theme::Theme,
-    modal: &QueueModal,
-    area: Rect,
-) {
+fn draw_queue_modal_tab_bar(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal, area: Rect) {
+    let theme = ctx.theme;
     let tab_style = |active: bool| {
         if active {
             Style::default()
@@ -98,11 +95,20 @@ fn draw_queue_modal_tab_bar(
 
     spans.push(Span::raw("   (Tab to switch)"));
 
+    mouse::spans(
+        ctx.interactions,
+        area,
+        &spans,
+        &[
+            (0, mouse::modal_target(I::Tab(0))),
+            (2, mouse::modal_target(I::Tab(1))),
+            (4, mouse::modal_target(I::Tab(2))),
+        ],
+    );
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn draw_queue_modal_common_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal, area: Rect) {
-    let theme = ctx.theme;
     let name_display = if modal.name_input.editing && modal.common_cursor == 0 {
         format!("{}▏", modal.name_input.buffer)
     } else {
@@ -134,204 +140,147 @@ fn draw_queue_modal_common_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal,
         rows.push((label, format!("◀ {value} ▶")));
     }
 
-    let items: Vec<ListItem> = rows
+    let rows = rows
+        .into_iter()
+        .map(|(label, value)| format!("{label:<28} {value}"))
+        .collect::<Vec<_>>();
+    let (inner, offset) = mouse::fields(
+        f,
+        ctx,
+        S::Common,
+        area,
+        modal.common_cursor,
+        &rows,
+        " j/k: field   h/l: adjust   Enter: edit name ",
+    );
+    if offset == 0 && inner.height > 0 {
+        ctx.interactions.borrow_mut().add(
+            Rect::new(inner.x, inner.y, inner.width, 1),
+            mouse::modal_target(I::Text),
+        );
+    }
+}
+
+fn draw_queue_modal_scheduler_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal, area: Rect) {
+    let day_spans = std::iter::once(Span::raw("Days:  "))
+        .chain(
+            ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+                .into_iter()
+                .enumerate()
+                .map(|(i, day)| {
+                    let style = if modal.scheduler_cursor == 2 && modal.day_cursor == i {
+                        Style::default()
+                            .fg(ctx.theme.selected_fg)
+                            .bg(ctx.theme.accent)
+                            .add_modifier(Modifier::BOLD)
+                    } else if modal.weekly_days[i] {
+                        Style::default().fg(ctx.theme.status_ok)
+                    } else {
+                        Style::default().fg(ctx.theme.text_muted)
+                    };
+                    Span::styled(
+                        format!(" {}{day} ", if modal.weekly_days[i] { "✓" } else { " " }),
+                        style,
+                    )
+                }),
+        )
+        .collect::<Vec<_>>();
+    let mut rows = vec![
+        format!(
+            "Scheduler enabled             ◀ {} ▶",
+            if modal.scheduler_enabled { "yes" } else { "no" }
+        ),
+        format!(
+            "Recurrence                    ◀ {} ▶",
+            if modal.recurrence_kind == RecurrenceKind::Weekly {
+                "weekly"
+            } else {
+                "one-time"
+            }
+        ),
+    ];
+    if modal.recurrence_kind == RecurrenceKind::Weekly {
+        rows.push(
+            day_spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+        );
+        rows.push(format!(
+            "Start time                    ◀ {} ▶",
+            modal.weekly_start.format("%H:%M")
+        ));
+        rows.push(format!(
+            "End time                      ◀ {} ▶",
+            modal.weekly_end.format("%H:%M")
+        ));
+    } else {
+        rows.push(format!(
+            "Start date                    ◀ {} ▶",
+            modal.once_start_date.format("%Y-%m-%d")
+        ));
+        rows.push(format!(
+            "Start time                    ◀ {} ▶",
+            modal.once_start_time.format("%H:%M")
+        ));
+        rows.push(format!(
+            "End date                      ◀ {} ▶",
+            modal.once_end_date.format("%Y-%m-%d")
+        ));
+        rows.push(format!(
+            "End time                      ◀ {} ▶",
+            modal.once_end_time.format("%H:%M")
+        ));
+    }
+    rows.push(format!(
+        "Run missed on startup         ◀ {} ▶",
+        if modal.run_missed_on_startup {
+            "yes"
+        } else {
+            "no"
+        }
+    ));
+    let (inner, offset) = mouse::fields(
+        f,
+        ctx,
+        S::Scheduler,
+        area,
+        modal.scheduler_cursor,
+        &rows,
+        " j/k: field   h/l: adjust ",
+    );
+    for (index, _text) in rows
         .iter()
         .enumerate()
-        .map(|(i, (label, value))| {
-            ListItem::new(format!("{label:<28} {value}"))
-                .style(field_style(theme, i == modal.common_cursor))
-        })
-        .collect();
-
-    let list = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.border))
-            .title(Span::styled(
-                " j/k: field   h/l: adjust   Enter: edit name ",
-                Style::default().fg(theme.text_muted),
-            )),
-    );
-
-    f.render_widget(list, area);
-}
-
-fn draw_queue_modal_scheduler_tab(
-    f: &mut Frame,
-    theme: &crate::theme::Theme,
-    modal: &QueueModal,
-    area: Rect,
-) {
-    let layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(0)])
-        .split(area);
-
-    let enabled_style = field_style(theme, modal.scheduler_cursor == 0);
-    let kind_style = field_style(theme, modal.scheduler_cursor == 1);
-    let top_lines = vec![
-        Line::from(Span::styled(
-            format!(
-                "Scheduler enabled{:<10} ◀ {} ▶",
-                "",
-                if modal.scheduler_enabled { "yes" } else { "no" }
-            ),
-            enabled_style,
-        )),
-        Line::from(Span::styled(
-            format!(
-                "Recurrence{:<19} ◀ {} ▶",
-                "",
-                match modal.recurrence_kind {
-                    RecurrenceKind::Weekly => "weekly",
-                    RecurrenceKind::Once => "one-time",
-                }
-            ),
-            kind_style,
-        )),
-    ];
-    f.render_widget(Paragraph::new(top_lines), layout[0]);
-
-    match modal.recurrence_kind {
-        RecurrenceKind::Weekly => draw_weekly_fields(f, theme, modal, layout[1]),
-        RecurrenceKind::Once => draw_once_fields(f, theme, modal, layout[1]),
+        .skip(offset)
+        .take(inner.height as usize)
+    {
+        let row_area = Rect::new(inner.x, inner.y + (index - offset) as u16, inner.width, 1);
+        if index == 0 || index == rows.len() - 1 {
+            ctx.interactions.borrow_mut().add(
+                row_area,
+                mouse::modal_target(I::Adjust {
+                    field: Some(index),
+                    forward: true,
+                }),
+            );
+        }
+        if index == 2 && modal.recurrence_kind == RecurrenceKind::Weekly {
+            f.render_widget(
+                Paragraph::new(Line::from(day_spans.clone()))
+                    .style(Style::default().bg(ratatui::style::Color::Reset)),
+                row_area,
+            );
+            let targets = (0..7)
+                .map(|i| (i + 1, mouse::modal_target(I::Day(i))))
+                .collect::<Vec<_>>();
+            mouse::spans(ctx.interactions, row_area, &day_spans, &targets);
+        }
     }
 }
 
-fn draw_weekly_fields(f: &mut Frame, theme: &crate::theme::Theme, modal: &QueueModal, area: Rect) {
-    const DAY_LABELS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-    let days_row_active = modal.scheduler_cursor == 2;
-    let mut day_spans = vec![Span::raw("Days:  ")];
-    for (i, label) in DAY_LABELS.iter().enumerate() {
-        let checked = modal.weekly_days[i];
-        let is_cursor = days_row_active && modal.day_cursor == i;
-        let text = format!(" {}{} ", if checked { "✓" } else { " " }, label);
-        let style = if is_cursor {
-            field_style(theme, true)
-        } else if checked {
-            Style::default().fg(theme.status_ok)
-        } else {
-            Style::default().fg(theme.text_muted)
-        };
-        day_spans.push(Span::styled(text, style));
-    }
-
-    let start_style = field_style(theme, modal.scheduler_cursor == 3);
-    let end_style = field_style(theme, modal.scheduler_cursor == 4);
-    let run_missed_style = field_style(theme, modal.scheduler_cursor == 5);
-
-    let lines = vec![
-        Line::from(day_spans),
-        Line::from(""),
-        Line::from(Span::styled(
-            format!(
-                "Start time            ◀ {} ▶",
-                modal.weekly_start.format("%H:%M")
-            ),
-            start_style,
-        )),
-        Line::from(Span::styled(
-            format!(
-                "End time              ◀ {} ▶",
-                modal.weekly_end.format("%H:%M")
-            ),
-            end_style,
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            format!(
-                "Catch up in open window ◀ {} ▶",
-                if modal.run_missed_on_startup {
-                    "yes"
-                } else {
-                    "no"
-                }
-            ),
-            run_missed_style,
-        )),
-    ];
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.border))
-        .title(Span::styled(
-            " j/k: field   h/l: adjust / move day   space: toggle day ",
-            Style::default().fg(theme.text_muted),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-    f.render_widget(Paragraph::new(lines), inner);
-}
-
-fn draw_once_fields(f: &mut Frame, theme: &crate::theme::Theme, modal: &QueueModal, area: Rect) {
-    let start_date_style = field_style(theme, modal.scheduler_cursor == 2);
-    let start_time_style = field_style(theme, modal.scheduler_cursor == 3);
-    let end_date_style = field_style(theme, modal.scheduler_cursor == 4);
-    let end_time_style = field_style(theme, modal.scheduler_cursor == 5);
-    let run_missed_style = field_style(theme, modal.scheduler_cursor == 6);
-
-    let lines = vec![
-        Line::from(Span::styled(
-            format!(
-                "Start date            ◀ {} ▶",
-                modal.once_start_date.format("%Y-%m-%d")
-            ),
-            start_date_style,
-        )),
-        Line::from(Span::styled(
-            format!(
-                "Start time            ◀ {} ▶",
-                modal.once_start_time.format("%H:%M")
-            ),
-            start_time_style,
-        )),
-        Line::from(Span::styled(
-            format!(
-                "End date              ◀ {} ▶",
-                modal.once_end_date.format("%Y-%m-%d")
-            ),
-            end_date_style,
-        )),
-        Line::from(Span::styled(
-            format!(
-                "End time              ◀ {} ▶",
-                modal.once_end_time.format("%H:%M")
-            ),
-            end_time_style,
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            format!(
-                "Run missed on startup  ◀ {} ▶",
-                if modal.run_missed_on_startup {
-                    "yes"
-                } else {
-                    "no"
-                }
-            ),
-            run_missed_style,
-        )),
-    ];
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.border))
-        .title(Span::styled(
-            " j/k: field   h/l: adjust date or time ",
-            Style::default().fg(theme.text_muted),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-    f.render_widget(Paragraph::new(lines), inner);
-}
-
-fn draw_queue_modal_items_tab(
-    f: &mut Frame,
-    theme: &crate::theme::Theme,
-    modal: &QueueModal,
-    area: Rect,
-) {
+fn draw_queue_modal_items_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal, area: Rect) {
+    let theme = ctx.theme;
     if modal.items.is_empty() {
         f.render_widget(
             Paragraph::new("No downloads in this queue (or still loading…)")
@@ -346,42 +295,31 @@ fn draw_queue_modal_items_tab(
         return;
     }
 
-    let items: Vec<ListItem> = modal
+    let rows = modal
         .items
         .iter()
         .enumerate()
-        .map(|(i, d)| {
-            let label = d.filename.clone().unwrap_or_else(|| d.url.clone());
-            ListItem::new(format!("{}. {label}", i + 1))
-                .style(field_style(theme, i == modal.item_cursor))
-        })
-        .collect();
-
-    let list = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.border))
-            .title(Span::styled(
-                " j/k: select   J/K: move item down/up ",
-                Style::default().fg(theme.text_muted),
-            )),
+        .map(|(i, d)| format!("{}. {}", i + 1, d.filename.as_deref().unwrap_or(&d.url)))
+        .collect::<Vec<_>>();
+    mouse::fields(
+        f,
+        ctx,
+        S::Items,
+        area,
+        modal.item_cursor,
+        &rows,
+        " j/k: select   J/K: move item down/up ",
     );
-
-    f.render_widget(list, area);
 }
 
-fn draw_queue_modal_buttons(
-    f: &mut Frame,
-    theme: &crate::theme::Theme,
-    modal: &QueueModal,
-    area: Rect,
-) {
+fn draw_queue_modal_buttons(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal, area: Rect) {
+    let theme = ctx.theme;
     let save_label = match modal.mode {
         QueueModalMode::Create => " [s] Create ",
         QueueModalMode::Edit { .. } => " [s] Save ",
     };
 
-    let spans = vec![
+    let mut spans = vec![
         Span::styled(
             save_label,
             Style::default().fg(theme.selected_fg).bg(theme.status_ok),
@@ -393,5 +331,19 @@ fn draw_queue_modal_buttons(
         ),
     ];
 
+    let mut targets = vec![(0, mouse::command(C::Save)), (2, mouse::command(C::Cancel))];
+    if modal.tab == QueueModalTab::DownloadItems {
+        spans.extend([
+            Span::raw("  "),
+            Span::styled(" [K] Move up ", Style::default().fg(theme.accent)),
+            Span::raw("  "),
+            Span::styled(" [J] Move down ", Style::default().fg(theme.accent)),
+        ]);
+        targets.extend([
+            (4, mouse::command(C::ItemUp)),
+            (6, mouse::command(C::ItemDown)),
+        ]);
+    }
+    mouse::spans(ctx.interactions, area, &spans, &targets);
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }

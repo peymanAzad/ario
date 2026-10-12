@@ -35,6 +35,14 @@ const QUEUES_TITLE: &str = " [1] Queues ";
 const CATEGORIES_TITLE: &str = " [2] Categories ";
 
 pub fn render(app: &mut App, f: &mut Frame) {
+    app.selected_download = app
+        .selected_download
+        .min(app.downloads.len().saturating_sub(1));
+    app.selected_queue = app.selected_queue.min(app.queues.len());
+    app.selected_category = app.selected_category.min(ALL_CATEGORIES.len());
+    app.interactions
+        .borrow_mut()
+        .begin_frame(app.modal.as_ref().map(std::mem::discriminant));
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -60,11 +68,17 @@ pub fn render(app: &mut App, f: &mut Frame) {
     draw_categories_list(f, app, left_layout[1]);
     draw_downloads_table(f, app, body_layout[1]);
 
+    if app.modal.is_some() {
+        let mut map = app.interactions.borrow_mut();
+        map.hits.clear();
+        map.scrolls.clear();
+    }
     let help_open = matches!(app.modal, Some(Modal::Help(_)));
 
     // Non-help modals paint under toasts; Help paints after so search stays readable.
     if app.modal.is_some() && !help_open {
         let App {
+            interactions,
             modal,
             queues,
             selected_queue,
@@ -75,6 +89,7 @@ pub fn render(app: &mut App, f: &mut Frame) {
         } = app;
         if let Some(m) = modal {
             let ctx = crate::modal::Ctx {
+                interactions,
                 queues,
                 selected_queue: *selected_queue,
                 aria2_global_options: aria2_global_options.as_ref(),
@@ -89,6 +104,7 @@ pub fn render(app: &mut App, f: &mut Frame) {
     if help_open {
         let body_area = main_layout[1];
         let App {
+            interactions,
             modal,
             queues,
             selected_queue,
@@ -99,6 +115,7 @@ pub fn render(app: &mut App, f: &mut Frame) {
         } = app;
         if let Some(m) = modal {
             let ctx = crate::modal::Ctx {
+                interactions,
                 queues,
                 selected_queue: *selected_queue,
                 aria2_global_options: aria2_global_options.as_ref(),

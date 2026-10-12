@@ -10,6 +10,8 @@ pub struct TuiConfig {
     #[serde(default = "default_server_url")]
     pub server_url: String,
     #[serde(default = "default_true")]
+    pub mouse_enabled: bool,
+    #[serde(default = "default_true")]
     pub auto_start_server: bool,
     /// Path to `ario_daemon`. Empty = sibling of this binary, then PATH.
     #[serde(default)]
@@ -96,6 +98,7 @@ impl Default for TuiConfig {
     fn default() -> Self {
         Self {
             server_url: default_server_url(),
+            mouse_enabled: true,
             auto_start_server: true,
             server_binary: String::new(),
             theme: default_theme(),

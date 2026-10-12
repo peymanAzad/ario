@@ -1,13 +1,14 @@
+use crate::mouse::{self, Command as C, ScrollTarget as S};
 use crate::{
     modal::{Ctx, download_edit::DownloadEditModal},
-    ui::{centered_rect, field_style},
+    ui::centered_rect,
 };
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph},
 };
 
 pub fn draw_download_modal(f: &mut Frame, modal: &DownloadEditModal, ctx: &Ctx<'_>) {
@@ -46,26 +47,18 @@ pub fn draw_download_modal(f: &mut Frame, modal: &DownloadEditModal, ctx: &Ctx<'
     rows.push(("Queue".into(), queue_label));
 
     let selected = modal.selected_row();
-    let items: Vec<ListItem> = rows
-        .iter()
-        .enumerate()
-        .map(|(i, (label, value))| {
-            ListItem::new(format!("{label:<28} ◀ {value} ▶"))
-                .style(field_style(theme, i == selected))
-        })
-        .collect();
-
-    f.render_widget(
-        List::new(items).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme.border))
-                .title(Span::styled(
-                    " j/k: field   h/l: adjust ",
-                    Style::default().fg(theme.text_muted),
-                )),
-        ),
+    let rows = rows
+        .into_iter()
+        .map(|(label, value)| format!("{label:<28} ◀ {value} ▶"))
+        .collect::<Vec<_>>();
+    mouse::fields(
+        f,
+        ctx,
+        S::Fields,
         layout[0],
+        selected,
+        &rows,
+        " j/k: field   h/l: adjust ",
     );
 
     if let Some(err) = &modal.error {
@@ -86,5 +79,11 @@ pub fn draw_download_modal(f: &mut Frame, modal: &DownloadEditModal, ctx: &Ctx<'
             Style::default().fg(theme.foreground).bg(theme.border),
         ),
     ];
+    mouse::spans(
+        ctx.interactions,
+        layout[2],
+        &spans,
+        &[(0, mouse::command(C::Save)), (2, mouse::command(C::Cancel))],
+    );
     f.render_widget(Paragraph::new(Line::from(spans)), layout[2]);
 }

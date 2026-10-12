@@ -108,3 +108,17 @@ fn managed_exit_action_follows_policy_and_health() {
         ManagedExitAction::Detach
     );
 }
+
+#[test]
+fn mouse_defaults_to_enabled_and_can_be_disabled_in_existing_configs() {
+    assert!(TuiConfig::default().mouse_enabled);
+    assert!(
+        toml::from_str::<TuiConfig>("server_url = \"http://127.0.0.1:1\"")
+            .unwrap()
+            .mouse_enabled
+    );
+    let disabled: TuiConfig = toml::from_str("mouse_enabled = false").unwrap();
+    assert!(!disabled.mouse_enabled);
+    let round_trip: TuiConfig = toml::from_str(&toml::to_string(&disabled).unwrap()).unwrap();
+    assert!(!round_trip.mouse_enabled);
+}

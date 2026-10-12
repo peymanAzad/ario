@@ -5,7 +5,7 @@ use ratatui::{
     layout::Rect,
     style::Style,
     text::Span,
-    widgets::{Block, Borders, List, ListState},
+    widgets::{Block, Borders, List},
 };
 
 pub fn draw_categories_list(f: &mut Frame, app: &App, area: Rect) {
@@ -24,9 +24,6 @@ pub fn draw_categories_list(f: &mut Frame, app: &App, area: Rect) {
         .collect();
     items.insert(0, format!("{} All", app.icons.all()));
 
-    let mut state = ListState::default();
-    state.select(Some(app.selected_category));
-
     let list = List::new(items)
         .style(Style::default().fg(theme.foreground))
         .highlight_style(highlight_style(theme, focused))
@@ -41,5 +38,30 @@ pub fn draw_categories_list(f: &mut Frame, app: &App, area: Rect) {
                 )),
         );
 
-    f.render_stateful_widget(list, area, &mut state);
+    let inner = ratatui::widgets::Block::default()
+        .borders(Borders::ALL)
+        .inner(area);
+    app.interactions
+        .borrow_mut()
+        .add(area, crate::mouse::Target::Focus(Focus::Categories));
+    let offset = crate::mouse::list(
+        f,
+        &app.interactions,
+        crate::mouse::ScrollTarget::Categories,
+        list,
+        (area, inner),
+        app.selected_category,
+        ALL_CATEGORIES.len() + 1,
+    );
+    for row in 0..inner.height {
+        let index = offset + row as usize;
+        if index > ALL_CATEGORIES.len() {
+            break;
+        }
+        let id = None;
+        app.interactions.borrow_mut().add(
+            ratatui::layout::Rect::new(inner.x, inner.y + row, inner.width, 1),
+            crate::mouse::Target::Row(Focus::Categories, index, id),
+        );
+    }
 }

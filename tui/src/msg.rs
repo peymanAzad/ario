@@ -43,6 +43,10 @@ pub enum Action {
     FocusNext,
     FocusPrev,
     Focus(Focus),
+    SelectAt {
+        focus: Focus,
+        index: usize,
+    },
     SelectNext,
     SelectPrev,
     OpenHelp,
@@ -82,6 +86,7 @@ pub enum Action {
 #[derive(Debug)]
 pub enum ApiResult {
     Refreshed {
+        filter_revision: u64,
         downloads: anyhow::Result<Vec<DownloadLiveStatus>>,
         queues: anyhow::Result<Vec<Queue>>,
         server_reachable: bool,

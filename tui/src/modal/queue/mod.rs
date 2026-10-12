@@ -398,6 +398,15 @@ impl QueueModal {
 
 impl Component for QueueModal {
     fn handle_key(&mut self, key: KeyEvent, _ctx: &Ctx<'_>) -> ModalOutcome {
+        if self.name_input.editing && matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
+            self.confirm_text_edit();
+            if key.code == KeyCode::Tab {
+                self.next_tab();
+            } else {
+                self.prev_tab();
+            }
+            return ModalOutcome::Continue;
+        }
         if self.name_input.editing {
             match key.code {
                 KeyCode::Enter => self.confirm_text_edit(),
@@ -664,4 +673,89 @@ fn default_once_window() -> (NaiveDate, NaiveTime, NaiveDate, NaiveTime) {
     let start = start.date_naive().and_time(start_time);
     let end = start + ChronoDuration::hours(4);
     (start.date(), start.time(), end.date(), end.time())
+}
+
+impl QueueModal {
+    pub(crate) fn handle_intent(
+        &mut self,
+        intent: crate::mouse::ModalIntent,
+        _ctx: &Ctx<'_>,
+    ) -> ModalOutcome {
+        use crate::mouse::{Command as C, ModalIntent as I};
+        if !matches!(
+            intent,
+            I::Text | I::Command(C::Accept | C::Discard | C::Erase | C::Cancel)
+        ) && self.name_input.editing
+        {
+            self.confirm_text_edit();
+        }
+        match intent {
+            I::Tab(index) => {
+                self.tab = match index {
+                    0 => QueueModalTab::Common,
+                    1 => QueueModalTab::Scheduler,
+                    _ if matches!(self.mode, QueueModalMode::Edit { .. }) => {
+                        QueueModalTab::DownloadItems
+                    }
+                    _ => self.tab,
+                }
+            }
+            I::Text => {
+                self.common_cursor = 0;
+                if !self.name_input.editing {
+                    self.start_text_edit();
+                }
+            }
+            I::Field(index) => match self.tab {
+                QueueModalTab::Common => self.common_cursor = index.min(7),
+                QueueModalTab::Scheduler => {
+                    self.scheduler_cursor =
+                        index.min(if self.recurrence_kind == RecurrenceKind::Weekly {
+                            5
+                        } else {
+                            6
+                        })
+                }
+                QueueModalTab::DownloadItems => {
+                    self.item_cursor = index.min(self.items.len().saturating_sub(1))
+                }
+            },
+            I::Adjust { field, forward } => {
+                if let Some(index) = field {
+                    match self.tab {
+                        QueueModalTab::Common => self.common_cursor = index,
+                        QueueModalTab::Scheduler => self.scheduler_cursor = index,
+                        _ => {}
+                    }
+                }
+                self.adjust(forward);
+            }
+            I::Day(index) => {
+                self.scheduler_cursor = 2;
+                self.day_cursor = index.min(6);
+                self.toggle_day();
+            }
+            I::Navigate(forward) => {
+                if forward {
+                    self.move_down()
+                } else {
+                    self.move_up()
+                }
+            }
+            I::Command(command) => match command {
+                C::Save => return self.try_save(),
+                C::Cancel => return ModalOutcome::Close,
+                C::NextTab => self.next_tab(),
+                C::PrevTab => self.prev_tab(),
+                C::ItemUp => self.move_item_up(),
+                C::ItemDown => self.move_item_down(),
+                C::Accept => self.confirm_text_edit(),
+                C::Discard => self.cancel_text_edit(),
+                C::Erase => self.name_input.backspace(),
+                _ => {}
+            },
+            _ => {}
+        }
+        ModalOutcome::Continue
+    }
 }

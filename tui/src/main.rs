@@ -8,6 +8,7 @@ mod event;
 mod icons;
 mod keymap;
 mod modal;
+mod mouse;
 mod msg;
 mod runtime;
 mod theme;
@@ -81,7 +82,7 @@ fn main() -> anyhow::Result<()> {
     let events = EventHandler::new(TICK_RATE_MS);
     let mut app = App::new(resolved_theme, icons::IconSet::new(glyph_mode), managed);
 
-    let mut tui = Tui::new(terminal, events);
+    let mut tui = Tui::new(terminal, events, tui_config.mouse_enabled);
     if let Err(error) = tui.enter() {
         finish_server_process(
             server_process.as_ref(),

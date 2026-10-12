@@ -18,7 +18,23 @@ pub fn run(tui: &mut Tui, app: &mut App, api_base: &str) -> anyhow::Result<()> {
             }
             Event::Paste(text) => apply(app, Msg::Paste(text), api_base, &tui.events),
             Event::Msg(msg) => apply(app, msg, api_base, &tui.events),
-            Event::Mouse | Event::Resize => {}
+            Event::Mouse(mouse) => {
+                use crossterm::event::{MouseButton, MouseEventKind};
+                if !matches!(
+                    mouse.kind,
+                    MouseEventKind::Down(MouseButton::Left)
+                        | MouseEventKind::ScrollUp
+                        | MouseEventKind::ScrollDown
+                ) {
+                    continue;
+                }
+                if let Some(msg) = crate::mouse::route_mouse(app, mouse) {
+                    apply(app, msg, api_base, &tui.events);
+                }
+            }
+            Event::Resize => {
+                app.interactions.borrow_mut().last_click = None;
+            }
         }
         if app.should_quit {
             break;

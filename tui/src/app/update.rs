@@ -44,6 +44,33 @@ fn update_action(app: &mut App, action: Action) -> Vec<Effect> {
             app.focus = focus;
             vec![]
         }
+        Action::SelectAt { focus, index } => {
+            app.focus = focus;
+            match focus {
+                Focus::Queues => {
+                    let next = index.min(app.queues.len());
+                    if app.selected_queue == next {
+                        vec![]
+                    } else {
+                        app.selected_queue = next;
+                        app.filter_changed()
+                    }
+                }
+                Focus::Categories => {
+                    let next = index.min(crate::app::ALL_CATEGORIES.len());
+                    if app.selected_category == next {
+                        vec![]
+                    } else {
+                        app.selected_category = next;
+                        app.filter_changed()
+                    }
+                }
+                Focus::Downloads => {
+                    app.selected_download = index.min(app.downloads.len().saturating_sub(1));
+                    vec![]
+                }
+            }
+        }
         Action::SelectNext => match app.focus {
             Focus::Queues => app.select_next_queue(),
             Focus::Categories => app.select_next_category(),
@@ -150,6 +177,7 @@ fn update_action(app: &mut App, action: Action) -> Vec<Effect> {
 fn update_api(app: &mut App, result: ApiResult) -> Vec<Effect> {
     match result {
         ApiResult::Refreshed {
+            filter_revision,
             downloads,
             queues,
             server_reachable,
@@ -159,6 +187,12 @@ fn update_api(app: &mut App, result: ApiResult) -> Vec<Effect> {
             aria2_global_options,
             lifecycle_revision,
         } => {
+            let stale_filter = filter_revision != app.filter_revision;
+            let downloads = if stale_filter {
+                Ok(app.downloads.clone())
+            } else {
+                downloads
+            };
             app.apply_refresh(
                 downloads,
                 queues,
@@ -169,7 +203,11 @@ fn update_api(app: &mut App, result: ApiResult) -> Vec<Effect> {
                 aria2_global_options,
                 lifecycle_revision,
             );
-            vec![]
+            if filter_revision != app.filter_revision {
+                app.refresh()
+            } else {
+                vec![]
+            }
         }
         ApiResult::QueueDownloadsLoaded { queue_id, result } => {
             if let Some(Modal::Queue(modal)) = &mut app.modal {
