@@ -50,6 +50,7 @@ pub enum ModalOutcome {
 
 #[allow(dead_code)]
 pub struct Ctx<'a> {
+    pub interactions: &'a std::cell::RefCell<crate::mouse::Interactions>,
     pub queues: &'a [Queue],
     pub selected_queue: usize,
     pub aria2_global_options: Option<&'a Aria2GlobalOptions>,
@@ -68,6 +69,21 @@ pub trait Component {
 }
 
 impl Modal {
+    pub fn handle_intent(
+        &mut self,
+        intent: crate::mouse::ModalIntent,
+        ctx: &Ctx<'_>,
+    ) -> ModalOutcome {
+        match self {
+            Self::Confirmation(m) => m.handle_intent(intent, ctx),
+            Self::Help(m) => m.handle_intent(intent, ctx),
+            Self::Queue(m) => m.handle_intent(intent, ctx),
+            Self::TorrentFile(m) => m.handle_intent(intent, ctx),
+            Self::ClipboardImport(m) => m.handle_intent(intent, ctx),
+            Self::DownloadEdit(m) => m.handle_intent(intent, ctx),
+        }
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent, ctx: &Ctx<'_>) -> ModalOutcome {
         match self {
             Modal::Confirmation(m) => m.handle_key(key, ctx),

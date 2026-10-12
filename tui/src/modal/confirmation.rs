@@ -87,25 +87,50 @@ impl Component for ConfirmationModal {
                 .wrap(Wrap { trim: true }),
             layout[0],
         );
-        f.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(
-                    format!(" Enter/y: {} ", self.confirm_label),
-                    Style::default()
-                        .fg(theme.status_error)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("  "),
-                Span::styled(
-                    format!("Esc/n/c: {}", self.cancel_label),
-                    Style::default().fg(theme.text_muted),
-                ),
-            ])),
+        let spans = vec![
+            Span::styled(
+                format!(" Enter/y: {} ", self.confirm_label),
+                Style::default()
+                    .fg(theme.status_error)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                format!("Esc/n/c: {}", self.cancel_label),
+                Style::default().fg(theme.text_muted),
+            ),
+        ];
+        crate::mouse::spans(
+            ctx.interactions,
             layout[1],
+            &spans,
+            &[
+                (0, crate::mouse::command(crate::mouse::Command::Confirm)),
+                (2, crate::mouse::command(crate::mouse::Command::Cancel)),
+            ],
         );
+        f.render_widget(Paragraph::new(Line::from(spans)), layout[1]);
     }
 
     fn hints(&self) -> Vec<(&'static str, &'static str)> {
         vec![("Enter/y", "Confirm"), ("Esc/n/c", "Cancel")]
+    }
+}
+
+impl ConfirmationModal {
+    pub(crate) fn handle_intent(
+        &mut self,
+        intent: crate::mouse::ModalIntent,
+        _ctx: &Ctx<'_>,
+    ) -> ModalOutcome {
+        use crate::mouse::{Command as C, ModalIntent as I};
+        match intent {
+            I::Command(C::Confirm) => {
+                return ModalOutcome::Emit(Action::Confirm(self.action.clone()));
+            }
+            I::Command(C::Cancel) => return ModalOutcome::Close,
+            _ => {}
+        }
+        ModalOutcome::Continue
     }
 }

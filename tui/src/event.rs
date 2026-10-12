@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossterm::event::{self, Event as CrosstermEvent, KeyEvent};
+use crossterm::event::{self, Event as CrosstermEvent, KeyEvent, MouseEvent};
 
 use crate::msg::Msg;
 
@@ -14,7 +14,7 @@ pub enum Event {
     Tick,
     Key(KeyEvent),
     Paste(String),
-    Mouse,
+    Mouse(MouseEvent),
     Resize,
     Msg(Msg),
 }
@@ -49,7 +49,7 @@ impl EventHandler {
                                     Ok(())
                                 }
                             }
-                            CrosstermEvent::Mouse(_) => sender.send(Event::Mouse),
+                            CrosstermEvent::Mouse(e) => sender.send(Event::Mouse(e)),
                             CrosstermEvent::Resize(_, _) => sender.send(Event::Resize),
                             CrosstermEvent::Paste(text) => sender.send(Event::Paste(text)),
                             _ => Ok(()),

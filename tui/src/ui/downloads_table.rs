@@ -6,7 +6,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -148,6 +148,9 @@ pub fn draw_downloads_table(f: &mut Frame, app: &App, area: Rect) {
             " [3] Downloads ",
             Style::default().fg(theme.foreground),
         ));
+    app.interactions
+        .borrow_mut()
+        .add(area, crate::mouse::Target::Focus(Focus::Downloads));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -264,15 +267,35 @@ pub fn draw_downloads_table(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let mut state = TableState::default();
-    if app.current_download().is_some() {
-        state.select(Some(app.selected_download));
-    }
     let table = Table::new(rows, widths.into_iter().map(Constraint::Length))
         .column_spacing(1)
         .header(header)
         .row_highlight_style(highlight_style(theme, focused));
-    f.render_stateful_widget(table, table_area, &mut state);
+    let mut map = app.interactions.borrow_mut();
+    map.table
+        .select(app.current_download().map(|_| app.selected_download));
+    let max_offset = app.downloads.len().saturating_sub(1);
+    *map.table.offset_mut() = map.table.offset().min(max_offset);
+    f.render_stateful_widget(table, table_area, &mut map.table);
+    let rows_area = Rect::new(
+        table_area.x,
+        table_area.y.saturating_add(1),
+        table_area.width,
+        table_area.height.saturating_sub(1),
+    );
+    map.scroll(rows_area, crate::mouse::ScrollTarget::Downloads);
+    let offset = map.table.offset();
+    for row in 0..rows_area.height {
+        let index = offset + row as usize;
+        let Some(download) = app.downloads.get(index) else {
+            break;
+        };
+        map.add(
+            Rect::new(rows_area.x, rows_area.y + row, rows_area.width, 1),
+            crate::mouse::Target::Row(Focus::Downloads, index, Some(download.download.id)),
+        );
+    }
+    drop(map);
     if app.downloads.is_empty() {
         draw_empty_downloads(f, app, table_area);
     }

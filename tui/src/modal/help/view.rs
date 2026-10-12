@@ -88,7 +88,13 @@ fn help_lines(query: &str, width: usize, theme: &Theme) -> Vec<Line<'static>> {
     lines
 }
 
-pub fn draw_help_modal(f: &mut Frame, modal: &mut HelpModal, theme: &Theme, body: Rect) {
+pub fn draw_help_modal(
+    f: &mut Frame,
+    modal: &mut HelpModal,
+    ctx: &crate::modal::Ctx<'_>,
+    body: Rect,
+) {
+    let theme = ctx.theme;
     let width = if body.width > 40 {
         body.width.saturating_sub(4).min(100)
     } else {
@@ -122,6 +128,13 @@ pub fn draw_help_modal(f: &mut Frame, modal: &mut HelpModal, theme: &Theme, body
         Constraint::Length(1),
     ])
     .split(inner);
+    ctx.interactions
+        .borrow_mut()
+        .scroll(layout[1], crate::mouse::ScrollTarget::Help);
+    ctx.interactions.borrow_mut().add(
+        layout[0],
+        crate::mouse::modal_target(crate::mouse::ModalIntent::Text),
+    );
     let lines = help_lines(&modal.query, layout[1].width as usize, theme);
     modal.set_dimensions(lines.len(), layout[1].height as usize);
     let end = (modal.scroll + modal.viewport_height).min(lines.len());
@@ -165,13 +178,37 @@ pub fn draw_help_modal(f: &mut Frame, modal: &mut HelpModal, theme: &Theme, body
     if modal.editing_search && layout[0].width > 0 && layout[0].height > 0 {
         f.set_cursor_position((layout[0].x + visible.width() as u16, layout[0].y));
     }
-    let hints = if modal.editing_search {
-        "Enter: keep  Esc: clear  Backspace: erase"
+    use crate::mouse::{self, Command as C, ModalIntent as I};
+    let actions = if modal.editing_search {
+        vec![
+            ("Enter: keep", I::Command(C::Accept)),
+            ("Esc: clear", I::Command(C::Discard)),
+            ("Backspace: erase", I::Command(C::Erase)),
+        ]
     } else {
-        "Esc/q/?: close  /: search  j/k: scroll  PgUp/PgDn  Home/End"
+        vec![
+            ("Esc/q/?: close", I::Command(C::Cancel)),
+            ("/: search", I::Command(C::Search)),
+            ("j: down", I::HelpScroll(true)),
+            ("k: up", I::HelpScroll(false)),
+            ("PgUp", I::Command(C::PageUp)),
+            ("PgDn", I::Command(C::PageDown)),
+            ("Home", I::Command(C::Home)),
+            ("End", I::Command(C::End)),
+        ]
     };
+    let mut spans = Vec::new();
+    let mut targets = Vec::new();
+    for (index, (text, intent)) in actions.into_iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw("  "));
+        }
+        targets.push((spans.len(), mouse::modal_target(intent)));
+        spans.push(Span::raw(text));
+    }
+    mouse::spans(ctx.interactions, layout[2], &spans, &targets);
     f.render_widget(
-        Paragraph::new(hints).style(Style::default().fg(theme.text_muted)),
+        Paragraph::new(Line::from(spans)).style(Style::default().fg(theme.text_muted)),
         layout[2],
     );
 }
@@ -281,7 +318,8 @@ mod tests {
 
     #[test]
     fn tiny_help_and_long_unicode_search_render_without_overflow() {
-        let theme = Theme::default_dark();
+        let context_app = app();
+        let ctx = context_app.modal_ctx();
         let mut modal = HelpModal::default();
         modal.query = "é界👩‍💻".repeat(30);
         modal.editing_search = true;
@@ -289,7 +327,7 @@ mod tests {
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
             terminal
                 .draw(|frame| {
-                    draw_help_modal(frame, &mut modal, &theme, frame.area());
+                    draw_help_modal(frame, &mut modal, &ctx, frame.area());
                 })
                 .unwrap();
             assert!(modal.scroll <= modal.max_scroll());

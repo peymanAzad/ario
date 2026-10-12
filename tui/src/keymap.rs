@@ -349,6 +349,27 @@ pub fn main_help_sections() -> Vec<(&'static str, Vec<(&'static str, &'static st
     {
         coalesce_focus_rows(bindings);
     }
+    sections.push((
+        "Mouse",
+        vec![
+            (
+                "Left click",
+                "Focus panes, select rows, switch tabs, and activate buttons",
+            ),
+            (
+                "Double click",
+                "Open or edit a download or queue (within 400 ms)",
+            ),
+            (
+                "Wheel",
+                "Select previous/next item under the pointer; changes queue/category filters",
+            ),
+            (
+                "Dialog controls",
+                "Click fields to focus; arrows adjust; checkboxes toggle",
+            ),
+        ],
+    ));
     sections
 }
 
@@ -501,6 +522,7 @@ fn presented_label<'a>(app: &App, binding: &'a Binding) -> &'a str {
 /// Route a key to a message. Modal keys stay inside the component; the main
 /// screen resolves through [`lookup`].
 pub fn route_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
+    app.interactions.borrow_mut().last_click = None;
     let is_confirmation = matches!(app.modal, Some(Modal::Confirmation(_)));
 
     // Confirmation cancels on Ctrl+C before the global quit shortcut.
@@ -526,6 +548,7 @@ pub fn paste(app: &mut App, text: &str) {
 
 fn dispatch_modal_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
     let App {
+        interactions,
         modal,
         queues,
         selected_queue,
@@ -537,6 +560,7 @@ fn dispatch_modal_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
     let outcome = {
         let active = modal.as_mut()?;
         let ctx = crate::modal::Ctx {
+            interactions,
             queues,
             selected_queue: *selected_queue,
             aria2_global_options: aria2_global_options.as_ref(),
@@ -545,6 +569,13 @@ fn dispatch_modal_key(app: &mut App, key_event: KeyEvent) -> Option<Msg> {
         };
         active.handle_key(key_event, &ctx)
     };
+    finish_modal_outcome(modal, outcome)
+}
+
+pub(crate) fn finish_modal_outcome(
+    modal: &mut Option<Modal>,
+    outcome: ModalOutcome,
+) -> Option<Msg> {
     match outcome {
         ModalOutcome::Continue => None,
         ModalOutcome::Close => Some(Msg::Action(Action::CloseModal)),

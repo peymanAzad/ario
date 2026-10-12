@@ -1,10 +1,10 @@
+use crate::mouse::{self, Command as C, ModalIntent as I, ScrollTarget as S};
 use crate::{
     modal::{
         Ctx,
         clipboard_import::{ClipboardImportModal, ModalTab},
         widgets::FineTuneEditor,
     },
-    theme::Theme,
     ui::centered_rect,
 };
 use ratatui::{
@@ -12,7 +12,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
 };
 
 pub fn draw_clipboard_import_modal(f: &mut Frame, modal: &ClipboardImportModal, ctx: &Ctx<'_>) {
@@ -42,15 +42,16 @@ pub fn draw_clipboard_import_modal(f: &mut Frame, modal: &ClipboardImportModal, 
         ])
         .split(inner);
 
-    draw_modal_tab_bar(f, theme, modal, layout[0]);
+    draw_modal_tab_bar(f, ctx, modal, layout[0]);
     match modal.tab {
         ModalTab::Urls => draw_modal_urls_tab(f, ctx, modal, layout[1]),
-        ModalTab::FineTuning => draw_finetuning_fields(f, theme, &modal.finetune_editor, layout[1]),
+        ModalTab::FineTuning => draw_finetuning_fields(f, ctx, &modal.finetune_editor, layout[1]),
     }
-    draw_modal_buttons(f, theme, layout[2]);
+    draw_modal_buttons(f, ctx, layout[2]);
 }
 
-fn draw_modal_tab_bar(f: &mut Frame, theme: &Theme, modal: &ClipboardImportModal, area: Rect) {
+fn draw_modal_tab_bar(f: &mut Frame, ctx: &Ctx<'_>, modal: &ClipboardImportModal, area: Rect) {
+    let theme = ctx.theme;
     let tab_style = |active: bool| {
         if active {
             Style::default()
@@ -75,6 +76,15 @@ fn draw_modal_tab_bar(f: &mut Frame, theme: &Theme, modal: &ClipboardImportModal
         Span::raw("   (Tab to switch)"),
     ];
 
+    mouse::spans(
+        ctx.interactions,
+        area,
+        &spans,
+        &[
+            (0, mouse::modal_target(I::Tab(0))),
+            (2, mouse::modal_target(I::Tab(1))),
+        ],
+    );
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
@@ -108,6 +118,8 @@ fn draw_modal_urls_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &ClipboardImportModa
         layout[0],
     );
 
+    let queue_text = format!("Queue:  ◀ {queue_name} ▶");
+    mouse::selector(ctx.interactions, layout[0], &queue_text);
     let items: Vec<ListItem> = modal
         .entries
         .iter()
@@ -121,11 +133,6 @@ fn draw_modal_urls_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &ClipboardImportModa
             ListItem::new(format!("{checkbox}{}", entry.url)).style(style)
         })
         .collect();
-
-    let mut state = ListState::default();
-    if !modal.entries.is_empty() {
-        state.select(Some(modal.url_cursor));
-    }
 
     let list = List::new(items)
         .highlight_style(
@@ -141,8 +148,53 @@ fn draw_modal_urls_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &ClipboardImportModa
                 .border_style(Style::default().fg(theme.border)),
         );
 
-    f.render_stateful_widget(list, layout[1], &mut state);
+    let inner = Block::default().borders(Borders::ALL).inner(layout[1]);
+    let offset = mouse::list(
+        f,
+        ctx.interactions,
+        S::Urls,
+        list,
+        (layout[1], inner),
+        modal.url_cursor,
+        modal.entries.len(),
+    );
+    for row in 0..inner.height {
+        let index = offset + row as usize;
+        if index >= modal.entries.len() {
+            break;
+        }
+        let area = Rect::new(inner.x, inner.y + row, inner.width, 1);
+        ctx.interactions
+            .borrow_mut()
+            .add(area, mouse::modal_target(I::Field(index)));
+        ctx.interactions.borrow_mut().add(
+            Rect::new(
+                inner.x.saturating_add(2),
+                area.y,
+                inner.width.saturating_sub(2).min(3),
+                1,
+            ),
+            mouse::modal_target(I::ToggleUrl(index)),
+        );
+    }
 
+    let actions = [
+        Span::raw("space: toggle"),
+        Span::raw("   "),
+        Span::raw("a: select all"),
+        Span::raw("   "),
+        Span::raw("n: select none"),
+    ];
+    mouse::spans(
+        ctx.interactions,
+        layout[2],
+        &actions,
+        &[
+            (0, mouse::modal_target(I::ToggleUrl(modal.url_cursor))),
+            (2, mouse::command(C::All)),
+            (4, mouse::command(C::None)),
+        ],
+    );
     f.render_widget(
         Paragraph::new("space: toggle   a: select all   n: select none")
             .style(Style::default().fg(theme.text_muted)),
@@ -152,42 +204,28 @@ fn draw_modal_urls_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &ClipboardImportModa
 
 pub(crate) fn draw_finetuning_fields(
     f: &mut Frame,
-    theme: &Theme,
+    ctx: &Ctx<'_>,
     editor: &FineTuneEditor,
     area: Rect,
 ) {
-    let fields = editor.rows(None);
-
-    let items: Vec<ListItem> = fields
-        .iter()
-        .enumerate()
-        .map(|(i, (label, value))| {
-            let style = if i == editor.cursor {
-                Style::default()
-                    .bg(theme.selected_bg)
-                    .fg(theme.selected_fg)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.foreground)
-            };
-            ListItem::new(format!("{label:<28} ◀ {value} ▶")).style(style)
-        })
-        .collect();
-
-    let list = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.border))
-            .title(Span::styled(
-                " j/k: select field   h/l: adjust value ",
-                Style::default().fg(theme.text_muted),
-            )),
+    let rows = editor
+        .rows(None)
+        .into_iter()
+        .map(|(label, value)| format!("{label:<28} ◀ {value} ▶"))
+        .collect::<Vec<_>>();
+    mouse::fields(
+        f,
+        ctx,
+        S::Fields,
+        area,
+        editor.cursor,
+        &rows,
+        " j/k: select field   h/l: adjust value ",
     );
-
-    f.render_widget(list, area);
 }
 
-fn draw_modal_buttons(f: &mut Frame, theme: &Theme, area: Rect) {
+fn draw_modal_buttons(f: &mut Frame, ctx: &Ctx<'_>, area: Rect) {
+    let theme = ctx.theme;
     let spans = vec![
         Span::styled(
             " [s] Start Now ",
@@ -205,5 +243,15 @@ fn draw_modal_buttons(f: &mut Frame, theme: &Theme, area: Rect) {
         ),
     ];
 
+    mouse::spans(
+        ctx.interactions,
+        area,
+        &spans,
+        &[
+            (0, mouse::command(C::Start)),
+            (2, mouse::command(C::Later)),
+            (4, mouse::command(C::Cancel)),
+        ],
+    );
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }

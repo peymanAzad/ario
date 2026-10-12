@@ -1,3 +1,4 @@
+use crate::mouse::{self, Command as C, ModalIntent as I};
 use crate::{
     modal::{
         Ctx,
@@ -43,7 +44,7 @@ pub fn draw_torrent_file_modal(f: &mut Frame, modal: &TorrentFileModal, ctx: &Ct
     match modal.tab {
         TorrentFileModalTab::Torrent => draw_torrent_tab(f, ctx, modal, layout[1]),
         TorrentFileModalTab::FineTuning => {
-            draw_finetuning_fields(f, theme, &modal.finetune_editor, layout[1])
+            draw_finetuning_fields(f, ctx, &modal.finetune_editor, layout[1])
         }
     }
     draw_buttons(f, ctx, layout[2]);
@@ -73,6 +74,15 @@ fn draw_tabs(f: &mut Frame, ctx: &Ctx<'_>, modal: &TorrentFileModal, area: Rect)
         ),
         Span::raw("   (Tab to switch)"),
     ];
+    mouse::spans(
+        ctx.interactions,
+        area,
+        &spans,
+        &[
+            (0, mouse::modal_target(I::Tab(0))),
+            (2, mouse::modal_target(I::Tab(1))),
+        ],
+    );
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
@@ -122,6 +132,9 @@ fn draw_torrent_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &TorrentFileModal, area
         layout[1],
     );
 
+    ctx.interactions
+        .borrow_mut()
+        .add(layout[1], mouse::modal_target(I::Text));
     let queue_name = ctx
         .queues
         .get(modal.queue_picker.cursor)
@@ -138,6 +151,11 @@ fn draw_torrent_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &TorrentFileModal, area
             ),
         ])),
         layout[2],
+    );
+    mouse::selector(
+        ctx.interactions,
+        layout[2],
+        &format!("Queue:  ◀ {queue_name} ▶"),
     );
     let hint = if modal.path_input.editing {
         "Enter: validate path   Tab: fine tuning   Esc: unfocus"
@@ -168,5 +186,15 @@ fn draw_buttons(f: &mut Frame, ctx: &Ctx<'_>, area: Rect) {
             Style::default().fg(theme.foreground).bg(theme.border),
         ),
     ];
+    mouse::spans(
+        ctx.interactions,
+        area,
+        &spans,
+        &[
+            (0, mouse::command(C::Start)),
+            (2, mouse::command(C::Later)),
+            (4, mouse::command(C::Cancel)),
+        ],
+    );
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }

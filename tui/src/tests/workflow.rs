@@ -84,6 +84,7 @@ fn refresh(app: &mut App, downloads: Value) {
     exchange(
         app,
         ApiRequest::Refresh {
+            filter_revision: app.filter_revision,
             filter: Default::default(),
             manages_server: false,
             lifecycle_revision: app.lifecycle_revision,

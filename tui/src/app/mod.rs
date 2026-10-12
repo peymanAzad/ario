@@ -69,6 +69,7 @@ pub const ALL_CATEGORIES: [FileCategory; 6] = [
 ];
 
 pub struct App {
+    pub interactions: std::cell::RefCell<crate::mouse::Interactions>,
     pub downloads: Vec<DownloadLiveStatus>,
     pub queues: Vec<Queue>,
     pub selected_download: usize,
@@ -91,6 +92,7 @@ pub struct App {
     /// When true, TUI may spawn/supervise ario_daemon for a local URL.
     pub(crate) manages_server: bool,
     refresh_in_flight: bool,
+    pub(crate) filter_revision: u64,
     pub(crate) lifecycle_revision: u64,
     pausing_downloads: HashSet<i64>,
 }
@@ -98,6 +100,7 @@ pub struct App {
 impl App {
     pub fn new(theme: Theme, icons: IconSet, manages_server: bool) -> Self {
         Self {
+            interactions: Default::default(),
             downloads: Vec::new(),
             queues: Vec::new(),
             selected_download: 0,
@@ -118,6 +121,7 @@ impl App {
             modal: None,
             manages_server,
             refresh_in_flight: false,
+            filter_revision: 0,
             lifecycle_revision: 0,
             pausing_downloads: HashSet::new(),
             toasts: ToastStack::new(),
@@ -228,6 +232,7 @@ impl App {
     #[allow(dead_code)]
     pub fn modal_ctx(&self) -> Ctx<'_> {
         Ctx {
+            interactions: &self.interactions,
             queues: &self.queues,
             selected_queue: self.selected_queue,
             aria2_global_options: self.aria2_global_options.as_ref(),
@@ -266,6 +271,14 @@ impl App {
         }
     }
 
+    pub fn filter_changed(&mut self) -> Vec<Effect> {
+        self.filter_revision += 1;
+        self.selected_download = 0;
+        self.downloads.clear();
+        self.interactions.borrow_mut().table = Default::default();
+        self.refresh()
+    }
+
     pub fn refresh(&mut self) -> Vec<Effect> {
         self.toasts.prune();
         if self.refresh_in_flight {
@@ -273,6 +286,7 @@ impl App {
         }
         self.refresh_in_flight = true;
         vec![Effect::Api(ApiRequest::Refresh {
+            filter_revision: self.filter_revision,
             filter: self.current_filter(),
             manages_server: self.manages_server,
             lifecycle_revision: self.lifecycle_revision,
@@ -314,7 +328,13 @@ impl App {
                         .find(|download| download.download.id == *download_id)
                         .is_none_or(|download| download.download.status == DownloadStatus::Active)
                 });
+                let selected_id = self.current_download().map(|d| d.download.id);
                 self.downloads = downloads;
+                if let Some(index) = selected_id
+                    .and_then(|id| self.downloads.iter().position(|d| d.download.id == id))
+                {
+                    self.selected_download = index;
+                }
                 if !self.downloads.is_empty() {
                     self.selected_download = self.selected_download.min(self.downloads.len() - 1);
                 } else {
@@ -331,7 +351,26 @@ impl App {
         }
 
         if let Ok(queues) = queues {
+            let selected_id = if self.selected_queue > 0 {
+                self.queues.get(self.selected_queue - 1).map(|q| q.id)
+            } else {
+                None
+            };
             self.queues = queues;
+            self.selected_queue = selected_id
+                .and_then(|id| {
+                    self.queues
+                        .iter()
+                        .position(|q| q.id == id)
+                        .map(|index| index + 1)
+                })
+                .unwrap_or(0);
+            if selected_id.is_some() && self.selected_queue == 0 {
+                self.filter_revision += 1;
+                self.selected_download = 0;
+                self.downloads.clear();
+                self.interactions.borrow_mut().table = Default::default();
+            }
         }
         self.server_reachable = server_reachable;
         self.aria2_reachable = aria2_reachable;

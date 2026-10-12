@@ -28,6 +28,7 @@ pub enum Effect {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ApiRequest {
     Refresh {
+        filter_revision: u64,
         filter: DownloadFilter,
         manages_server: bool,
         lifecycle_revision: u64,
@@ -83,10 +84,17 @@ pub fn run(effect: Effect, api_base: &str, tx: Sender<Event>) {
 fn execute(base: &str, request: ApiRequest) -> ApiResult {
     match request {
         ApiRequest::Refresh {
+            filter_revision,
             filter,
             manages_server,
             lifecycle_revision,
-        } => execute_refresh(base, filter, manages_server, lifecycle_revision),
+        } => execute_refresh(
+            base,
+            filter,
+            manages_server,
+            lifecycle_revision,
+            filter_revision,
+        ),
         ApiRequest::ListQueueDownloads { queue_id } => {
             let filter = DownloadFilter {
                 queue_id: Some(queue_id),
@@ -204,6 +212,7 @@ fn execute_refresh(
     filter: DownloadFilter,
     manages_server: bool,
     lifecycle_revision: u64,
+    filter_revision: u64,
 ) -> ApiResult {
     let health = api::health(base);
     let (server_reachable, aria2_reachable, download_speed, active_downloads, aria2_global_options) =
@@ -243,6 +252,7 @@ fn execute_refresh(
         };
 
     ApiResult::Refreshed {
+        filter_revision,
         downloads,
         queues,
         server_reachable,

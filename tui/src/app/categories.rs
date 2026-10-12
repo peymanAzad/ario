@@ -3,14 +3,24 @@ use crate::effects::Effect;
 
 impl App {
     pub fn select_next_category(&mut self) -> Vec<Effect> {
+        let previous = self.selected_category;
         let len = ALL_CATEGORIES.len() + 1; // +1 for "All"
         self.selected_category = (self.selected_category + 1).min(len - 1);
-        self.refresh()
+        if previous == self.selected_category {
+            vec![]
+        } else {
+            self.filter_changed()
+        }
     }
 
     pub fn select_prev_category(&mut self) -> Vec<Effect> {
+        let previous = self.selected_category;
         self.selected_category = self.selected_category.saturating_sub(1);
-        self.refresh()
+        if previous == self.selected_category {
+            vec![]
+        } else {
+            self.filter_changed()
+        }
     }
 }
 

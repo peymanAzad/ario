@@ -14,18 +14,30 @@ pub(crate) fn queue_start_message(stop: chrono::DateTime<chrono::Utc>) -> String
 
 impl App {
     pub fn select_next_queue(&mut self) -> Vec<Effect> {
+        let previous = self.selected_queue;
         let len = self.queues.len() + 1; // +1 for "All"
         self.selected_queue = (self.selected_queue + 1).min(len - 1);
-        self.refresh()
+        if previous == self.selected_queue {
+            vec![]
+        } else {
+            self.filter_changed()
+        }
     }
 
     pub fn select_prev_queue(&mut self) -> Vec<Effect> {
+        let previous = self.selected_queue;
         self.selected_queue = self.selected_queue.saturating_sub(1);
-        self.refresh()
+        if previous == self.selected_queue {
+            vec![]
+        } else {
+            self.filter_changed()
+        }
     }
 
     pub fn current_queue(&self) -> Option<&Queue> {
-        self.queues.get(self.selected_queue.saturating_sub(1))
+        self.selected_queue
+            .checked_sub(1)
+            .and_then(|index| self.queues.get(index))
     }
 
     pub fn can_delete_selected_queue(&self) -> bool {
@@ -115,7 +127,11 @@ impl App {
                     format!("queue \"{queue_name}\" removed"),
                     ToastLevel::Success,
                 );
-                self.refresh()
+                if selected_id == Some(queue_id) {
+                    self.filter_changed()
+                } else {
+                    self.refresh()
+                }
             }
             Err(error) => {
                 self.toasts.push(error.to_string(), ToastLevel::Error);

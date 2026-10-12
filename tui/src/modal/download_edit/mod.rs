@@ -135,3 +135,41 @@ impl Component for DownloadEditModal {
         ]
     }
 }
+
+impl DownloadEditModal {
+    pub(crate) fn handle_intent(
+        &mut self,
+        intent: crate::mouse::ModalIntent,
+        ctx: &Ctx<'_>,
+    ) -> ModalOutcome {
+        use crate::mouse::{Command as C, ModalIntent as I};
+        match intent {
+            I::Field(index) => {
+                self.focusing_queue = index == 6;
+                if index < 6 {
+                    self.finetune_editor.cursor = index;
+                }
+            }
+            I::Adjust { field, forward } => {
+                if let Some(index) = field {
+                    self.focusing_queue = index == 6;
+                    if index < 6 {
+                        self.finetune_editor.cursor = index;
+                    }
+                }
+                self.adjust(forward, ctx.queues.len());
+            }
+            I::Navigate(forward) => {
+                if forward {
+                    self.move_down()
+                } else {
+                    self.move_up()
+                }
+            }
+            I::Command(C::Save) => return self.try_save(ctx),
+            I::Command(C::Cancel) => return ModalOutcome::Close,
+            _ => {}
+        }
+        ModalOutcome::Continue
+    }
+}
