@@ -1,2 +1,4 @@
 /target
 *.db*
+/.demo/
+__pycache__/
