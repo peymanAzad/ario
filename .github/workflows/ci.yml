@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [master]
+  pull_request:
+    branches: [master]
 
 permissions:
   contents: read
@@ -18,5 +20,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Run Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
       - name: Run all tests
-        run: cargo test --locked --no-fail-fast
+        run: cargo test --locked --all-targets --no-fail-fast
+      - name: Verify package
+        run: cargo package --locked

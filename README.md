@@ -2,6 +2,7 @@
 
 **A batteries-included terminal download manager powered by aria2.**
 
+[![CI](https://github.com/peymanAzad/ario/actions/workflows/ci.yml/badge.svg?branch=master&event=push)](https://github.com/peymanAzad/ario/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Built with Rust](https://img.shields.io/badge/built_with-Rust-orange?style=flat-square&logo=rust)](https://www.rust-lang.org/)
 [![Built with Ratatui](https://img.shields.io/badge/built_with-Ratatui-89b4fa?style=flat-square)](https://ratatui.rs/)
@@ -32,15 +33,15 @@ Like the look of the demo? Set `theme = "catppuccin-frappe"` in `tui.toml`.
 - **aria2** — Install [aria2](https://github.com/aria2/aria2) using your system's package manager and make sure `aria2c` is available in your `PATH`.
 - **Nerd Font** — Optional, but strongly recommended for displaying Ario's default icons correctly. Select a Nerd Font in your terminal's font settings.
 
-### Cargo release (planned)
+### Install from crates.io
 
-A crates.io release is planned. Once published, install the `ario` package to get both the TUI and daemon:
+Install the [`ario` package](https://crates.io/crates/ario) to get both the TUI and daemon:
 
 ```sh
 cargo install ario --locked
 ```
 
-Until then, install both executables from source.
+This installs `ario_daemon` and `ario`. Make sure Cargo's executable directory, usually `~/.cargo/bin`, is in your `PATH`.
 
 ### Install from source
 
@@ -49,8 +50,6 @@ git clone https://github.com/peymanAzad/ario.git
 cd ario
 cargo install --locked --path .
 ```
-
-This installs `ario_daemon` and `ario`. Make sure Cargo's executable directory, usually `~/.cargo/bin`, is in your `PATH`.
 
 For terminals without a Nerd Font, launch with Unicode icons:
 
