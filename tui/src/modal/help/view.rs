@@ -320,9 +320,11 @@ mod tests {
     fn tiny_help_and_long_unicode_search_render_without_overflow() {
         let context_app = app();
         let ctx = context_app.modal_ctx();
-        let mut modal = HelpModal::default();
-        modal.query = "é界👩‍💻".repeat(30);
-        modal.editing_search = true;
+        let mut modal = HelpModal {
+            query: "é界👩‍💻".repeat(30),
+            editing_search: true,
+            ..Default::default()
+        };
         for (width, height) in [(1, 1), (2, 2), (8, 5), (30, 12), (80, 24)] {
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
             terminal

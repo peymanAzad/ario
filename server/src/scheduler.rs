@@ -205,14 +205,13 @@ pub async fn start_eligible_downloads(
         if capacity == 0 {
             break;
         }
-        if let Some(current) = state.db.get_queue(queue.id)? {
-            if current.scheduler.enabled
-                && current
-                    .scheduled_stop_at
-                    .is_some_and(|stop| state.now() >= stop)
-            {
-                break;
-            }
+        if let Some(current) = state.db.get_queue(queue.id)?
+            && current.scheduler.enabled
+            && current
+                .scheduled_stop_at
+                .is_some_and(|stop| state.now() >= stop)
+        {
+            break;
         }
         let result: anyhow::Result<()> = async {
             if let Some(gid) = &download.aria2_gid {
@@ -267,11 +266,11 @@ pub async fn pause_downloads(
             state.db.set_paused_by_scheduler(download.id, true)?;
             state.db.set_manually_started(download.id, false)?;
         }
-        if let Some(gid) = &download.aria2_gid {
-            if let Err(error) = state.aria2.pause(gid).await {
-                failure = Some(error);
-                continue;
-            }
+        if let Some(gid) = &download.aria2_gid
+            && let Err(error) = state.aria2.pause(gid).await
+        {
+            failure = Some(error);
+            continue;
         }
         state
             .db

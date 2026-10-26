@@ -68,6 +68,16 @@ pub const ALL_CATEGORIES: [FileCategory; 6] = [
     FileCategory::Other,
 ];
 
+/// Connection state and download statistics from a single refresh response.
+#[derive(Debug, Default)]
+pub struct RefreshStatus {
+    pub server_reachable: bool,
+    pub aria2_reachable: bool,
+    pub download_speed: u64,
+    pub active_downloads: u64,
+    pub aria2_global_options: Option<Aria2GlobalOptions>,
+}
+
 pub struct App {
     pub interactions: std::cell::RefCell<crate::mouse::Interactions>,
     pub downloads: Vec<DownloadLiveStatus>,
@@ -297,13 +307,16 @@ impl App {
         &mut self,
         downloads: anyhow::Result<Vec<DownloadLiveStatus>>,
         queues: anyhow::Result<Vec<Queue>>,
-        server_reachable: bool,
-        aria2_reachable: bool,
-        download_speed: u64,
-        active_downloads: u64,
-        aria2_global_options: Option<Aria2GlobalOptions>,
+        status: RefreshStatus,
         lifecycle_revision: u64,
     ) {
+        let RefreshStatus {
+            server_reachable,
+            aria2_reachable,
+            download_speed,
+            active_downloads,
+            aria2_global_options,
+        } = status;
         self.refresh_in_flight = false;
 
         // A failed request started before a newer worker event cannot undo it.

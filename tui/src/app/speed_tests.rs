@@ -17,11 +17,33 @@ fn app() -> App {
 #[test]
 fn speed_history_resets_on_connection_loss_and_caps_retained_samples() {
     let mut app = app();
-    app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 100, 1, None, 0);
+    app.apply_refresh(
+        Ok(vec![]),
+        Ok(vec![]),
+        crate::app::RefreshStatus {
+            server_reachable: true,
+            aria2_reachable: true,
+            download_speed: 100,
+            active_downloads: 1,
+            aria2_global_options: None,
+        },
+        0,
+    );
     assert_eq!(app.total_download_speed, 100);
     assert_eq!(app.speed.history.iter().copied().collect::<Vec<_>>(), [100]);
 
-    app.apply_refresh(Ok(vec![]), Ok(vec![]), false, false, 50, 0, None, 0);
+    app.apply_refresh(
+        Ok(vec![]),
+        Ok(vec![]),
+        crate::app::RefreshStatus {
+            server_reachable: false,
+            aria2_reachable: false,
+            download_speed: 50,
+            active_downloads: 0,
+            aria2_global_options: None,
+        },
+        0,
+    );
     assert_eq!(app.total_download_speed, 0);
     assert!(app.speed.history.is_empty());
     assert!(app.speed.last_sample_at.is_none());
@@ -48,14 +70,47 @@ fn speed_history_resets_on_connection_loss_and_caps_retained_samples() {
 #[test]
 fn reachable_refresh_throttles_speed_samples() {
     let mut app = app();
-    app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 100, 1, None, 0);
-    app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 200, 1, None, 0);
+    app.apply_refresh(
+        Ok(vec![]),
+        Ok(vec![]),
+        crate::app::RefreshStatus {
+            server_reachable: true,
+            aria2_reachable: true,
+            download_speed: 100,
+            active_downloads: 1,
+            aria2_global_options: None,
+        },
+        0,
+    );
+    app.apply_refresh(
+        Ok(vec![]),
+        Ok(vec![]),
+        crate::app::RefreshStatus {
+            server_reachable: true,
+            aria2_reachable: true,
+            download_speed: 200,
+            active_downloads: 1,
+            aria2_global_options: None,
+        },
+        0,
+    );
     assert_eq!(app.total_download_speed, 200);
     assert_eq!(app.displayed_download_speed(), 125);
     assert_eq!(app.speed.history.iter().copied().collect::<Vec<_>>(), [100]);
 
     app.speed.last_sample_at = Some(Instant::now() - SPEED_SAMPLE_INTERVAL);
-    app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 300, 1, None, 0);
+    app.apply_refresh(
+        Ok(vec![]),
+        Ok(vec![]),
+        crate::app::RefreshStatus {
+            server_reachable: true,
+            aria2_reachable: true,
+            download_speed: 300,
+            active_downloads: 1,
+            aria2_global_options: None,
+        },
+        0,
+    );
     assert_eq!(app.displayed_download_speed(), 168);
     assert_eq!(
         app.speed.history.iter().copied().collect::<Vec<_>>(),
@@ -66,12 +121,45 @@ fn reachable_refresh_throttles_speed_samples() {
 #[test]
 fn active_zero_speed_stays_smoothed_but_idle_resets_immediately() {
     let mut app = app();
-    app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 100, 1, None, 0);
-    app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 0, 1, None, 0);
+    app.apply_refresh(
+        Ok(vec![]),
+        Ok(vec![]),
+        crate::app::RefreshStatus {
+            server_reachable: true,
+            aria2_reachable: true,
+            download_speed: 100,
+            active_downloads: 1,
+            aria2_global_options: None,
+        },
+        0,
+    );
+    app.apply_refresh(
+        Ok(vec![]),
+        Ok(vec![]),
+        crate::app::RefreshStatus {
+            server_reachable: true,
+            aria2_reachable: true,
+            download_speed: 0,
+            active_downloads: 1,
+            aria2_global_options: None,
+        },
+        0,
+    );
     assert_eq!(app.total_download_speed, 0);
     assert_eq!(app.displayed_download_speed(), 75);
 
-    app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 100, 0, None, 0);
+    app.apply_refresh(
+        Ok(vec![]),
+        Ok(vec![]),
+        crate::app::RefreshStatus {
+            server_reachable: true,
+            aria2_reachable: true,
+            download_speed: 100,
+            active_downloads: 0,
+            aria2_global_options: None,
+        },
+        0,
+    );
     assert_eq!(app.total_download_speed, 0);
     assert_eq!(app.displayed_download_speed(), 0);
     assert_eq!(app.active_downloads, 0);
@@ -111,11 +199,13 @@ fn successful_health_refresh_caches_aria2_global_options() {
     app.apply_refresh(
         Ok(vec![]),
         Ok(vec![]),
-        true,
-        true,
-        0,
-        0,
-        Some(options.clone()),
+        crate::app::RefreshStatus {
+            server_reachable: true,
+            aria2_reachable: true,
+            download_speed: 0,
+            active_downloads: 0,
+            aria2_global_options: Some(options.clone()),
+        },
         0,
     );
 
@@ -130,27 +220,42 @@ fn lifecycle_progress_and_stale_failed_refresh() {
     app.apply_refresh(
         Err(anyhow::anyhow!("offline")),
         Err(anyhow::anyhow!("offline")),
-        false,
-        false,
-        0,
-        0,
-        None,
+        crate::app::RefreshStatus {
+            server_reachable: false,
+            aria2_reachable: false,
+            download_speed: 0,
+            active_downloads: 0,
+            aria2_global_options: None,
+        },
         0,
     );
     assert!(app.last_error.is_none());
     app.apply_lifecycle(LifecycleState::Retrying);
     app.apply_lifecycle(LifecycleState::Connected);
     let revision = app.lifecycle_revision;
-    app.apply_refresh(Ok(vec![]), Ok(vec![]), true, true, 0, 0, None, revision);
+    app.apply_refresh(
+        Ok(vec![]),
+        Ok(vec![]),
+        crate::app::RefreshStatus {
+            server_reachable: true,
+            aria2_reachable: true,
+            download_speed: 0,
+            active_downloads: 0,
+            aria2_global_options: None,
+        },
+        revision,
+    );
     assert!(app.server_reachable);
     app.apply_refresh(
         Err(anyhow::anyhow!("old")),
         Err(anyhow::anyhow!("old")),
-        false,
-        false,
-        0,
-        0,
-        None,
+        crate::app::RefreshStatus {
+            server_reachable: false,
+            aria2_reachable: false,
+            download_speed: 0,
+            active_downloads: 0,
+            aria2_global_options: None,
+        },
         0,
     );
     assert!(app.server_reachable);
@@ -160,22 +265,26 @@ fn lifecycle_progress_and_stale_failed_refresh() {
     app.apply_refresh(
         Err(anyhow::anyhow!("offline")),
         Err(anyhow::anyhow!("offline")),
-        false,
-        false,
-        0,
-        0,
-        None,
+        crate::app::RefreshStatus {
+            server_reachable: false,
+            aria2_reachable: false,
+            download_speed: 0,
+            active_downloads: 0,
+            aria2_global_options: None,
+        },
         app.lifecycle_revision,
     );
     assert_eq!(app.last_error.as_deref(), Some("daemon exited"));
     app.apply_refresh(
         Ok(vec![]),
         Ok(vec![]),
-        true,
-        true,
-        0,
-        0,
-        None,
+        crate::app::RefreshStatus {
+            server_reachable: true,
+            aria2_reachable: true,
+            download_speed: 0,
+            active_downloads: 0,
+            aria2_global_options: None,
+        },
         app.lifecycle_revision,
     );
     assert_eq!(app.lifecycle, LifecycleState::Connected);

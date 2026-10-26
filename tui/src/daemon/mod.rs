@@ -223,16 +223,17 @@ impl ServerProcess {
                     connected = false;
                     Self::lifecycle(&event_sender, LifecycleState::Retrying);
                 }
-                if let Some(deadline) = readiness_deadline {
-                    if Instant::now() >= deadline && !readiness_reported {
-                        let message = format!(
-                            "ario_daemon did not become healthy within five seconds. Check {}",
-                            self.config.log_path.display()
-                        );
-                        Self::lifecycle(&event_sender, LifecycleState::Failed(message.clone()));
-                        Self::notify(&event_sender, message);
-                        readiness_reported = true;
-                    }
+                if let Some(deadline) = readiness_deadline
+                    && Instant::now() >= deadline
+                    && !readiness_reported
+                {
+                    let message = format!(
+                        "ario_daemon did not become healthy within five seconds. Check {}",
+                        self.config.log_path.display()
+                    );
+                    Self::lifecycle(&event_sender, LifecycleState::Failed(message.clone()));
+                    Self::notify(&event_sender, message);
+                    readiness_reported = true;
                 }
             }
 

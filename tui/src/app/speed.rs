@@ -8,7 +8,7 @@ pub(crate) const SPEED_SAMPLE_INTERVAL: Duration = Duration::from_secs(2);
 
 pub(crate) fn speed_scale_target(history: impl IntoIterator<Item = u64>) -> u64 {
     let peak = history.into_iter().max().unwrap_or(0);
-    let headroom = peak / 5 + u64::from(peak % 5 != 0);
+    let headroom = peak / 5 + u64::from(!peak.is_multiple_of(5));
     peak.saturating_add(headroom).max(1)
 }
 
@@ -40,7 +40,7 @@ impl SpeedTracker {
         self.chart_max = if target >= self.chart_max {
             target
         } else {
-            let decay = self.chart_max / 10 + u64::from(self.chart_max % 10 != 0);
+            let decay = self.chart_max / 10 + u64::from(!self.chart_max.is_multiple_of(10));
             self.chart_max.saturating_sub(decay).max(target)
         };
     }

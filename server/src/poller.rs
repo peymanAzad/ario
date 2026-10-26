@@ -51,7 +51,7 @@ pub(crate) async fn poll_once(state: &AppState) {
         match state.aria2.tell_status(&gid).await {
             Ok(status) => {
                 if download.source_type == SourceType::Magnet && !status.followed_by.is_empty() {
-                    match adopt_magnet_child(&state, &download, &gid, &status.followed_by).await {
+                    match adopt_magnet_child(state, &download, &gid, &status.followed_by).await {
                         Ok(()) => {}
                         Err(error) => eprintln!(
                             "poller: failed to prepare magnet payload for download {}: {error}",
@@ -114,7 +114,7 @@ pub(crate) async fn poll_once(state: &AppState) {
                 }
 
                 reconcile_transfer_state(
-                    &state,
+                    state,
                     &download,
                     &status.status,
                     completed_length,
@@ -137,7 +137,7 @@ pub(crate) async fn poll_once(state: &AppState) {
             Ok(queues) => {
                 for queue in queues {
                     if let Err(error) =
-                        crate::scheduler::reconcile_queue(&state, queue.id, state.now()).await
+                        crate::scheduler::reconcile_queue(state, queue.id, state.now()).await
                     {
                         eprintln!("queue {}: reconciliation failed: {error}", queue.id);
                     }

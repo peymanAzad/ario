@@ -196,11 +196,13 @@ fn update_api(app: &mut App, result: ApiResult) -> Vec<Effect> {
             app.apply_refresh(
                 downloads,
                 queues,
-                server_reachable,
-                aria2_reachable,
-                download_speed,
-                active_downloads,
-                aria2_global_options,
+                crate::app::RefreshStatus {
+                    server_reachable,
+                    aria2_reachable,
+                    download_speed,
+                    active_downloads,
+                    aria2_global_options,
+                },
                 lifecycle_revision,
             );
             if filter_revision != app.filter_revision {

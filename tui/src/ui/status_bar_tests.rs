@@ -46,11 +46,13 @@ fn managed_server_indicator_follows_lifecycle_and_current_health() {
     app.apply_refresh(
         Err(anyhow::anyhow!("server unreachable")),
         Err(anyhow::anyhow!("server unreachable")),
-        false,
-        false,
-        0,
-        0,
-        None,
+        crate::app::RefreshStatus {
+            server_reachable: false,
+            aria2_reachable: false,
+            download_speed: 0,
+            active_downloads: 0,
+            aria2_global_options: None,
+        },
         3, // Retrying, Failed, then Connected.
     );
     assert_eq!(server_status(&app), ServerStatus::Down);

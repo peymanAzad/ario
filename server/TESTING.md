@@ -1,13 +1,14 @@
 # Test coverage
 
-Run all server integration tests, the headless TUI smoke, or the entire workspace.
+From the repository root, run all server integration tests, the headless TUI
+smoke, or the entire package.
 Scheduler tests are included in the P0 integration coverage without a separate
 execution priority.
 
 ```sh
-cargo test --workspace --locked integration_tests
-cargo test --workspace --locked tests::workflow
-cargo test --workspace --locked
+cargo test --locked --bin ario_daemon integration_tests
+cargo test --locked --bin ario tests::workflow
+cargo test --locked
 ```
 
 `src/tests/` contains 34 workflow tests grouped by subject. Importing the actual
