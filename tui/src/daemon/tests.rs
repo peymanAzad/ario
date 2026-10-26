@@ -178,11 +178,11 @@ fn immediate_exit_reports_status_and_retries_after_backoff() {
     while Instant::now() < deadline {
         if let Ok(Event::Msg(Msg::Toast { message, .. })) =
             receiver.recv_timeout(Duration::from_millis(100))
+            && message.contains("exited: exit status: 1")
+            && message.contains(".log")
         {
-            if message.contains("exited: exit status: 1") && message.contains(".log") {
-                saw_exit = true;
-                break;
-            }
+            saw_exit = true;
+            break;
         }
     }
     assert!(saw_exit);
@@ -231,11 +231,10 @@ fn slow_readiness_recovers_after_timeout_without_duplicate() {
     while Instant::now() < deadline {
         if let Ok(Event::Msg(Msg::Lifecycle(LifecycleState::Failed(message)))) =
             receiver.recv_timeout(Duration::from_millis(100))
+            && message.contains("five seconds")
         {
-            if message.contains("five seconds") {
-                saw_timeout = true;
-                break;
-            }
+            saw_timeout = true;
+            break;
         }
     }
     assert!(saw_timeout);
@@ -299,11 +298,10 @@ fn five_fast_exits_stop_daemon_retries() {
     while Instant::now() < deadline {
         if let Ok(Event::Msg(Msg::Lifecycle(LifecycleState::Failed(message)))) =
             receiver.recv_timeout(Duration::from_millis(100))
+            && message.contains("crash-looping")
         {
-            if message.contains("crash-looping") {
-                gave_up = true;
-                break;
-            }
+            gave_up = true;
+            break;
         }
     }
     assert!(gave_up);

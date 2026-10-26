@@ -236,6 +236,49 @@ impl Component for HelpModal {
     }
 }
 
+impl HelpModal {
+    pub(crate) fn handle_intent(
+        &mut self,
+        intent: crate::mouse::ModalIntent,
+        _ctx: &Ctx<'_>,
+    ) -> ModalOutcome {
+        use crate::mouse::{Command as C, ModalIntent as I};
+        match intent {
+            I::Text | I::Command(C::Search) => self.editing_search = true,
+            I::HelpScroll(forward) | I::Navigate(forward) => {
+                self.editing_search = false;
+                if forward {
+                    self.scroll_down(1)
+                } else {
+                    self.scroll_up(1)
+                }
+            }
+            I::Command(command) => match command {
+                C::Cancel => return ModalOutcome::Close,
+                C::Accept => self.editing_search = false,
+                C::Discard => {
+                    self.query.clear();
+                    self.editing_search = false;
+                    self.scroll = 0;
+                }
+                C::Erase => {
+                    if let Some((index, _)) = self.query.grapheme_indices(true).next_back() {
+                        self.query.truncate(index);
+                    }
+                    self.scroll = 0;
+                }
+                C::PageUp => self.scroll_up(self.viewport_height),
+                C::PageDown => self.scroll_down(self.viewport_height),
+                C::Home => self.scroll = 0,
+                C::End => self.scroll = self.max_scroll(),
+                _ => {}
+            },
+            _ => {}
+        }
+        ModalOutcome::Continue
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,48 +322,5 @@ mod tests {
         assert_eq!(modal.scroll, 0);
         modal.scroll_up(usize::MAX);
         assert_eq!(modal.scroll, 0);
-    }
-}
-
-impl HelpModal {
-    pub(crate) fn handle_intent(
-        &mut self,
-        intent: crate::mouse::ModalIntent,
-        _ctx: &Ctx<'_>,
-    ) -> ModalOutcome {
-        use crate::mouse::{Command as C, ModalIntent as I};
-        match intent {
-            I::Text | I::Command(C::Search) => self.editing_search = true,
-            I::HelpScroll(forward) | I::Navigate(forward) => {
-                self.editing_search = false;
-                if forward {
-                    self.scroll_down(1)
-                } else {
-                    self.scroll_up(1)
-                }
-            }
-            I::Command(command) => match command {
-                C::Cancel => return ModalOutcome::Close,
-                C::Accept => self.editing_search = false,
-                C::Discard => {
-                    self.query.clear();
-                    self.editing_search = false;
-                    self.scroll = 0;
-                }
-                C::Erase => {
-                    if let Some((index, _)) = self.query.grapheme_indices(true).next_back() {
-                        self.query.truncate(index);
-                    }
-                    self.scroll = 0;
-                }
-                C::PageUp => self.scroll_up(self.viewport_height),
-                C::PageDown => self.scroll_down(self.viewport_height),
-                C::Home => self.scroll = 0,
-                C::End => self.scroll = self.max_scroll(),
-                _ => {}
-            },
-            _ => {}
-        }
-        ModalOutcome::Continue
     }
 }

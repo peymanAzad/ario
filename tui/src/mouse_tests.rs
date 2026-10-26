@@ -765,11 +765,13 @@ fn refresh_preserves_selection_by_id_when_rows_reorder() {
     app.apply_refresh(
         Ok(vec![download(2), download(3), download(1)]),
         Ok(vec![queue(2), queue(1)]),
-        true,
-        true,
-        0,
-        0,
-        None,
+        crate::app::RefreshStatus {
+            server_reachable: true,
+            aria2_reachable: true,
+            download_speed: 0,
+            active_downloads: 0,
+            aria2_global_options: None,
+        },
         0,
     );
     assert_eq!(app.selected_download, 0);

@@ -1,12 +1,68 @@
-[workspace]
+[package]
+name = "ario"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
 resolver = "3"
-members = ["common", "server", "tui"]
+description = "A batteries-included terminal download manager powered by aria2"
+license = "MIT"
+repository = "https://github.com/peymanAzad/ario"
+homepage = "https://github.com/peymanAzad/ario"
+documentation = "https://github.com/peymanAzad/ario#readme"
+readme = "README.md"
+keywords = ["download", "aria2", "terminal", "tui", "bittorrent"]
+categories = ["command-line-utilities"]
+default-run = "ario"
+autobins = false
+# Publish only crate metadata, Rust sources (including tests), and the SQL schema.
+# Leave demo media, development docs, CI, and runtime files out of the archive.
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/LICENSE",
+    "/common/src/**/*.rs",
+    "/server/src/**/*.rs",
+    "/server/schema.sql",
+    "/tui/src/**/*.rs",
+]
 
-[workspace.dependencies]
+# Shared types used by both binaries; included in this package.
+[lib]
+name = "common"
+path = "common/src/lib.rs"
+doc = false
+
+[[bin]]
+name = "ario"
+path = "tui/src/main.rs"
+
+[[bin]]
+name = "ario_daemon"
+path = "server/src/main.rs"
+
+[dependencies]
 anyhow = "1"
+arboard = { version = "3.6.1", features = ["wayland-data-control"] }
+axum = { version = "0.8", features = ["multipart"] }
+base64 = "0.23.0"
+catppuccin = "2"
 chrono = { version = "0.4", features = ["serde"] }
+crossterm = "0.29"
 directories = "6.0"
+rand = "0.10"
+ratatui = "0.30"
+regex = "1.13.1"
 reqwest = { version = "0.13", features = ["blocking", "json", "multipart", "query"] }
+rusqlite = { version = "0.40", features = ["bundled", "chrono"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tokio = { version = "1", features = ["macros", "net", "process", "rt", "signal", "sync", "time"] }
 toml = "1.1"
+tower-http = { version = "0.7", features = ["cors"] }
+unicode-segmentation = "1.13.3"
+unicode-width = "0.2.2"
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }

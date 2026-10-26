@@ -50,10 +50,10 @@ fn ensure_success(
     if !status.is_client_error() && !status.is_server_error() {
         return Ok(response);
     }
-    if let Ok(ApiResponse::<()>::Error { message }) = response.json::<ApiResponse<()>>() {
-        if !message.trim().is_empty() {
-            anyhow::bail!(message);
-        }
+    if let Ok(ApiResponse::<()>::Error { message }) = response.json::<ApiResponse<()>>()
+        && !message.trim().is_empty()
+    {
+        anyhow::bail!(message);
     }
     anyhow::bail!("Request failed (HTTP {status}).")
 }
