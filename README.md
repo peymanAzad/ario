@@ -27,41 +27,96 @@ Like the look of the demo? Set `theme = "catppuccin-frappe"` in `tui.toml`.
 
 ## 📦 Installation
 
+Every installation includes both `ario` (the TUI) and `ario_daemon`. Prebuilt
+packages do not require Rust.
+
 ### Prerequisites
 
-- **Rust and Cargo 1.95 or newer** — Required for Cargo and source installation. Install the latest stable toolchain using [rustup](https://rust-lang.org/tools/install/).
-- **aria2** — Install [aria2](https://github.com/aria2/aria2) using your system's package manager and make sure `aria2c` is available in your `PATH`.
 - **Nerd Font** — Optional, but strongly recommended for displaying Ario's default icons correctly. Select a Nerd Font in your terminal's font settings.
 
-### Release packages
+For terminals without a Nerd Font, launch with `ario --glyphs=unicode`.
 
-The [release workflow](docs/releases.md) builds archives for Linux x64, macOS
-(Apple Silicon and Intel), and Windows x64, plus Debian and RPM packages. These
-become available on [GitHub Releases](https://github.com/peymanAzad/ario/releases)
-after a successful tagged release. Every package contains both executables.
+### Linux (x86_64)
 
-After the first stable release is published to the Homebrew tap:
+Linux release binaries require **glibc 2.35 or newer**. Download packages from
+[GitHub Releases](https://github.com/peymanAzad/ario/releases/latest).
+
+#### Debian and Ubuntu
+
+Download [ario_0.1.0-1_amd64.deb](https://github.com/peymanAzad/ario/releases/download/v0.1.0/ario_0.1.0-1_amd64.deb), then run this command in the download directory:
+
+```sh
+sudo apt install ./ario_0.1.0-1_amd64.deb
+```
+
+APT installs aria2 and the other required dependencies.
+
+#### Fedora and other RPM-based distributions
+
+Download [ario-0.1.0-1.x86_64.rpm](https://github.com/peymanAzad/ario/releases/download/v0.1.0/ario-0.1.0-1.x86_64.rpm), then install it with DNF:
+
+```sh
+sudo dnf install ./ario-0.1.0-1.x86_64.rpm
+```
+
+DNF installs aria2 and the other required dependencies from your configured
+repositories. Use your distribution's package manager if it does not use DNF.
+
+#### Other Linux distributions
+
+The archive does not install aria2 automatically.
+Install [aria2](https://github.com/aria2/aria2) with your distribution's package
+manager and make sure `aria2c` is in your `PATH`. Download the
+[Linux x86_64 archive](https://github.com/peymanAzad/ario/releases/latest/download/ario-x86_64-unknown-linux-gnu.tar.gz), then extract and install both executables:
+
+```sh
+tar -xzf ario-x86_64-unknown-linux-gnu.tar.gz
+sudo install -d /usr/local/bin
+sudo install -m 755 ario-x86_64-unknown-linux-gnu/ario \
+  ario-x86_64-unknown-linux-gnu/ario_daemon /usr/local/bin/
+```
+
+Make sure `/usr/local/bin` is in your `PATH`.
+
+### macOS (Apple Silicon and Intel)
+
+Install [Homebrew](https://brew.sh/), then run:
 
 ```sh
 brew install peymanAzad/tap/ario
 ```
 
-Homebrew and the Linux packages install aria2 as a dependency. When installing
-an archive manually, install aria2 separately and keep `ario` and `ario_daemon`
-in the same directory on your `PATH`. Prebuilt packages do not require Rust.
-Linux release binaries require glibc 2.35 or newer.
+Homebrew selects the binary for your Mac and installs aria2 automatically.
 
-### Install from crates.io
+### Windows (x64)
 
-Install the [`ario` package](https://crates.io/crates/ario) to get both the TUI and daemon:
+The ZIP does not install aria2 automatically.
+
+1. Install aria2 using WinGet:
+
+   ```powershell
+   winget install --id aria2.aria2 --exact
+   ```
+
+2. Download the [Windows x64 ZIP](https://github.com/peymanAzad/ario/releases/latest/download/ario-x86_64-pc-windows-msvc.zip) and extract it to a permanent location.
+3. Add the directory containing **both** `ario.exe` and `ario_daemon.exe` to
+   your user `Path` environment variable. Keep the two executables together.
+4. Open a new terminal so the updated `Path` takes effect, then run `ario`.
+   Make sure `aria2c` is also available in that terminal.
+
+### Cargo (all platforms)
+
+Install **Rust and Cargo 1.95 or newer** using [rustup](https://rust-lang.org/tools/install/).
+Cargo and source installations do not install aria2 automatically; install it
+separately so that `aria2c` is in your `PATH`.
+
+Install the published [`ario` crate](https://crates.io/crates/ario):
 
 ```sh
 cargo install ario --locked
 ```
 
-This installs `ario_daemon` and `ario`. Make sure Cargo's executable directory, usually `~/.cargo/bin`, is in your `PATH`.
-
-### Install from source
+Or build and install from this repository:
 
 ```sh
 git clone https://github.com/peymanAzad/ario.git
@@ -69,11 +124,9 @@ cd ario
 cargo install --locked --path .
 ```
 
-For terminals without a Nerd Font, launch with Unicode icons:
-
-```sh
-ario --glyphs=unicode
-```
+Both commands install `ario` and `ario_daemon`. Make sure Cargo's executable
+directory, usually `~/.cargo/bin` on Linux/macOS or `%USERPROFILE%\.cargo\bin`
+on Windows, is in your `PATH`.
 
 ## 🚀 Quick start
 
