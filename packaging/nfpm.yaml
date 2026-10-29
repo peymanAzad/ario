@@ -1,0 +1,38 @@
+name: ario
+arch: amd64
+platform: linux
+version: ${ARIO_VERSION}
+release: "1"
+section: utils
+priority: optional
+maintainer: peymanAzad <azad.peyman75@gmail.com>
+description: A terminal download manager powered by aria2
+homepage: https://github.com/peymanAzad/ario
+license: MIT
+# Release binaries are built on Ubuntu 22.04 (glibc 2.35).
+overrides:
+  deb:
+    depends:
+      - aria2
+      - ca-certificates
+      - libc6 (>= 2.35)
+      - libgcc-s1
+  rpm:
+    depends:
+      - aria2
+      - ca-certificates
+      - glibc >= 2.35
+      - libgcc
+contents:
+  - src: ario
+    dst: /usr/bin/ario
+    file_info:
+      mode: 0755
+  - src: ario_daemon
+    dst: /usr/bin/ario_daemon
+    file_info:
+      mode: 0755
+  - src: LICENSE
+    dst: /usr/share/licenses/ario/LICENSE
+  - src: README.md
+    dst: /usr/share/doc/ario/README.md

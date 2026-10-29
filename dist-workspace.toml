@@ -1,0 +1,28 @@
+[workspace]
+members = ["cargo:."]
+
+[dist]
+cargo-dist-version = "0.33.0"
+ci = ["github"]
+installers = ["homebrew"]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+unix-archive = ".tar.gz"
+windows-archive = ".zip"
+checksum = "sha256"
+tap = "peymanAzad/homebrew-tap"
+publish-jobs = ["homebrew"]
+post-announce-jobs = ["./release-winget"]
+publish-prereleases = false
+pr-run-mode = "upload"
+cache-builds = false
+global-artifacts-jobs = ["./release-linux-packages"]
+github-build-setup = "../release-build-setup.yml"
+
+[dist.dependencies.homebrew]
+aria2 = { stage = ["run"] }
+

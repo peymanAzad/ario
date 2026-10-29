@@ -1,0 +1,73 @@
+name: Linux packages
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    env:
+      ARIO_VERSION: ${{ fromJson(inputs.plan).releases[0].app_version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: artifacts-build-local-*
+          path: target/distrib
+          merge-multiple: true
+      - name: Install nFPM 2.47.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 3 https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_Linux_x86_64.tar.gz -o "$RUNNER_TEMP/nfpm.tar.gz"
+          echo "0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783  $RUNNER_TEMP/nfpm.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/nfpm.tar.gz" -C "$RUNNER_TEMP" nfpm
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Package both executables
+        shell: bash
+        run: bash scripts/package-linux.sh "$ARIO_VERSION" target/distrib/ario-x86_64-unknown-linux-gnu.tar.gz target/linux-packages
+      - name: Inspect package contents and dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes rpm
+          deb=$(find target/linux-packages -name '*.deb' -print -quit)
+          rpm=$(find target/linux-packages -name '*.rpm' -print -quit)
+          dpkg-deb --info "$deb"
+          dpkg-deb --contents "$deb"
+          rpm --query --package --requires "$rpm"
+          rpm --query --package --list "$rpm" | tee "$RUNNER_TEMP/rpm-files.txt"
+          grep -Fx /usr/bin/ario "$RUNNER_TEMP/rpm-files.txt"
+          grep -Fx /usr/bin/ario_daemon "$RUNNER_TEMP/rpm-files.txt"
+          sudo apt-get install --yes "./$deb"
+          test -x /usr/bin/ario
+          test -x /usr/bin/ario_daemon
+          aria2c --version
+      - name: Verify installed daemon and aria2
+        run: python3 scripts/smoke-linux.py /usr/bin/ario_daemon
+      - name: Prepare first WinGet submission
+        if: ${{ !fromJson(inputs.plan).announcement_is_prerelease }}
+        env:
+          PLAN: ${{ inputs.plan }}
+          PACKAGE_ID: ${{ vars.WINGET_PACKAGE_ID || 'peymanAzad.Ario' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$PLAN" > "$RUNNER_TEMP/plan.json"
+          python3 scripts/winget-manifests.py --plan "$RUNNER_TEMP/plan.json" --archive target/distrib/ario-x86_64-pc-windows-msvc.zip --package-id "$PACKAGE_ID" --output target/linux-packages/ario-winget-manifests.tar.gz
+      - uses: actions/upload-artifact@v7
+        with:
+          name: artifacts-linux-packages
+          path: target/linux-packages/*
+          if-no-files-found: error
