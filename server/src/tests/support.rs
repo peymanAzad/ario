@@ -234,6 +234,34 @@ async fn rpc(State(mock): State<MockState>, Json(request): Json<Value>) -> Respo
     Json(json!({"jsonrpc":"2.0","id":request["id"],"result":result})).into_response()
 }
 
+struct ServerTask {
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    task: JoinHandle<()>,
+}
+impl ServerTask {
+    async fn stop(&mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        (&mut self.task).await.expect("fixture server failed");
+    }
+}
+impl Drop for ServerTask {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+struct FixtureDirectory(PathBuf);
+impl Drop for FixtureDirectory {
+    fn drop(&mut self) {
+        let result = std::fs::remove_dir_all(&self.0);
+        if !std::thread::panicking() {
+            result.expect("failed to clean integration fixture");
+        }
+    }
+}
+
 pub(super) struct Fixture {
     pub(super) root: PathBuf,
     pub(super) state: AppState,
@@ -241,9 +269,11 @@ pub(super) struct Fixture {
     pub(super) mock: MockState,
     rpc_url: String,
     pub(super) base: String,
-    api_task: JoinHandle<()>,
-    rpc_task: JoinHandle<()>,
+    api_task: ServerTask,
+    rpc_task: ServerTask,
     pub(super) http: reqwest::Client,
+    // Fields drop in declaration order: close database/client handles before files.
+    _directory: FixtureDirectory,
 }
 impl Fixture {
     pub(super) async fn new() -> Self {
@@ -272,6 +302,7 @@ impl Fixture {
         state.aria2_global_options = crate::load_aria2_global_options(&state.aria2).await;
         assert!(state.aria2_global_options.is_some());
         let (base, api_task) = serve(crate::router(state.clone())).await;
+        let directory = FixtureDirectory(root.clone());
         Self {
             root,
             state,
@@ -282,6 +313,7 @@ impl Fixture {
             api_task,
             rpc_task,
             http: reqwest::Client::builder().timeout(LIMIT).build().unwrap(),
+            _directory: directory,
         }
     }
     fn open(root: &std::path::Path, rpc_url: &str, clock: Arc<Mutex<DateTime<Utc>>>) -> AppState {
@@ -297,8 +329,7 @@ impl Fixture {
         .with_clock(move || *clock.lock().unwrap())
     }
     pub(super) async fn reconfigure(&mut self, config: ServerConfig) {
-        self.api_task.abort();
-        let _ = (&mut self.api_task).await;
+        self.api_task.stop().await;
         self.state.config = Arc::new(config);
         (self.base, self.api_task) = serve(crate::router(self.state.clone())).await;
     }
@@ -326,8 +357,7 @@ impl Fixture {
         child
     }
     pub(super) async fn restart(&mut self) {
-        self.api_task.abort();
-        let _ = (&mut self.api_task).await;
+        self.api_task.stop().await;
         // Release every old database/live-state owner before reopening the file.
         let placeholder = AppState::new(
             Database::open(":memory:").unwrap(),
@@ -341,10 +371,8 @@ impl Fixture {
         assert!(self.state.live_status.read().await.is_empty());
     }
     pub(super) async fn close(mut self) {
-        self.api_task.abort();
-        self.rpc_task.abort();
-        let _ = (&mut self.api_task).await;
-        let _ = (&mut self.rpc_task).await;
+        self.api_task.stop().await;
+        self.rpc_task.stop().await;
         drop(self);
     }
     pub(super) fn now(&self) -> DateTime<Utc> {
@@ -522,21 +550,23 @@ impl Fixture {
         );
     }
 }
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        self.api_task.abort();
-        self.rpc_task.abort();
-        std::fs::remove_dir_all(&self.root).expect("failed to clean integration fixture");
-    }
-}
-async fn serve(app: Router) -> (String, JoinHandle<()>) {
+async fn serve(app: Router) -> (String, ServerTask) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
+    let (shutdown, stopped) = tokio::sync::oneshot::channel();
     (
         base,
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        }),
+        ServerTask {
+            shutdown: Some(shutdown),
+            task: tokio::spawn(async move {
+                axum::serve(listener, app)
+                    .with_graceful_shutdown(async move {
+                        let _ = stopped.await;
+                    })
+                    .await
+                    .unwrap();
+            }),
+        },
     )
 }
 
