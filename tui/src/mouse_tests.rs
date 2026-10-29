@@ -1012,6 +1012,7 @@ fn torrent_start_and_save_use_the_draft_even_while_path_is_focused() {
         std::process::id()
     ));
     std::fs::write(&path, b"d4:infodee").unwrap();
+    let path = path.canonicalize().unwrap();
     for (command, start_immediately) in [(Command::Start, true), (Command::Later, false)] {
         let mut app = app();
         app.queues = vec![queue(1), queue(2)];

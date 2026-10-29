@@ -1,8 +1,12 @@
 use super::*;
+#[cfg(unix)]
 use crate::app::LifecycleState;
+#[cfg(unix)]
 use crate::msg::Msg;
+#[cfg(unix)]
 use std::sync::atomic::AtomicU64;
 
+#[cfg(unix)]
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(unix)]
@@ -79,6 +83,7 @@ fn false_binary() -> &'static str {
         .unwrap_or("false")
 }
 
+#[cfg(unix)]
 fn test_process() -> Arc<ServerProcess> {
     Arc::new(ServerProcess::new(ServerProcessConfig {
         binary_path: false_binary().into(),
