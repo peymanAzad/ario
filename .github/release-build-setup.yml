@@ -1,0 +1,14 @@
+- name: Install Rust
+  uses: dtolnay/rust-toolchain@stable
+  with:
+    components: rustfmt, clippy
+- name: Cache Rust builds
+  uses: swatinem/rust-cache@v2
+- name: Check formatting and Clippy
+  if: runner.os == 'Linux'
+  run: |
+    cargo fmt --all --check
+    cargo clippy --locked --all-targets -- -D warnings
+    cargo package --locked
+- name: Test on the release platform
+  run: cargo test --locked --all-targets --no-fail-fast

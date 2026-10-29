@@ -1,0 +1,36 @@
+name: Submit WinGet update
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  submit:
+    # Enable only after the initial package has been accepted into winget-pkgs.
+    if: ${{ vars.WINGET_PACKAGE_ID != '' && !fromJson(inputs.plan).announcement_is_prerelease }}
+    runs-on: windows-2022
+    timeout-minutes: 15
+    env:
+      PACKAGE_ID: ${{ vars.WINGET_PACKAGE_ID }}
+      VERSION: ${{ fromJson(inputs.plan).releases[0].app_version }}
+      TAG: ${{ fromJson(inputs.plan).announcement_tag }}
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+    steps:
+      - name: Submit updated manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:WINGET_TOKEN)) {
+            throw 'Set the WINGET_TOKEN repository secret before enabling WinGet updates.'
+          }
+          $tool = Join-Path $env:RUNNER_TEMP 'wingetcreate.exe'
+          Invoke-WebRequest 'https://github.com/microsoft/winget-create/releases/download/v1.12.13.0/wingetcreate.exe' -OutFile $tool
+          $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:TAG/ario-x86_64-pc-windows-msvc.zip"
+          & $tool update $env:PACKAGE_ID --version $env:VERSION --urls $url --token $env:WINGET_TOKEN --submit
+          if ($LASTEXITCODE -ne 0) { throw "wingetcreate failed with exit code $LASTEXITCODE" }
