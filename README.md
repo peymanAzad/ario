@@ -29,9 +29,27 @@ Like the look of the demo? Set `theme = "catppuccin-frappe"` in `tui.toml`.
 
 ### Prerequisites
 
-- **Rust and Cargo 1.95 or newer** — Install the latest stable toolchain using [rustup](https://rust-lang.org/tools/install/).
+- **Rust and Cargo 1.95 or newer** — Required for Cargo and source installation. Install the latest stable toolchain using [rustup](https://rust-lang.org/tools/install/).
 - **aria2** — Install [aria2](https://github.com/aria2/aria2) using your system's package manager and make sure `aria2c` is available in your `PATH`.
 - **Nerd Font** — Optional, but strongly recommended for displaying Ario's default icons correctly. Select a Nerd Font in your terminal's font settings.
+
+### Release packages
+
+The [release workflow](docs/releases.md) builds archives for Linux x64, macOS
+(Apple Silicon and Intel), and Windows x64, plus Debian and RPM packages. These
+become available on [GitHub Releases](https://github.com/peymanAzad/ario/releases)
+after a successful tagged release. Every package contains both executables.
+
+After the first stable release is published to the Homebrew tap:
+
+```sh
+brew install peymanAzad/tap/ario
+```
+
+Homebrew and the Linux packages install aria2 as a dependency. When installing
+an archive manually, install aria2 separately and keep `ario` and `ario_daemon`
+in the same directory on your `PATH`. Prebuilt packages do not require Rust.
+Linux release binaries require glibc 2.35 or newer.
 
 ### Install from crates.io
 

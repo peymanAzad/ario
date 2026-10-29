@@ -499,6 +499,14 @@ mod tests {
         assert_eq!(status.files[1].selected.as_deref(), Some("true"));
         let (payloads, controls) = status.artifact_paths();
         assert_eq!(payloads, vec!["/downloads/set/a", "/downloads/set/b"]);
-        assert_eq!(controls, vec!["/downloads/set.aria2"]);
+        assert_eq!(
+            controls,
+            vec![
+                std::path::Path::new("/downloads")
+                    .join("set.aria2")
+                    .to_string_lossy()
+                    .into_owned()
+            ]
+        );
     }
 }

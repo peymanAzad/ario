@@ -1,5 +1,8 @@
 # Cargo package contents
 
+For binary archives, Debian/RPM packages, Homebrew, and WinGet automation, see
+[Automated releases](releases.md).
+
 The `include` list in the root `Cargo.toml` controls the files shipped to
 crates.io. It allows:
 
