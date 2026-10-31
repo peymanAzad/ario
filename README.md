@@ -12,7 +12,11 @@
 
 Like the look of the demo? Set `theme = "catppuccin-frappe"` in `tui.toml`.
 
-[Features](#-features) · [Installation](#-installation) · [Quick start](#-quick-start) · [Configuration](#-configuration) · [Controls](#-controls) · [Contributing](#-contributing) · [License](#-license)
+[Why Ario?](#why-ario) · [Features](#-features) · [Installation](#-installation) · [Quick start](#-quick-start) · [Configuration](#-configuration) · [Controls](#-controls) · [Contributing](#-contributing) · [License](#-license)
+
+## Why Ario?
+
+Ario combines aria2 with a managed daemon, scheduled queues, and batch clipboard import in one terminal workflow. It offers a terminal alternative to web front-ends like AriaNg, supports HTTP/HTTPS alongside BitTorrent, and keeps downloads and schedules running after you close the interface. The TUI and daemon can also run on separate machines, connected through an SSH tunnel.
 
 ## ✨ Features
 
