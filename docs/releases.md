@@ -30,6 +30,11 @@ unrelated `ario` MPD client because both install `/usr/bin/ario`; it does not
 provide or replace the music player. Its installed commands are still `ario`
 and `ario_daemon`.
 
+macOS builds and native tests use `macos-15` for Apple Silicon and
+`macos-15-intel` for Intel, explicitly selected in `dist-workspace.toml`.
+These overrides avoid cargo-dist's default macOS 14 runners, which retire on
+November 2, 2026.
+
 Stable releases automatically update `Formula/ario.rb` in
 [`peymanAzad/homebrew-tap`](https://github.com/peymanAzad/homebrew-tap).
 The formula installs both binaries and depends on Homebrew's `aria2` package.

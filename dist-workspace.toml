@@ -23,6 +23,10 @@ cache-builds = false
 global-artifacts-jobs = ["./release-linux-packages"]
 github-build-setup = "../release-build-setup.yml"
 
+[dist.github-custom-runners]
+aarch64-apple-darwin = "macos-15"
+x86_64-apple-darwin = "macos-15-intel"
+
 [dist.dependencies.homebrew]
 aria2 = { stage = ["run"] }
 
