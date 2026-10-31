@@ -56,6 +56,30 @@ jobs:
           aria2c --version
       - name: Verify installed daemon and aria2
         run: python3 scripts/smoke-linux.py /usr/bin/ario_daemon
+      - name: Verify Arch package installation
+        shell: bash
+        run: |
+          docker run --rm -i --env ARIO_VERSION \
+            --mount "type=bind,source=$PWD/scripts,target=/scripts,readonly" \
+            --mount "type=bind,source=$PWD/target/linux-packages,target=/packages,readonly" \
+            archlinux:base bash -seuo pipefail <<'SH'
+          pacman -Syu --noconfirm --needed python
+          packages=(/packages/*.pkg.tar.zst)
+          test "${#packages[@]}" -eq 1
+          package="${packages[0]}"
+          pacman -Qip "$package"
+          pacman -Qlp "$package"
+          bsdtar -xOf "$package" .PKGINFO | grep -Fx 'pkgname = ario-download-bin'
+          bsdtar -xOf "$package" .PKGINFO | grep -Fx 'conflict = ario'
+          if [[ "$ARIO_VERSION" == *-* ]]; then
+            packaged_version=$(pacman -Qp "$package" | cut -d ' ' -f2)
+            test "$(vercmp "$packaged_version" "${ARIO_VERSION%%-*}-1")" -lt 0
+          fi
+          pacman -U --noconfirm "$package"
+          test -x /usr/bin/ario
+          test -x /usr/bin/ario_daemon
+          python /scripts/smoke-linux.py /usr/bin/ario_daemon
+          SH
       - name: Prepare first WinGet submission
         if: ${{ !fromJson(inputs.plan).announcement_is_prerelease }}
         env:

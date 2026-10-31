@@ -66,6 +66,23 @@ sudo dnf install ./ario-0.1.0-1.x86_64.rpm
 DNF installs aria2 and the other required dependencies from your configured
 repositories. Use your distribution's package manager if it does not use DNF.
 
+#### Arch Linux
+
+For releases that include an Arch package, download
+`ario-download-bin-<version>-1-x86_64.pkg.tar.zst` from
+[GitHub Releases](https://github.com/peymanAzad/ario/releases/latest), then run:
+
+```sh
+sudo pacman -U ./ario-download-bin-*-x86_64.pkg.tar.zst
+```
+
+Pacman installs aria2 and the other required dependencies. The package is named
+`ario-download-bin`; launch it with `ario`. It conflicts with Arch's unrelated
+`ario` music player because both install `/usr/bin/ario`.
+
+To upgrade, install the newer package with `pacman -U`. This package is not
+currently published to the AUR.
+
 #### Other Linux distributions
 
 The archive does not install aria2 automatically.

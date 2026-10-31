@@ -1,37 +1,37 @@
 [package]
 name = "ario"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.95"
-resolver = "3"
 description = "A batteries-included terminal download manager powered by aria2"
-license = "MIT"
-repository = "https://github.com/peymanAzad/ario"
-homepage = "https://github.com/peymanAzad/ario"
 documentation = "https://github.com/peymanAzad/ario#readme"
 readme = "README.md"
-keywords = ["download", "aria2", "terminal", "tui", "bittorrent"]
+homepage = "https://github.com/peymanAzad/ario"
+repository = "https://github.com/peymanAzad/ario"
+license = "MIT"
+keywords = ["aria2", "bittorrent", "download", "terminal", "tui"]
 categories = ["command-line-utilities"]
-default-run = "ario"
-autobins = false
 # Publish only crate metadata, Rust sources (including tests), and the SQL schema.
 # Leave demo media, development docs, CI, and runtime files out of the archive.
 include = [
-    "/Cargo.toml",
-    "/Cargo.lock",
-    "/README.md",
-    "/LICENSE",
-    "/common/src/**/*.rs",
-    "/server/src/**/*.rs",
-    "/server/schema.sql",
-    "/tui/src/**/*.rs",
+  "/Cargo.lock",
+  "/Cargo.toml",
+  "/LICENSE",
+  "/README.md",
+  "/common/src/**/*.rs",
+  "/server/schema.sql",
+  "/server/src/**/*.rs",
+  "/tui/src/**/*.rs",
 ]
+default-run = "ario"
+autobins = false
+resolver = "3"
 
 # Shared types used by both binaries; included in this package.
 [lib]
+doc = false
 name = "common"
 path = "common/src/lib.rs"
-doc = false
 
 [[bin]]
 name = "ario"

@@ -1,0 +1,35 @@
+name: ario-download-bin
+arch: amd64
+platform: linux
+version: ${ARIO_ARCH_VERSION}
+# Preserve the complete pacman version, including prereleases. nFPM 2.47.0's
+# Arch packager drops the prerelease from .PKGINFO when using the semver schema.
+version_schema: none
+release: "1"
+maintainer: peymanAzad <azad.peyman75@gmail.com>
+description: A terminal download manager powered by aria2
+homepage: https://github.com/peymanAzad/ario
+license: MIT
+archlinux:
+  packager: peymanAzad <azad.peyman75@gmail.com>
+depends:
+  - aria2
+  - ca-certificates
+  - glibc>=2.35
+  - gcc-libs
+# Arch's unrelated MPD client owns /usr/bin/ario.
+conflicts:
+  - ario
+contents:
+  - src: ario
+    dst: /usr/bin/ario
+    file_info:
+      mode: 0755
+  - src: ario_daemon
+    dst: /usr/bin/ario_daemon
+    file_info:
+      mode: 0755
+  - src: LICENSE
+    dst: /usr/share/licenses/ario-download-bin/LICENSE
+  - src: README.md
+    dst: /usr/share/doc/ario-download-bin/README.md

@@ -9,7 +9,7 @@ workflow directly; edit the configuration or reusable workflows, then run
 
 | Platform | Architecture | Artifacts |
 | --- | --- | --- |
-| Linux | x64 | `.tar.gz`, `.deb`, `.rpm` |
+| Linux | x64 | `.tar.gz`, `.deb`, `.rpm`, `.pkg.tar.zst` |
 | macOS | Apple Silicon and Intel | `.tar.gz` for each architecture |
 | Windows | x64 | `.zip` |
 
@@ -19,10 +19,16 @@ the Homebrew formula, a source archive, and the cargo-dist manifest. Linux
 packages have a separate `linux-packages.sha256` checksum file.
 
 Linux binaries are built on Ubuntu 22.04 and require glibc 2.35 or newer.
-The Debian and RPM packages declare aria2, CA certificates, glibc, and libgcc
-dependencies. `apt install ./file.deb` and `dnf install ./file.rpm` resolve these
-dependencies from the user's configured repositories. No apt or dnf repository
-is hosted by this pipeline.
+The Linux packages declare aria2, CA certificates, glibc, and the GCC runtime
+dependencies using each distribution's package names. `apt install ./file.deb`,
+`dnf install ./file.rpm`, and `pacman -U ./file.pkg.tar.zst` resolve these
+dependencies from the user's configured repositories. No apt, dnf, or pacman
+repository is hosted by this pipeline.
+
+The Arch package is named **ario-download-bin**. It conflicts with Arch's
+unrelated `ario` MPD client because both install `/usr/bin/ario`; it does not
+provide or replace the music player. Its installed commands are still `ario`
+and `ario_daemon`.
 
 Stable releases automatically update `Formula/ario.rb` in
 [`peymanAzad/homebrew-tap`](https://github.com/peymanAzad/homebrew-tap).
@@ -105,6 +111,7 @@ than replacing its reviewed settings with the bootstrap template.
    package verification.
    The Debian package is installed on the runner, then a smoke check starts
    its daemon with aria2, verifies `/health`, and requests a graceful shutdown.
+   An Arch container installs the nFPM package and runs the same smoke check.
 3. Merge the release commit, then push its matching tag. For example, if
    `Cargo.toml` contains `version = "0.1.0"` and `v0.1.0` does not exist:
 
@@ -121,10 +128,12 @@ including Homebrew publishing, to complete.
 Prerelease versions such as `0.2.0-beta.1` must also be recorded in Cargo.toml
 and Cargo.lock before pushing their tags. They produce GitHub prereleases and
 Linux packages, while leaving the stable Homebrew formula and WinGet catalog
-unchanged. Use plain `major.minor.patch` versions for stable releases.
+unchanged. Arch prerelease versions use an alphabetic suffix (for example,
+`0.2.0pre.beta.1-1`) so pacman orders them below the final `0.2.0-1` package.
+Use plain `major.minor.patch` versions for stable releases.
 
 After the first stable release, verify Homebrew installation on macOS and
-installation of both Linux package formats. Windows and macOS installation
+installation of all three Linux package formats. Windows and macOS installation
 checks still require those platforms; a Linux development machine cannot
 confirm their end-to-end behavior.
 
@@ -146,10 +155,12 @@ bash scripts/package-linux.sh 0.1.0 \
   target/distrib/ario-x86_64-unknown-linux-gnu.tar.gz target/linux-packages
 ```
 
+The script produces all three Linux package formats and their checksums.
+
 Packages intended for distribution must use the CI-built binaries. Local
 builds on newer systems can require a newer glibc than the declared baseline.
-The `packaging/nfpm.yaml` dependency floor and the Linux runner must be updated
-together if the baseline changes.
+The dependency floors in `packaging/nfpm.yaml` and `packaging/nfpm-arch.yaml`
+must be updated together with the Linux runner if the baseline changes.
 
 After changing the dist configuration or `.github/release-build-setup.yml`,
 run `dist generate` and commit the generated workflow as well. Pin updates to
