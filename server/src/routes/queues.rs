@@ -15,7 +15,7 @@ use crate::{
     error::AppError,
     routes::downloads::delete_download_record,
     scheduler::{
-        current_schedule_occurrence, effective_queue_status, pause_downloads,
+        PauseReason, current_schedule_occurrence, effective_queue_status, pause_downloads,
         start_eligible_downloads,
     },
 };
@@ -273,7 +273,7 @@ async fn pause_queue(
     state
         .db
         .update_queue_status(id, common::enums::QueueStatus::Paused)?;
-    pause_downloads(&state, &queue, false).await?;
+    pause_downloads(&state, &queue, PauseReason::User).await?;
     if state.db.count_active_downloads_in_queue(id)? == 0 {
         state.db.set_scheduled_stop(id, None)?;
     }

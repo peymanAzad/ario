@@ -243,7 +243,7 @@ pub static BINDINGS: &[Binding] = &[
         scope: Scope::Pane(Focus::Queues),
         action: Action::PauseQueue,
         label: "Pause",
-        description: "Pause selected queue (except All)",
+        description: "Pause selected queue and all its active downloads (except All)",
         footer_key: Some("p"),
     },
     Binding {
@@ -338,7 +338,10 @@ pub fn main_help_sections() -> Vec<(&'static str, Vec<(&'static str, &'static st
         if let (Some(p), Some(r)) = (pause_idx, resume_idx) {
             let (first, second) = if p < r { (p, r) } else { (r, p) };
             bindings.remove(second);
-            bindings[first] = ("p / r", "Pause / resume selected queue (except All)");
+            bindings[first] = (
+                "p / r",
+                "Pause all downloads / resume selected queue (except All)",
+            );
         }
     }
     push_scope_section(&mut sections, "Categories", Scope::Pane(Focus::Categories));
@@ -613,9 +616,7 @@ impl App {
                 .current_download()
                 .is_some_and(|download| download.download.status == DownloadStatus::Completed),
             Action::OpenEditQueue => self.selected_queue != 0 && self.current_queue().is_some(),
-            Action::PauseQueue => self
-                .current_queue()
-                .is_some_and(|queue| queue.status == QueueStatus::Active),
+            Action::PauseQueue => self.current_queue().is_some(),
             Action::ResumeQueue => self
                 .current_queue()
                 .is_some_and(|queue| queue.status == QueueStatus::Paused),
