@@ -156,9 +156,10 @@ fn queue_hints_prioritize_valid_queue_actions() {
     app.selected_queue = 1;
     let main = labels(&app);
     assert_eq!(
-        &main[..5],
+        &main[..6],
         &[
             ("?", "Help"),
+            ("p", "Pause"),
             ("r", "Resume"),
             ("Enter", "Edit"),
             ("n", "New"),
@@ -181,6 +182,24 @@ fn queue_hints_prioritize_valid_queue_actions() {
         .position(|hint| *hint == ("j/k", "Navigate"))
         .unwrap();
     assert!(navigate < import);
+}
+
+#[test]
+fn queue_pause_hint_does_not_depend_on_loaded_downloads() {
+    let mut app = app();
+    app.focus = Focus::Queues;
+    add_queue(&mut app, 1, QueueStatus::Paused);
+    app.selected_queue = 1;
+    assert!(labels(&app).contains(&("p", "Pause")));
+
+    add_download(&mut app, DownloadStatus::Active);
+    app.downloads[0].download.manually_started = true;
+    assert!(labels(&app).contains(&("p", "Pause")));
+
+    app.selected_queue = 0;
+    assert!(!labels(&app).contains(&("p", "Pause")));
+    app.selected_queue = 2; // Stale selection.
+    assert!(!labels(&app).contains(&("p", "Pause")));
 }
 
 #[test]

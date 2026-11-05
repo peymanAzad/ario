@@ -1,5 +1,74 @@
 use super::support::{Fixture, weekly};
-use common::enums::DownloadStatus;
+use common::enums::{DownloadStatus, QueueStatus};
+
+#[tokio::test]
+async fn queue_pause_stops_start_now_items_whether_or_not_queue_was_started() {
+    for scheduled in [false, true] {
+        for started in [false, true] {
+            let f = Fixture::new().await;
+            let q = f.queue(scheduled, weekly(12, 13), false).await;
+            let pending = f.add(q.id, 2, false).await;
+            if started {
+                f.post(&format!("/queues/{}/resume", q.id)).await;
+            }
+            let items = f.add(q.id, 3, true).await;
+            let other = f.queue(false, weekly(12, 13), false).await;
+            let unrelated = f.add(other.id, 1, true).await.remove(0);
+            for item in &items {
+                f.status(item.download.id, DownloadStatus::Active).await;
+                assert!(f.get(item.download.id).await.download.manually_started);
+            }
+            assert_eq!(
+                f.state.db.get_queue(q.id).unwrap().unwrap().status,
+                if started {
+                    QueueStatus::Active
+                } else {
+                    QueueStatus::Paused
+                }
+            );
+
+            f.post(&format!("/queues/{}/pause", q.id)).await;
+            f.tick().await;
+            assert_eq!(f.get_queue(q.id).await.status, QueueStatus::Paused);
+            for item in &items {
+                f.status(item.download.id, DownloadStatus::Paused).await;
+                assert!(!f.get(item.download.id).await.download.manually_started);
+                assert!(
+                    !f.state
+                        .live_status
+                        .read()
+                        .await
+                        .contains_key(&item.download.id)
+                );
+            }
+            f.status(
+                pending[0].download.id,
+                if started {
+                    DownloadStatus::Paused
+                } else {
+                    DownloadStatus::Pending
+                },
+            )
+            .await;
+            f.status(pending[1].download.id, DownloadStatus::Pending)
+                .await;
+            f.status(unrelated.download.id, DownloadStatus::Active)
+                .await;
+            let pauses = 3 + usize::from(started);
+            assert_eq!(f.calls("aria2.pause"), pauses);
+
+            // Repeated pauses are harmless; a later individual resume still overrides suppression.
+            f.post(&format!("/queues/{}/pause", q.id)).await;
+            assert_eq!(f.calls("aria2.pause"), pauses);
+            f.post(&format!("/downloads/{}/resume", items[0].download.id))
+                .await;
+            f.tick().await;
+            f.status(items[0].download.id, DownloadStatus::Active).await;
+            f.status(items[1].download.id, DownloadStatus::Paused).await;
+            f.close().await;
+        }
+    }
+}
 
 #[tokio::test]
 async fn download_manual_queue_advances_in_order_and_respects_capacity() {

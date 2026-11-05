@@ -440,7 +440,7 @@ impl Database {
     }
 
     /// Active downloads still controlled by their queue. An item explicitly
-    /// resumed by the user has priority over manual queue pauses.
+    /// resumed by the user can run while its queue's schedule remains suppressed.
     pub fn list_queue_controlled_active_downloads(
         &self,
         queue_id: i64,

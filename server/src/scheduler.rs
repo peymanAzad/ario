@@ -75,7 +75,7 @@ pub async fn prepare_start(
         state
             .db
             .update_queue_status(queue.id, QueueStatus::Paused)?;
-        pause_downloads(state, queue, true)
+        pause_downloads(state, queue, PauseReason::ScheduledStop)
             .await
             .map_err(|error| crate::error::AppError::Internal(error.to_string()))?;
     }
@@ -111,7 +111,7 @@ pub async fn reconcile_queue(state: &AppState, id: i64, now: DateTime<Utc>) -> a
     if queue.scheduled_stop_at.is_some_and(|stop| now >= stop) {
         // Keep the expired deadline until all RPC pauses succeed; never refill while stopping.
         state.db.update_queue_status(id, QueueStatus::Paused)?;
-        pause_downloads(state, &queue, true).await?;
+        pause_downloads(state, &queue, PauseReason::ScheduledStop).await?;
         if let Some(stop) = queue.scheduled_stop_at {
             let ended = schedule_occurrence(
                 &queue.scheduler.recurrence,
@@ -144,11 +144,13 @@ pub async fn reconcile_queue(state: &AppState, id: i64, now: DateTime<Utc>) -> a
                     .set_queue_started_occurrence(id, occurrence.as_deref())?;
             }
         }
-        ScheduleDecision::StayPaused => pause_downloads(state, &queue, false).await?,
+        ScheduleDecision::StayPaused => {
+            pause_downloads(state, &queue, PauseReason::SuppressedSchedule).await?
+        }
         ScheduleDecision::CloseWindow => {
             // Individual manual starts may run until the next stop without arming the queue.
             if queue.scheduled_stop_at.is_none() {
-                pause_downloads(state, &queue, true).await?;
+                pause_downloads(state, &queue, PauseReason::ScheduledStop).await?;
             }
         }
     }
@@ -244,12 +246,21 @@ pub async fn start_eligible_downloads(
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PauseReason {
+    User,
+    ScheduledStop,
+    /// Keep the queue paused while allowing subsequent individual manual starts.
+    SuppressedSchedule,
+}
+
 pub async fn pause_downloads(
     state: &AppState,
     queue: &Queue,
-    paused_by_scheduler: bool,
+    reason: PauseReason,
 ) -> anyhow::Result<()> {
-    let active = if paused_by_scheduler {
+    let paused_by_scheduler = reason == PauseReason::ScheduledStop;
+    let active = if reason != PauseReason::SuppressedSchedule {
         state.db.list_downloads(&common::download::DownloadFilter {
             queue_id: Some(queue.id),
             status: Some(DownloadStatus::Active),
@@ -278,7 +289,7 @@ pub async fn pause_downloads(
         state
             .db
             .set_paused_by_scheduler(download.id, paused_by_scheduler || queue.scheduler.enabled)?;
-        if paused_by_scheduler {
+        if reason != PauseReason::SuppressedSchedule {
             state.db.set_manually_started(download.id, false)?;
         }
         state.live_status.write().await.remove(&download.id);
@@ -890,7 +901,9 @@ mod tests {
             .db
             .set_queue_scheduler_suppression(1, Some(&occurrence))
             .unwrap();
-        pause_downloads(&f.state, &queue, false).await.unwrap();
+        pause_downloads(&f.state, &queue, PauseReason::User)
+            .await
+            .unwrap();
         reconcile_queue(&f.state, 1, f.state.now()).await.unwrap();
         assert_eq!(
             f.state.db.get_download(active.id).unwrap().unwrap().status,
