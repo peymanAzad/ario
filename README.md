@@ -27,6 +27,7 @@ Ario combines aria2 with a managed daemon, scheduled queues, and batch clipboard
 - 🦀 **Built for the terminal** — Written in Rust with Ratatui, with keyboard shortcuts and mouse support.
 - 📋 **Batch imports from your clipboard** — Copy text containing download links and press `v`. Ario automatically finds HTTP/HTTPS URLs and magnet links, then lets you select items, choose a queue, and start downloading immediately or save them for later.
 - 🗂️ **Automatic file organization** — Automatically categorize downloads by file type and save them to configurable folders.
+- 🌐 **HTTP proxy support** — Configure aria2’s HTTP proxy in the daemon and monitor its reachability and ability to transfer data from the TUI.
 - 🎨 **Make it yours** — Choose Catppuccin themes or custom colors, and select Nerd Font, Unicode, or ASCII icons. Configure the server address, automatic daemon startup, and daemon behavior when you exit.
 
 ## 📦 Installation
