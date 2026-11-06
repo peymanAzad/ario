@@ -5,7 +5,7 @@ use crate::live_status::LiveStatusMap;
 use common::finetune::Aria2GlobalOptions;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::sync::{Notify, RwLock, RwLockReadGuard};
+use tokio::sync::{Notify, RwLock, RwLockReadGuard, watch};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -14,6 +14,8 @@ pub struct AppState {
     pub config: Arc<ServerConfig>,
     pub live_status: LiveStatusMap,
     pub aria2_global_options: Option<Aria2GlobalOptions>,
+    pub proxy_reachable: Option<watch::Receiver<Option<bool>>>,
+    pub proxy_data: Option<watch::Receiver<Option<bool>>>,
     pub tui_managed: bool,
     pub shutdown_notify: Arc<Notify>,
     /// Acquire after the activity gate to serialize transfer and queue mutations.
@@ -31,6 +33,8 @@ impl AppState {
             config: Arc::new(config),
             live_status: crate::live_status::new_map(),
             aria2_global_options: None,
+            proxy_reachable: None,
+            proxy_data: None,
             tui_managed,
             shutdown_notify: Arc::new(Notify::new()),
             control: Arc::new(tokio::sync::Mutex::new(())),

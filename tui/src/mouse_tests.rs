@@ -94,11 +94,11 @@ fn refreshed(app: &App, revision: u64, downloads: Vec<DownloadLiveStatus>) -> Ms
         filter_revision: revision,
         downloads: Ok(downloads),
         queues: Ok(app.queues.clone()),
-        server_reachable: true,
-        aria2_reachable: true,
-        download_speed: 0,
-        active_downloads: 0,
-        aria2_global_options: None,
+        status: crate::app::RefreshStatus {
+            server_reachable: true,
+            aria2_reachable: true,
+            ..Default::default()
+        },
         lifecycle_revision: app.lifecycle_revision,
     })
 }
@@ -768,6 +768,8 @@ fn refresh_preserves_selection_by_id_when_rows_reorder() {
         crate::app::RefreshStatus {
             server_reachable: true,
             aria2_reachable: true,
+            proxy_reachable: None,
+            proxy_data: None,
             download_speed: 0,
             active_downloads: 0,
             aria2_global_options: None,
@@ -926,11 +928,11 @@ fn disappearing_selected_queue_invalidates_download_filter_and_fetches_all() {
         filter_revision: app.filter_revision,
         downloads: Ok(vec![download(2)]),
         queues: Ok(vec![queue(1)]),
-        server_reachable: true,
-        aria2_reachable: true,
-        download_speed: 0,
-        active_downloads: 0,
-        aria2_global_options: None,
+        status: crate::app::RefreshStatus {
+            server_reachable: true,
+            aria2_reachable: true,
+            ..Default::default()
+        },
         lifecycle_revision: app.lifecycle_revision,
     });
     let effects = update::update(&mut app, msg);

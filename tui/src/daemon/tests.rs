@@ -31,7 +31,10 @@ fn isolated_process(binary: &str, api_base: String) -> Arc<ServerProcess> {
 }
 
 #[cfg(unix)]
-fn fake_health(ready: Arc<AtomicBool>) -> (String, Arc<AtomicBool>, JoinHandle<()>) {
+fn fake_health(
+    ready: Arc<AtomicBool>,
+    poll_times: Option<Sender<Instant>>,
+) -> (String, Arc<AtomicBool>, JoinHandle<()>) {
     use std::io::{Read, Write};
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
@@ -44,6 +47,9 @@ fn fake_health(ready: Arc<AtomicBool>) -> (String, Arc<AtomicBool>, JoinHandle<(
                 Ok((mut stream, _)) => {
                     let mut buffer = [0u8; 1024];
                     let _ = stream.read(&mut buffer);
+                    if let Some(poll_times) = &poll_times {
+                        let _ = poll_times.send(Instant::now());
+                    }
                     let body = r#"{"server":"ok","aria2_reachable":true,"tui_managed":true}"#;
                     let status = if ready.load(Ordering::SeqCst) {
                         "200 OK"
@@ -219,7 +225,7 @@ fn failed_spawn_recovers_after_backoff() {
 #[test]
 fn slow_readiness_recovers_after_timeout_without_duplicate() {
     let ready = Arc::new(AtomicBool::new(false));
-    let (api_base, stop, health_thread) = fake_health(ready.clone());
+    let (api_base, stop, health_thread) = fake_health(ready.clone(), None);
     let script = std::env::temp_dir().join(format!(
         "ario-slow-daemon-{}-{}.sh",
         std::process::id(),
@@ -270,7 +276,8 @@ fn slow_readiness_recovers_after_timeout_without_duplicate() {
 #[test]
 fn attaches_to_existing_daemon_and_quit_stops_worker() {
     let ready = Arc::new(AtomicBool::new(true));
-    let (api_base, stop, health_thread) = fake_health(ready);
+    let (poll_times, polls) = std::sync::mpsc::channel();
+    let (api_base, stop, health_thread) = fake_health(ready, Some(poll_times));
     let process = isolated_process(false_binary(), api_base);
     let (sender, receiver) = std::sync::mpsc::channel();
     process.start_supervisor(sender);
@@ -287,6 +294,9 @@ fn attaches_to_existing_daemon_and_quit_stops_worker() {
     assert!(connected);
     assert!(!process.owns_process());
     assert!(!process.has_child());
+    let first = polls.recv_timeout(Duration::from_secs(2)).unwrap();
+    let second = polls.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(second.duration_since(first) >= HEALTH_CONNECTED_INTERVAL);
     process.stop_supervisor();
     stop.store(true, Ordering::SeqCst);
     health_thread.join().unwrap();

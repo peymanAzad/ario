@@ -14,6 +14,7 @@ use common::{
 
 use crate::{
     api,
+    app::RefreshStatus,
     event::Event,
     modal::MAX_TORRENT_BYTES,
     msg::{ApiResult, Msg},
@@ -214,52 +215,30 @@ fn execute_refresh(
     lifecycle_revision: u64,
     filter_revision: u64,
 ) -> ApiResult {
-    let health = api::health(base);
-    let (server_reachable, aria2_reachable, download_speed, active_downloads, aria2_global_options) =
-        match health {
-            Ok(h) => (
-                true,
-                h.aria2_reachable,
-                h.download_speed,
-                h.active_downloads,
-                h.aria2_global_options,
-            ),
-            Err(_) => (false, false, 0, 0, None),
-        };
-
+    let mut health = api::health(base);
     let downloads = api::list_downloads(base, &filter);
     let queues = api::list_queues(base);
-    let (server_reachable, aria2_reachable, download_speed, active_downloads, aria2_global_options) =
-        if !server_reachable && manages_server {
-            match api::health(base) {
-                Ok(h) => (
-                    true,
-                    h.aria2_reachable,
-                    h.download_speed,
-                    h.active_downloads,
-                    h.aria2_global_options,
-                ),
-                Err(_) => (false, false, 0, 0, None),
-            }
-        } else {
-            (
-                server_reachable,
-                aria2_reachable,
-                download_speed,
-                active_downloads,
-                aria2_global_options,
-            )
-        };
+    if health.is_err() && manages_server {
+        health = api::health(base);
+    }
+    let status = match health {
+        Ok(health) => RefreshStatus {
+            server_reachable: true,
+            aria2_reachable: health.aria2_reachable,
+            proxy_reachable: health.proxy_reachable,
+            proxy_data: health.proxy_data,
+            download_speed: health.download_speed,
+            active_downloads: health.active_downloads,
+            aria2_global_options: health.aria2_global_options,
+        },
+        Err(_) => RefreshStatus::default(),
+    };
 
     ApiResult::Refreshed {
         filter_revision,
         downloads,
         queues,
-        server_reachable,
-        aria2_reachable,
-        download_speed,
-        active_downloads,
-        aria2_global_options,
+        status,
         lifecycle_revision,
     }
 }

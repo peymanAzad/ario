@@ -19,7 +19,8 @@ use crate::msg::Msg;
 use crate::toast::ToastLevel;
 
 const DEFAULT_PORT: u16 = 47812;
-const HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const HEALTH_RETRY_INTERVAL: Duration = Duration::from_millis(100);
+const HEALTH_CONNECTED_INTERVAL: Duration = Duration::from_secs(1);
 const HEALTH_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 const FAST_EXIT_THRESHOLD: Duration = Duration::from_secs(3);
 const MAX_FAST_EXITS: u32 = 5;
@@ -277,7 +278,17 @@ impl ServerProcess {
                     }
                 }
             }
-            thread::sleep(HEALTH_POLL_INTERVAL);
+            let interval = if connected {
+                HEALTH_CONNECTED_INTERVAL
+            } else {
+                HEALTH_RETRY_INTERVAL
+            };
+            let next_poll = Instant::now() + interval;
+            while !self.stop.load(Ordering::SeqCst)
+                && let Some(remaining) = next_poll.checked_duration_since(Instant::now())
+            {
+                thread::park_timeout(remaining);
+            }
         }
     }
 
@@ -289,6 +300,7 @@ impl ServerProcess {
             .expect("supervisor lock poisoned")
             .take()
         {
+            handle.thread().unpark();
             let _ = handle.join();
         }
     }

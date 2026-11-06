@@ -150,6 +150,8 @@ fn refresh_unlocks_resume_only_after_server_reports_paused() {
         crate::app::RefreshStatus {
             server_reachable: true,
             aria2_reachable: true,
+            proxy_reachable: None,
+            proxy_data: None,
             download_speed: 0,
             active_downloads: 0,
             aria2_global_options: None,

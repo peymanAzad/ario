@@ -26,6 +26,10 @@ pub struct HealthResponse {
     pub server: String,
     pub aria2_reachable: bool,
     #[serde(default)]
+    pub proxy_reachable: Option<bool>,
+    #[serde(default)]
+    pub proxy_data: Option<bool>,
+    #[serde(default)]
     pub tui_managed: bool,
     #[serde(default)]
     pub download_speed: u64,

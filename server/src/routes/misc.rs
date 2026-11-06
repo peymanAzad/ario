@@ -20,13 +20,19 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn get_settings(State(state): State<AppState>) -> Json<Settings> {
-    Json(state.config.settings.clone())
+    let mut settings = state.config.settings.clone();
+    settings.proxy.password = None;
+    Json(settings)
 }
 
 #[derive(Serialize)]
 struct HealthResponse {
     server: &'static str,
     aria2_reachable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    proxy_reachable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    proxy_data: Option<bool>,
     tui_managed: bool,
     download_speed: u64,
     active_downloads: u64,
@@ -38,6 +44,18 @@ async fn health(
     State(state): State<AppState>,
 ) -> Result<Json<HealthResponse>, crate::error::AppError> {
     let aria2_reachable = state.aria2.get_version().await.is_ok();
+    let proxy_reachable = state
+        .proxy_reachable
+        .as_ref()
+        .and_then(|result| *result.borrow());
+    let proxy_data = if proxy_reachable == Some(true) {
+        state
+            .proxy_data
+            .as_ref()
+            .and_then(|result| *result.borrow())
+    } else {
+        None
+    };
     let active_downloads = state.db.list_downloads(&DownloadFilter {
         status: Some(DownloadStatus::Active),
         ..DownloadFilter::default()
@@ -49,6 +67,8 @@ async fn health(
     Ok(Json(HealthResponse {
         server: "ok",
         aria2_reachable,
+        proxy_reachable,
+        proxy_data,
         tui_managed: state.tui_managed,
         download_speed,
         active_downloads: active_downloads.len() as u64,

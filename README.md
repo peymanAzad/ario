@@ -27,6 +27,7 @@ Ario combines aria2 with a managed daemon, scheduled queues, and batch clipboard
 - 🦀 **Built for the terminal** — Written in Rust with Ratatui, with keyboard shortcuts and mouse support.
 - 📋 **Batch imports from your clipboard** — Copy text containing download links and press `v`. Ario automatically finds HTTP/HTTPS URLs and magnet links, then lets you select items, choose a queue, and start downloading immediately or save them for later.
 - 🗂️ **Automatic file organization** — Automatically categorize downloads by file type and save them to configurable folders.
+- 🌐 **HTTP proxy support** — Configure aria2’s HTTP proxy in the daemon and monitor its reachability and ability to transfer data from the TUI.
 - 🎨 **Make it yours** — Choose Catppuccin themes or custom colors, and select Nerd Font, Unicode, or ASCII icons. Configure the server address, automatic daemon startup, and daemon behavior when you exit.
 
 ## 📦 Installation
@@ -226,8 +227,8 @@ Program = [
     "msix", "msixbundle", "flatpak", "snap", "sh", "bat", "cmd", "ps1",
 ]
 
-# Reserved proxy configuration; currently not applied to downloads.
-# Optional fields are unset by default.
+# Set enabled = true and supply an HTTP proxy host to route downloads through aria2's proxy.
+# Port defaults to 80. For authentication, set username and password.
 [settings.proxy]
 enabled = false
 # host = "127.0.0.1"
@@ -246,6 +247,8 @@ rpc_port = 6800
 # Ario routes downloads using the locations under [settings].
 download_dir = "~/Downloads"
 ```
+
+Aria2 uses the HTTP proxy for HTTP(S), FTP, and SFTP transfers. BitTorrent peers connect directly, and `no_proxy` exclusions still apply. The `all-proxy-user` and `all-proxy-passwd` options in `aria2.conf` override credentials from `server.toml`. The TUI shows `proxy:up no data` when the proxy is reachable but the latest Cloudflare probe failed to retrieve data.
 
 ### TUI — `tui.toml`
 
