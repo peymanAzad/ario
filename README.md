@@ -248,11 +248,7 @@ rpc_port = 6800
 download_dir = "~/Downloads"
 ```
 
-The HTTP proxy applies to HTTP, HTTPS, FTP and SFTP transfers that aria2 supports.
-BitTorrent peer traffic uses direct connections. Aria2's `no_proxy` exclusions still apply.
-If `aria2.conf` sets `all-proxy-user` or `all-proxy-passwd`, aria2 gives those options precedence over credentials from `server.toml`.
-
-When the proxy is enabled, the daemon checks TCP reachability every two seconds and sends an HTTPS request to Cloudflare's `/cdn-cgi/trace` endpoint through the proxy at startup and every 30 seconds. The daemon reports the latest results through `/health`. The TUI shows `proxy:up no data` if the proxy accepts TCP connections but the latest HTTPS probe failed to retrieve data.
+Aria2 uses the HTTP proxy for HTTP(S), FTP, and SFTP transfers. BitTorrent peers connect directly, and `no_proxy` exclusions still apply. The `all-proxy-user` and `all-proxy-passwd` options in `aria2.conf` override credentials from `server.toml`. The TUI shows `proxy:up no data` when the proxy is reachable but the latest Cloudflare probe failed to retrieve data.
 
 ### TUI — `tui.toml`
 
