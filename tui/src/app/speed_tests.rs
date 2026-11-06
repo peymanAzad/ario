@@ -23,6 +23,7 @@ fn speed_history_resets_on_connection_loss_and_caps_retained_samples() {
         crate::app::RefreshStatus {
             server_reachable: true,
             aria2_reachable: true,
+            proxy_reachable: None,
             download_speed: 100,
             active_downloads: 1,
             aria2_global_options: None,
@@ -38,6 +39,7 @@ fn speed_history_resets_on_connection_loss_and_caps_retained_samples() {
         crate::app::RefreshStatus {
             server_reachable: false,
             aria2_reachable: false,
+            proxy_reachable: None,
             download_speed: 50,
             active_downloads: 0,
             aria2_global_options: None,
@@ -76,6 +78,7 @@ fn reachable_refresh_throttles_speed_samples() {
         crate::app::RefreshStatus {
             server_reachable: true,
             aria2_reachable: true,
+            proxy_reachable: None,
             download_speed: 100,
             active_downloads: 1,
             aria2_global_options: None,
@@ -88,6 +91,7 @@ fn reachable_refresh_throttles_speed_samples() {
         crate::app::RefreshStatus {
             server_reachable: true,
             aria2_reachable: true,
+            proxy_reachable: None,
             download_speed: 200,
             active_downloads: 1,
             aria2_global_options: None,
@@ -105,6 +109,7 @@ fn reachable_refresh_throttles_speed_samples() {
         crate::app::RefreshStatus {
             server_reachable: true,
             aria2_reachable: true,
+            proxy_reachable: None,
             download_speed: 300,
             active_downloads: 1,
             aria2_global_options: None,
@@ -127,6 +132,7 @@ fn active_zero_speed_stays_smoothed_but_idle_resets_immediately() {
         crate::app::RefreshStatus {
             server_reachable: true,
             aria2_reachable: true,
+            proxy_reachable: None,
             download_speed: 100,
             active_downloads: 1,
             aria2_global_options: None,
@@ -139,6 +145,7 @@ fn active_zero_speed_stays_smoothed_but_idle_resets_immediately() {
         crate::app::RefreshStatus {
             server_reachable: true,
             aria2_reachable: true,
+            proxy_reachable: None,
             download_speed: 0,
             active_downloads: 1,
             aria2_global_options: None,
@@ -154,6 +161,7 @@ fn active_zero_speed_stays_smoothed_but_idle_resets_immediately() {
         crate::app::RefreshStatus {
             server_reachable: true,
             aria2_reachable: true,
+            proxy_reachable: None,
             download_speed: 100,
             active_downloads: 0,
             aria2_global_options: None,
@@ -202,6 +210,7 @@ fn successful_health_refresh_caches_aria2_global_options() {
         crate::app::RefreshStatus {
             server_reachable: true,
             aria2_reachable: true,
+            proxy_reachable: None,
             download_speed: 0,
             active_downloads: 0,
             aria2_global_options: Some(options.clone()),
@@ -223,6 +232,7 @@ fn lifecycle_progress_and_stale_failed_refresh() {
         crate::app::RefreshStatus {
             server_reachable: false,
             aria2_reachable: false,
+            proxy_reachable: None,
             download_speed: 0,
             active_downloads: 0,
             aria2_global_options: None,
@@ -239,6 +249,7 @@ fn lifecycle_progress_and_stale_failed_refresh() {
         crate::app::RefreshStatus {
             server_reachable: true,
             aria2_reachable: true,
+            proxy_reachable: None,
             download_speed: 0,
             active_downloads: 0,
             aria2_global_options: None,
@@ -252,6 +263,7 @@ fn lifecycle_progress_and_stale_failed_refresh() {
         crate::app::RefreshStatus {
             server_reachable: false,
             aria2_reachable: false,
+            proxy_reachable: None,
             download_speed: 0,
             active_downloads: 0,
             aria2_global_options: None,
@@ -268,6 +280,7 @@ fn lifecycle_progress_and_stale_failed_refresh() {
         crate::app::RefreshStatus {
             server_reachable: false,
             aria2_reachable: false,
+            proxy_reachable: None,
             download_speed: 0,
             active_downloads: 0,
             aria2_global_options: None,
@@ -281,6 +294,7 @@ fn lifecycle_progress_and_stale_failed_refresh() {
         crate::app::RefreshStatus {
             server_reachable: true,
             aria2_reachable: true,
+            proxy_reachable: None,
             download_speed: 0,
             active_downloads: 0,
             aria2_global_options: None,

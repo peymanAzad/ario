@@ -98,6 +98,15 @@ impl Aria2ProcessConfig {
         Ok(())
     }
 
+    pub fn proxy_endpoint(&self) -> Option<String> {
+        let url = self.proxy_url.as_ref()?;
+        Some(format!(
+            "{}:{}",
+            url.host_str()?,
+            url.port_or_known_default()?
+        ))
+    }
+
     pub fn rpc_url(&self) -> String {
         format!("http://127.0.0.1:{}/jsonrpc", self.rpc_port)
     }
@@ -355,10 +364,12 @@ mod tests {
             config.proxy_url.as_ref().unwrap().as_str(),
             "http://user%252F:pass%40word@[::1]:8080/"
         );
+        assert_eq!(config.proxy_endpoint().as_deref(), Some("[::1]:8080"));
 
         proxy.enabled = false;
         config.configure_proxy(&proxy).unwrap();
         assert!(config.proxy_url.is_none());
+        assert!(config.proxy_endpoint().is_none());
     }
 
     async fn owned_sleep(process: &Aria2Process, seconds: &str) -> u32 {

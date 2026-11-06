@@ -33,7 +33,7 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         ("down", theme.status_error)
     };
 
-    let status_line = Line::from(vec![
+    let mut status_spans = vec![
         Span::styled(
             " Ario ",
             Style::default()
@@ -44,8 +44,21 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(status.label(), Style::default().fg(server_color)),
         Span::styled(" aria2:", Style::default().fg(theme.foreground)),
         Span::styled(aria2_status, Style::default().fg(aria2_color)),
-        Span::raw(" "),
-    ]);
+    ];
+    if let Some(reachable) = app.proxy_reachable {
+        let (status, color) = if reachable {
+            ("up", theme.status_ok)
+        } else {
+            ("down", theme.status_error)
+        };
+        status_spans.push(Span::styled(
+            " proxy:",
+            Style::default().fg(theme.foreground),
+        ));
+        status_spans.push(Span::styled(status, Style::default().fg(color)));
+    }
+    status_spans.push(Span::raw(" "));
+    let status_line = Line::from(status_spans);
     let status_width = status_line.width().min(u16::MAX as usize) as u16;
 
     if let Some(err) = &app.last_error {

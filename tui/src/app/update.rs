@@ -180,11 +180,7 @@ fn update_api(app: &mut App, result: ApiResult) -> Vec<Effect> {
             filter_revision,
             downloads,
             queues,
-            server_reachable,
-            aria2_reachable,
-            download_speed,
-            active_downloads,
-            aria2_global_options,
+            status,
             lifecycle_revision,
         } => {
             let stale_filter = filter_revision != app.filter_revision;
@@ -193,18 +189,7 @@ fn update_api(app: &mut App, result: ApiResult) -> Vec<Effect> {
             } else {
                 downloads
             };
-            app.apply_refresh(
-                downloads,
-                queues,
-                crate::app::RefreshStatus {
-                    server_reachable,
-                    aria2_reachable,
-                    download_speed,
-                    active_downloads,
-                    aria2_global_options,
-                },
-                lifecycle_revision,
-            );
+            app.apply_refresh(downloads, queues, status, lifecycle_revision);
             if filter_revision != app.filter_revision {
                 app.refresh()
             } else {

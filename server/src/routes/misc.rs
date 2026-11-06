@@ -8,6 +8,8 @@ use common::lifecycle::ShutdownIfIdleResponse;
 use common::settings::Settings;
 use common::{download::DownloadFilter, enums::DownloadStatus};
 use serde::Serialize;
+use std::time::Duration;
+use tokio::{net::TcpStream, time::timeout};
 
 use crate::state::AppState;
 
@@ -29,6 +31,8 @@ async fn get_settings(State(state): State<AppState>) -> Json<Settings> {
 struct HealthResponse {
     server: &'static str,
     aria2_reachable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    proxy_reachable: Option<bool>,
     tui_managed: bool,
     download_speed: u64,
     active_downloads: u64,
@@ -39,7 +43,10 @@ struct HealthResponse {
 async fn health(
     State(state): State<AppState>,
 ) -> Result<Json<HealthResponse>, crate::error::AppError> {
-    let aria2_reachable = state.aria2.get_version().await.is_ok();
+    let (aria2_version, proxy_reachable) = tokio::join!(
+        state.aria2.get_version(),
+        check_proxy(state.proxy_endpoint.as_deref())
+    );
     let active_downloads = state.db.list_downloads(&DownloadFilter {
         status: Some(DownloadStatus::Active),
         ..DownloadFilter::default()
@@ -50,12 +57,21 @@ async fn health(
     );
     Ok(Json(HealthResponse {
         server: "ok",
-        aria2_reachable,
+        aria2_reachable: aria2_version.is_ok(),
+        proxy_reachable,
         tui_managed: state.tui_managed,
         download_speed,
         active_downloads: active_downloads.len() as u64,
         aria2_global_options: state.aria2_global_options.clone(),
     }))
+}
+
+async fn check_proxy(endpoint: Option<&str>) -> Option<bool> {
+    let endpoint = endpoint?;
+    Some(matches!(
+        timeout(Duration::from_millis(500), TcpStream::connect(endpoint)).await,
+        Ok(Ok(_))
+    ))
 }
 
 async fn shutdown_if_idle(

@@ -14,6 +14,7 @@ pub struct AppState {
     pub config: Arc<ServerConfig>,
     pub live_status: LiveStatusMap,
     pub aria2_global_options: Option<Aria2GlobalOptions>,
+    pub proxy_endpoint: Option<String>,
     pub tui_managed: bool,
     pub shutdown_notify: Arc<Notify>,
     /// Acquire after the activity gate to serialize transfer and queue mutations.
@@ -31,6 +32,7 @@ impl AppState {
             config: Arc::new(config),
             live_status: crate::live_status::new_map(),
             aria2_global_options: None,
+            proxy_endpoint: None,
             tui_managed,
             shutdown_notify: Arc::new(Notify::new()),
             control: Arc::new(tokio::sync::Mutex::new(())),

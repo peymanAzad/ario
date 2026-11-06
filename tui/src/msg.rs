@@ -5,13 +5,13 @@ use common::{
     download::{
         AddDownloadsRequest, DeleteDownloadFilesResult, DownloadLiveStatus, TorrentUploadMetadata,
     },
-    finetune::{Aria2GlobalOptions, FineTune},
+    finetune::FineTune,
     queue::{CreateQueueRequest, Queue, UpdateQueueRequest},
 };
 
 use crate::{
     api::DeleteQueueOutcome,
-    app::{Focus, LifecycleState, PendingConfirmationAction},
+    app::{Focus, LifecycleState, PendingConfirmationAction, RefreshStatus},
     modal::QueueModalMode,
     toast::ToastLevel,
 };
@@ -89,11 +89,7 @@ pub enum ApiResult {
         filter_revision: u64,
         downloads: anyhow::Result<Vec<DownloadLiveStatus>>,
         queues: anyhow::Result<Vec<Queue>>,
-        server_reachable: bool,
-        aria2_reachable: bool,
-        download_speed: u64,
-        active_downloads: u64,
-        aria2_global_options: Option<Aria2GlobalOptions>,
+        status: RefreshStatus,
         lifecycle_revision: u64,
     },
     QueueDownloadsLoaded {

@@ -63,6 +63,39 @@ async fn unmanaged_shutdown_endpoints_preserve_daemon_availability() {
 }
 
 #[tokio::test]
+async fn health_checks_the_proxy_independently_of_aria2() {
+    let mut f = Fixture::new().await;
+    let proxy = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut config = (*f.state.config).clone();
+    config.settings.proxy.host = Some("127.0.0.1".into());
+    config.settings.proxy.port = Some(proxy.local_addr().unwrap().port());
+    f.reconfigure(config.clone()).await;
+    let health = f.json(Method::GET, "/health", None).await;
+    assert_eq!(health["aria2_reachable"], true);
+    assert!(health.get("proxy_reachable").is_none());
+
+    config.settings.proxy.enabled = true;
+    let mut aria2_config =
+        crate::aria2_process::Aria2ProcessConfig::new_with_random_secret(".".into(), ".".into());
+    aria2_config
+        .configure_proxy(&config.settings.proxy)
+        .unwrap();
+    f.state.proxy_endpoint = aria2_config.proxy_endpoint();
+    f.reconfigure(config).await;
+
+    f.fault("aria2.getVersion", Fault::Transport);
+    let health = f.json(Method::GET, "/health", None).await;
+    assert_eq!(health["aria2_reachable"], false);
+    assert_eq!(health["proxy_reachable"], true);
+
+    drop(proxy);
+    let health = f.json(Method::GET, "/health", None).await;
+    assert_eq!(health["aria2_reachable"], true);
+    assert_eq!(health["proxy_reachable"], false);
+    f.close().await;
+}
+
+#[tokio::test]
 async fn aria2_outage_health_and_polling_recover_without_duplicate_transfers() {
     let f = Fixture::new().await;
     let item = f.add(1, 1, true).await.remove(0);

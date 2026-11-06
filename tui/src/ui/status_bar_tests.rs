@@ -49,6 +49,7 @@ fn managed_server_indicator_follows_lifecycle_and_current_health() {
         crate::app::RefreshStatus {
             server_reachable: false,
             aria2_reachable: false,
+            proxy_reachable: None,
             download_speed: 0,
             active_downloads: 0,
             aria2_global_options: None,

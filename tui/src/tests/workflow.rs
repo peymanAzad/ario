@@ -115,6 +115,42 @@ fn render(app: &mut App) -> String {
         .map(|c| c.symbol())
         .collect()
 }
+
+#[test]
+fn refresh_displays_proxy_reachability_after_aria2() {
+    let mut app = App::new(Theme::default_dark(), IconSet::new(GlyphMode::Ascii), false);
+    for (health, status) in [
+        (
+            json!({"server":"ok","aria2_reachable":true,"proxy_reachable":true}),
+            "aria2:up proxy:up",
+        ),
+        (
+            json!({"server":"ok","aria2_reachable":true,"proxy_reachable":false}),
+            "aria2:up proxy:down",
+        ),
+        (json!({"server":"ok","aria2_reachable":true}), "aria2:up"),
+    ] {
+        let request = ApiRequest::Refresh {
+            filter_revision: app.filter_revision,
+            filter: Default::default(),
+            manages_server: false,
+            lifecycle_revision: app.lifecycle_revision,
+        };
+        exchange(
+            &mut app,
+            request,
+            vec![
+                ("/health", 200, health),
+                ("/downloads", 200, json!([])),
+                ("/queues", 200, json!([])),
+            ],
+        );
+        let rendered = render(&mut app);
+        assert!(rendered.contains(status));
+        assert_eq!(rendered.contains(" proxy:"), status.contains(" proxy:"));
+    }
+}
+
 #[test]
 fn add_progress_pause_resume_delete_and_error_render_without_terminal() {
     let mut app = App::new(Theme::default_dark(), IconSet::new(GlyphMode::Ascii), false);
