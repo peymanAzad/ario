@@ -125,6 +125,14 @@ fn refresh_displays_proxy_reachability_after_aria2() {
             "aria2:up proxy:up",
         ),
         (
+            json!({"server":"ok","aria2_reachable":true,"proxy_reachable":true,"proxy_data":true}),
+            "aria2:up proxy:up",
+        ),
+        (
+            json!({"server":"ok","aria2_reachable":true,"proxy_reachable":true,"proxy_data":false}),
+            "aria2:up proxy:up no data",
+        ),
+        (
             json!({"server":"ok","aria2_reachable":true,"proxy_reachable":false}),
             "aria2:up proxy:down",
         ),
@@ -148,6 +156,8 @@ fn refresh_displays_proxy_reachability_after_aria2() {
         let rendered = render(&mut app);
         assert!(rendered.contains(status));
         assert_eq!(rendered.contains(" proxy:"), status.contains(" proxy:"));
+        assert!(!rendered.contains("data:ok"));
+        assert_eq!(rendered.contains("no data"), status.contains("no data"));
     }
 }
 

@@ -769,6 +769,7 @@ fn refresh_preserves_selection_by_id_when_rows_reorder() {
             server_reachable: true,
             aria2_reachable: true,
             proxy_reachable: None,
+            proxy_data: None,
             download_speed: 0,
             active_downloads: 0,
             aria2_global_options: None,

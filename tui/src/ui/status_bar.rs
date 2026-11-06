@@ -56,6 +56,12 @@ pub fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(theme.foreground),
         ));
         status_spans.push(Span::styled(status, Style::default().fg(color)));
+        if reachable && app.proxy_data == Some(false) {
+            status_spans.push(Span::styled(
+                " no data",
+                Style::default().fg(theme.status_warning),
+            ));
+        }
     }
     status_spans.push(Span::raw(" "));
     let status_line = Line::from(status_spans);

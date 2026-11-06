@@ -74,6 +74,7 @@ pub struct RefreshStatus {
     pub server_reachable: bool,
     pub aria2_reachable: bool,
     pub proxy_reachable: Option<bool>,
+    pub proxy_data: Option<bool>,
     pub download_speed: u64,
     pub active_downloads: u64,
     pub aria2_global_options: Option<Aria2GlobalOptions>,
@@ -90,6 +91,7 @@ pub struct App {
     pub server_reachable: bool,
     pub aria2_reachable: bool,
     pub proxy_reachable: Option<bool>,
+    pub proxy_data: Option<bool>,
     pub aria2_global_options: Option<Aria2GlobalOptions>,
     pub total_download_speed: u64,
     pub active_downloads: u64,
@@ -122,6 +124,7 @@ impl App {
             server_reachable: false,
             aria2_reachable: false,
             proxy_reachable: None,
+            proxy_data: None,
             aria2_global_options: None,
             total_download_speed: 0,
             active_downloads: 0,
@@ -317,6 +320,7 @@ impl App {
             server_reachable,
             aria2_reachable,
             proxy_reachable,
+            proxy_data,
             download_speed,
             active_downloads,
             aria2_global_options,
@@ -392,6 +396,7 @@ impl App {
         self.server_reachable = server_reachable;
         self.aria2_reachable = aria2_reachable;
         self.proxy_reachable = proxy_reachable;
+        self.proxy_data = proxy_data;
         if server_reachable {
             self.aria2_global_options = aria2_global_options;
         }
@@ -446,6 +451,7 @@ impl App {
             self.server_reachable = false;
             self.aria2_reachable = false;
             self.proxy_reachable = None;
+            self.proxy_data = None;
         }
         self.lifecycle = state;
     }

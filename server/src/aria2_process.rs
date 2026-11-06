@@ -107,6 +107,10 @@ impl Aria2ProcessConfig {
         ))
     }
 
+    pub fn proxy_url(&self) -> Option<&Url> {
+        self.proxy_url.as_ref()
+    }
+
     pub fn rpc_url(&self) -> String {
         format!("http://127.0.0.1:{}/jsonrpc", self.rpc_port)
     }

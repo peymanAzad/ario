@@ -16,6 +16,7 @@ mod db;
 mod error;
 mod live_status;
 mod poller;
+mod proxy_probe;
 mod routes;
 mod routing;
 mod scheduler;
@@ -38,6 +39,7 @@ async fn main() -> anyhow::Result<()> {
     aria2_config.rpc_port = server_config.aria2.rpc_port;
     aria2_config.configure_proxy(&server_config.settings.proxy)?;
     let proxy_endpoint = aria2_config.proxy_endpoint();
+    let proxy_url = aria2_config.proxy_url().cloned();
 
     let aria2_client = Aria2Client::new(
         aria2_config.rpc_url(),
@@ -57,7 +59,8 @@ async fn main() -> anyhow::Result<()> {
 
     let mut state = AppState::new(database, aria2_client, server_config, launch.tui_managed)
         .with_aria2_global_options(aria2_global_options);
-    state.proxy_endpoint = proxy_endpoint;
+    state.proxy_reachable = proxy_endpoint.map(proxy_probe::start_reachability);
+    state.proxy_data = proxy_url.as_ref().map(proxy_probe::start_data);
     tokio::spawn(poller::run(state.clone()));
 
     let app = router(state.clone());

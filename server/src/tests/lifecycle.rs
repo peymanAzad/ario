@@ -80,18 +80,49 @@ async fn health_checks_the_proxy_independently_of_aria2() {
     aria2_config
         .configure_proxy(&config.settings.proxy)
         .unwrap();
-    f.state.proxy_endpoint = aria2_config.proxy_endpoint();
+    let mut reachability =
+        crate::proxy_probe::start_reachability(aria2_config.proxy_endpoint().unwrap());
+    f.state.proxy_reachable = Some(reachability.clone());
+    let (probe, result) = tokio::sync::watch::channel(None);
+    f.state.proxy_data = Some(result);
     f.reconfigure(config).await;
 
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        reachability.wait_for(|status| *status == Some(true)),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     f.fault("aria2.getVersion", Fault::Transport);
     let health = f.json(Method::GET, "/health", None).await;
     assert_eq!(health["aria2_reachable"], false);
     assert_eq!(health["proxy_reachable"], true);
+    assert!(health.get("proxy_data").is_none());
+
+    probe.send(Some(false)).unwrap();
+    assert_eq!(
+        f.json(Method::GET, "/health", None).await["proxy_data"],
+        false
+    );
+    probe.send(Some(true)).unwrap();
+    assert_eq!(
+        f.json(Method::GET, "/health", None).await["proxy_data"],
+        true
+    );
 
     drop(proxy);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        reachability.wait_for(|status| *status == Some(false)),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     let health = f.json(Method::GET, "/health", None).await;
     assert_eq!(health["aria2_reachable"], true);
     assert_eq!(health["proxy_reachable"], false);
+    assert!(health.get("proxy_data").is_none());
     f.close().await;
 }
 

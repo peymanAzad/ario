@@ -50,6 +50,7 @@ fn managed_server_indicator_follows_lifecycle_and_current_health() {
             server_reachable: false,
             aria2_reachable: false,
             proxy_reachable: None,
+            proxy_data: None,
             download_speed: 0,
             active_downloads: 0,
             aria2_global_options: None,
@@ -81,6 +82,8 @@ fn unmanaged_server_uses_reachability_and_aria2_stays_separate() {
 fn status_values_use_semantic_foregrounds_without_backgrounds() {
     let mut app = app(true);
     app.apply_lifecycle(LifecycleState::Connected);
+    app.proxy_reachable = Some(true);
+    app.proxy_data = Some(false);
 
     let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
     terminal
@@ -90,6 +93,8 @@ fn status_values_use_semantic_foregrounds_without_backgrounds() {
     let rendered: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
     let server_status_start = rendered.find("server:up").unwrap() + "server:".len();
     let aria2_status_start = rendered.find("aria2:down").unwrap() + "aria2:".len();
+    let proxy_status_start = rendered.find("proxy:up").unwrap() + "proxy:".len();
+    let no_data_start = rendered.find("no data").unwrap();
 
     for x in server_status_start..server_status_start + "up".len() {
         assert_eq!(buffer[(x as u16, 0)].fg, app.theme.status_ok);
@@ -98,6 +103,12 @@ fn status_values_use_semantic_foregrounds_without_backgrounds() {
     for x in aria2_status_start..aria2_status_start + "down".len() {
         assert_eq!(buffer[(x as u16, 0)].fg, app.theme.status_error);
         assert_eq!(buffer[(x as u16, 0)].bg, Color::Reset);
+    }
+    for x in proxy_status_start..proxy_status_start + "up".len() {
+        assert_eq!(buffer[(x as u16, 0)].fg, app.theme.status_ok);
+    }
+    for x in no_data_start..no_data_start + "no data".len() {
+        assert_eq!(buffer[(x as u16, 0)].fg, app.theme.status_warning);
     }
 }
 

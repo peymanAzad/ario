@@ -226,6 +226,7 @@ fn execute_refresh(
             server_reachable: true,
             aria2_reachable: health.aria2_reachable,
             proxy_reachable: health.proxy_reachable,
+            proxy_data: health.proxy_data,
             download_speed: health.download_speed,
             active_downloads: health.active_downloads,
             aria2_global_options: health.aria2_global_options,
