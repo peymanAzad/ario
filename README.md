@@ -43,25 +43,30 @@ For terminals without a Nerd Font, launch with `ario --glyphs=unicode`.
 
 ### Linux (x86_64)
 
-Linux release binaries require **glibc 2.35 or newer**. Download packages from
-[GitHub Releases](https://github.com/peymanAzad/ario/releases/latest).
+Linux release binaries require **glibc 2.35 or newer**.
+If multiple versions of the same package are in your download directory, use
+the exact filename of the version you want to install.
 
 #### Debian and Ubuntu
 
-Download [ario_0.1.0-1_amd64.deb](https://github.com/peymanAzad/ario/releases/download/v0.1.0/ario_0.1.0-1_amd64.deb), then run this command in the download directory:
+Download `ario_<version>-1_amd64.deb` from the
+[latest release](https://github.com/peymanAzad/ario/releases/latest), then run
+this command in the download directory:
 
 ```sh
-sudo apt install ./ario_0.1.0-1_amd64.deb
+sudo apt install ./ario_*_amd64.deb
 ```
 
 APT installs aria2 and the other required dependencies.
 
 #### Fedora and other RPM-based distributions
 
-Download [ario-0.1.0-1.x86_64.rpm](https://github.com/peymanAzad/ario/releases/download/v0.1.0/ario-0.1.0-1.x86_64.rpm), then install it with DNF:
+Download `ario-<version>-1.x86_64.rpm` from the
+[latest release](https://github.com/peymanAzad/ario/releases/latest), then run
+this command in the download directory:
 
 ```sh
-sudo dnf install ./ario-0.1.0-1.x86_64.rpm
+sudo dnf install ./ario-*.x86_64.rpm
 ```
 
 DNF installs aria2 and the other required dependencies from your configured
@@ -69,9 +74,9 @@ repositories. Use your distribution's package manager if it does not use DNF.
 
 #### Arch Linux
 
-For releases that include an Arch package, download
-`ario-download-bin-<version>-1-x86_64.pkg.tar.zst` from
-[GitHub Releases](https://github.com/peymanAzad/ario/releases/latest), then run:
+Download `ario-download-bin-<version>-1-x86_64.pkg.tar.zst` from the
+[latest release](https://github.com/peymanAzad/ario/releases/latest), then run
+this command in the download directory:
 
 ```sh
 sudo pacman -U ./ario-download-bin-*-x86_64.pkg.tar.zst
