@@ -20,7 +20,9 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn get_settings(State(state): State<AppState>) -> Json<Settings> {
-    Json(state.config.settings.clone())
+    let mut settings = state.config.settings.clone();
+    settings.proxy.password = None;
+    Json(settings)
 }
 
 #[derive(Serialize)]

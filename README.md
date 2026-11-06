@@ -226,8 +226,8 @@ Program = [
     "msix", "msixbundle", "flatpak", "snap", "sh", "bat", "cmd", "ps1",
 ]
 
-# Reserved proxy configuration; currently not applied to downloads.
-# Optional fields are unset by default.
+# Set enabled = true and supply an HTTP proxy host to route downloads through aria2's proxy.
+# Port defaults to 80. For authentication, set username and password.
 [settings.proxy]
 enabled = false
 # host = "127.0.0.1"
@@ -246,6 +246,10 @@ rpc_port = 6800
 # Ario routes downloads using the locations under [settings].
 download_dir = "~/Downloads"
 ```
+
+The HTTP proxy applies to HTTP, HTTPS, FTP and SFTP transfers that aria2 supports.
+BitTorrent peer traffic uses direct connections. Aria2's `no_proxy` exclusions still apply.
+If `aria2.conf` sets `all-proxy-user` or `all-proxy-passwd`, aria2 gives those options precedence over credentials from `server.toml`.
 
 ### TUI — `tui.toml`
 

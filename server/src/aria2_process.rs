@@ -1,4 +1,8 @@
+use anyhow::{Context, ensure};
+use common::settings::ProxySettings;
 use rand::RngExt;
+use reqwest::Url;
+use std::net::Ipv6Addr;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -16,6 +20,7 @@ pub struct Aria2ProcessConfig {
     pub session_path: PathBuf,
     pub log_path: PathBuf,
     pub download_dir: PathBuf,
+    proxy_url: Option<Url>,
 }
 
 impl Aria2ProcessConfig {
@@ -33,7 +38,64 @@ impl Aria2ProcessConfig {
             session_path: data_dir.join("aria2-session.txt"),
             log_path: data_dir.join("aria2.log"),
             download_dir,
+            proxy_url: None,
         }
+    }
+
+    pub fn configure_proxy(&mut self, proxy: &ProxySettings) -> anyhow::Result<()> {
+        if !proxy.enabled {
+            self.proxy_url = None;
+            return Ok(());
+        }
+
+        let host = proxy
+            .host
+            .as_deref()
+            .map(str::trim)
+            .filter(|host| !host.is_empty())
+            .context("settings.proxy.host is required when the proxy is enabled")?;
+        let address = if host.parse::<Ipv6Addr>().is_ok() {
+            format!("http://[{host}]")
+        } else if host.starts_with("http://") {
+            host.to_owned()
+        } else {
+            format!("http://{host}")
+        };
+        let mut url = Url::parse(&address).context("invalid settings.proxy.host")?;
+        ensure!(
+            url.path() == "/"
+                && url.query().is_none()
+                && url.fragment().is_none()
+                && url.username().is_empty()
+                && url.password().is_none(),
+            "settings.proxy.host must be an HTTP proxy address without credentials"
+        );
+        if let Some(port) = proxy.port {
+            ensure!(port != 0, "settings.proxy.port must be greater than zero");
+            url.set_port(Some(port))
+                .map_err(|_| anyhow::anyhow!("invalid settings.proxy.port"))?;
+        }
+        ensure!(
+            url.port() != Some(0),
+            "proxy port must be greater than zero"
+        );
+
+        let username = proxy.username.as_deref().filter(|name| !name.is_empty());
+        ensure!(
+            proxy.password.is_none() || username.is_some(),
+            "settings.proxy.username is required when a proxy password is set"
+        );
+        if let Some(username) = username {
+            // URL setters preserve existing percent escapes. Encode literal percent signs first.
+            url.set_username(&username.replace('%', "%25"))
+                .map_err(|_| anyhow::anyhow!("invalid settings.proxy.username"))?;
+            if let Some(password) = &proxy.password {
+                url.set_password(Some(&password.replace('%', "%25")))
+                    .map_err(|_| anyhow::anyhow!("invalid settings.proxy.password"))?;
+            }
+        }
+        self.proxy_url = Some(url);
+        Ok(())
     }
 
     pub fn rpc_url(&self) -> String {
@@ -76,7 +138,16 @@ impl Aria2Process {
             std::fs::File::create(&self.config.session_path)?;
         }
 
-        Command::new(&self.config.binary_path)
+        let mut command = Command::new(&self.config.binary_path);
+        if let Some(proxy_url) = &self.config.proxy_url {
+            // Clear per-protocol overrides so aria2 falls back to the configured proxy.
+            command.env("all_proxy", proxy_url.as_str()).args([
+                "--http-proxy=",
+                "--https-proxy=",
+                "--ftp-proxy=",
+            ]);
+        }
+        command
             .arg("--enable-rpc")
             .arg("--rpc-listen-all=false")
             .arg(format!("--rpc-listen-port={}", self.config.rpc_port))
@@ -261,11 +332,33 @@ mod tests {
             session_path: dir.join("session"),
             log_path: dir.join("log"),
             download_dir: dir,
+            proxy_url: None,
         }))
     }
 
     fn client() -> Aria2Client {
         Aria2Client::new("http://127.0.0.1:1/jsonrpc", None)
+    }
+
+    #[test]
+    fn proxy_settings_encode_credentials_and_allow_ipv6_hosts() {
+        let mut config = Aria2ProcessConfig::new_with_random_secret(".".into(), ".".into());
+        let mut proxy = ProxySettings {
+            enabled: true,
+            host: Some("::1".into()),
+            port: Some(8080),
+            username: Some("user%2F".into()),
+            password: Some("pass@word".into()),
+        };
+        config.configure_proxy(&proxy).unwrap();
+        assert_eq!(
+            config.proxy_url.as_ref().unwrap().as_str(),
+            "http://user%252F:pass%40word@[::1]:8080/"
+        );
+
+        proxy.enabled = false;
+        config.configure_proxy(&proxy).unwrap();
+        assert!(config.proxy_url.is_none());
     }
 
     async fn owned_sleep(process: &Aria2Process, seconds: &str) -> u32 {

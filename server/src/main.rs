@@ -36,6 +36,7 @@ async fn main() -> anyhow::Result<()> {
     let mut aria2_config = Aria2ProcessConfig::new_with_random_secret(data_dir, download_dir);
     aria2_config.binary_path = server_config.aria2.binary_path.clone();
     aria2_config.rpc_port = server_config.aria2.rpc_port;
+    aria2_config.configure_proxy(&server_config.settings.proxy)?;
 
     let aria2_client = Aria2Client::new(
         aria2_config.rpc_url(),
