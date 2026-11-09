@@ -469,7 +469,9 @@ async fn commands_have_closed_stdin_no_controlling_terminal_and_the_config_direc
             .status,
         Status::Succeeded
     );
-    assert_eq!(lines(&f, "cwd").trim(), f.root.to_str().unwrap());
+    // The shell can resolve a symlink in the temp directory, such as /var on macOS.
+    let reported_cwd = std::fs::canonicalize(lines(&f, "cwd").trim()).unwrap();
+    assert_eq!(reported_cwd, f.root.canonicalize().unwrap());
     f.close().await;
 }
 
