@@ -1121,12 +1121,15 @@ fn queue_event_commands_and_read_only_results_are_visible_on_small_terminals() {
         let screen = draw(&mut app, width, height);
         assert!(screen.contains("Notes"));
         for note in [
-            "• Commands run on the daemon host.",
+            "• Commands run on the server machine.",
             "• Commands cannot prompt for input.",
-            "• On success, then On automatic stop.",
+            "• Success runs both commands in order.",
             "• Manual queue stops skip both commands.",
         ] {
-            assert!(screen.contains(note), "note clipped at {width}x{height}");
+            assert!(
+                screen.contains(note),
+                "missing note {note:?} at {width}x{height}"
+            );
         }
         app.queue_modal_mut().unwrap().events.cursor = 1;
     }
