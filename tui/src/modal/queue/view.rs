@@ -50,6 +50,7 @@ pub fn draw_queue_modal(f: &mut Frame, modal: &QueueModal, ctx: &Ctx<'_>) {
     match modal.tab {
         QueueModalTab::Common => draw_queue_modal_common_tab(f, ctx, modal, layout[1]),
         QueueModalTab::Scheduler => draw_queue_modal_scheduler_tab(f, ctx, modal, layout[1]),
+        QueueModalTab::Events => draw_queue_modal_events_tab(f, ctx, modal, layout[1]),
         QueueModalTab::DownloadItems => draw_queue_modal_items_tab(f, ctx, modal, layout[1]),
     }
 
@@ -76,42 +77,38 @@ fn draw_queue_modal_tab_bar(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal, ar
         }
     };
 
-    let mut spans = vec![
-        Span::styled(" Common ", tab_style(modal.tab == QueueModalTab::Common)),
-        Span::raw("  "),
-        Span::styled(
-            " Scheduler ",
-            tab_style(modal.tab == QueueModalTab::Scheduler),
-        ),
-    ];
-
-    if matches!(modal.mode, QueueModalMode::Edit { .. }) {
-        spans.push(Span::raw("  "));
-        spans.push(Span::styled(
-            format!(" Download Items ({}) ", modal.items.len()),
-            tab_style(modal.tab == QueueModalTab::DownloadItems),
-        ));
+    let tabs = QueueModalTab::available(modal.mode);
+    let items_label = format!(" Download Items ({}) ", modal.items.len());
+    let compact_items_label = format!(" Items ({}) ", modal.items.len());
+    let mut labels = [" Common ", " Scheduler ", " Events ", &items_label];
+    let full_width = labels[..tabs.len()]
+        .iter()
+        .map(|label| label.len())
+        .sum::<usize>()
+        + (tabs.len() - 1) * 2;
+    let compact = full_width > usize::from(area.width);
+    if compact {
+        labels[3] = &compact_items_label;
     }
 
+    let mut spans = Vec::new();
+    let mut targets = Vec::new();
+    for (index, (&tab, label)) in tabs.iter().zip(labels).enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(if compact { " " } else { "  " }));
+        }
+        targets.push((spans.len(), mouse::modal_target(I::Tab(index))));
+        spans.push(Span::styled(label, tab_style(modal.tab == tab)));
+    }
     spans.push(Span::raw("   (Tab to switch)"));
-
-    mouse::spans(
-        ctx.interactions,
-        area,
-        &spans,
-        &[
-            (0, mouse::modal_target(I::Tab(0))),
-            (2, mouse::modal_target(I::Tab(1))),
-            (4, mouse::modal_target(I::Tab(2))),
-        ],
-    );
+    mouse::spans(ctx.interactions, area, &spans, &targets);
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn text_value(modal: &QueueModal, field: usize, value: &str, width: usize) -> String {
+fn text_value(modal: &QueueModal, selected: bool, value: &str, width: usize) -> String {
     use unicode_segmentation::UnicodeSegmentation;
     use unicode_width::UnicodeWidthStr;
-    let editing = modal.text_input.editing && modal.common_cursor == field;
+    let editing = modal.text_input.editing && selected;
     let value = if editing {
         modal.text_input.buffer.as_str()
     } else {
@@ -172,136 +169,116 @@ fn event_result(result: Option<&common::queue::QueueEventResult>) -> String {
     format!("{status} ({timestamp}){detail}")
 }
 
+fn field_row(label: &str, value: String, label_width: usize) -> String {
+    let label: String = label.chars().take(label_width).collect();
+    format!("{label:<label_width$} {value}")
+}
+
 fn draw_queue_modal_common_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal, area: Rect) {
+    let inner_width = usize::from(area.width.saturating_sub(2));
+    let label_width = 28.min(inner_width / 2);
+    let value_width = inner_width.saturating_sub(label_width + 1).max(1);
+    let row = |label: &str, value| field_row(label, value, label_width);
+    let mut rows = vec![
+        row(
+            "Name",
+            text_value(modal, modal.common_cursor == 0, &modal.name, value_width),
+        ),
+        row(
+            "Max concurrent downloads",
+            format!("◀ {} ▶", modal.max_concurrent_downloads),
+        ),
+        row("Max retries", format!("◀ {} ▶", modal.max_retries)),
+        row(
+            "Retry wait (seconds)",
+            format!("◀ {} ▶", modal.retry_wait_seconds),
+        ),
+    ];
+    for (label, value) in modal
+        .finetune_editor
+        .rows(ctx.aria2_global_options)
+        .into_iter()
+        .take(4)
+    {
+        rows.push(row(&label, format!("◀ {value} ▶")));
+    }
+    let (inner, offset) = mouse::fields(
+        f,
+        ctx,
+        S::Common,
+        area,
+        modal.common_cursor,
+        &rows,
+        " j/k: field   h/l: adjust   Enter: edit text ",
+    );
+    if offset == 0 && inner.height > 0 {
+        ctx.interactions.borrow_mut().add(
+            Rect::new(inner.x, inner.y, inner.width, 1),
+            mouse::modal_target(I::Text),
+        );
+    }
+}
+
+fn draw_queue_modal_events_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal, area: Rect) {
     use ratatui::widgets::{List, ListItem};
     let theme = ctx.theme;
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border))
-        .title(" j/k: field   h/l: adjust   Enter: edit text ");
+        .title(" j/k: field   Enter: edit command ");
     let inner = block.inner(area);
-    let label_width = 28.min(usize::from(inner.width) / 2);
+    let label_width = "On automatic stop".len().min(usize::from(inner.width) / 2);
     let value_width = usize::from(inner.width)
         .saturating_sub(label_width + 1)
         .max(1);
-    let row = |label: &str, value: String| {
-        let label: String = label.chars().take(label_width).collect();
-        format!("{label:<label_width$} {value}")
+    let command_row = |index, label, command| {
+        field_row(
+            label,
+            text_value(modal, modal.events.cursor == index, command, value_width),
+            label_width,
+        )
     };
-    let mut rows: Vec<(Option<usize>, String)> = vec![
-        (
-            Some(0),
-            row("Name", text_value(modal, 0, &modal.name, value_width)),
-        ),
-        (
-            Some(1),
-            row(
-                "Max concurrent downloads",
-                format!("◀ {} ▶", modal.max_concurrent_downloads),
-            ),
-        ),
-        (
-            Some(2),
-            row("Max retries", format!("◀ {} ▶", modal.max_retries)),
-        ),
-        (
-            Some(3),
-            row(
-                "Retry wait (seconds)",
-                format!("◀ {} ▶", modal.retry_wait_seconds),
-            ),
-        ),
-    ];
-    for (index, (label, value)) in modal
-        .finetune_editor
-        .rows(ctx.aria2_global_options)
-        .into_iter()
-        .take(4)
-        .enumerate()
-    {
-        rows.push((Some(index + 4), row(&label, format!("◀ {value} ▶"))));
-    }
-    rows.push((None, "Events".into()));
-    rows.push((
-        Some(8),
-        row(
-            "On success",
-            text_value(modal, 8, &modal.on_success_command, value_width),
-        ),
-    ));
-    rows.push((
-        Some(9),
-        row(
-            "On automatic stop",
-            text_value(modal, 9, &modal.on_stop_command, value_width),
-        ),
-    ));
-    rows.push((
-        Some(10),
+    let rows = [
+        command_row(0, "On success", &modal.events.on_success_command),
+        command_row(1, "On automatic stop", &modal.events.on_stop_command),
         format!(
             "Success: {}",
-            event_result(modal.event_results.on_success.as_ref())
+            event_result(modal.events.results.on_success.as_ref())
         ),
-    ));
-    rows.push((
-        Some(11),
         format!(
             "Stop: {}",
-            event_result(modal.event_results.on_stop.as_ref())
+            event_result(modal.events.results.on_stop.as_ref())
         ),
-    ));
-    rows.push((
-        Some(12),
-        "Commands run on the daemon's machine; no interactive input.".into(),
-    ));
-    rows.push((
-        Some(13),
+        "Commands run on the daemon's machine without interactive input.".into(),
         "Success runs both commands. Manual queue stops run neither.".into(),
-    ));
-    let selected = rows
-        .iter()
-        .position(|(field, _)| *field == Some(modal.common_cursor))
-        .unwrap_or(0);
-    let items = rows
-        .iter()
-        .map(|(field, text)| {
-            let style = if *field == Some(modal.common_cursor) {
-                crate::ui::field_style(theme, true)
-            } else if field.is_none() || field.is_some_and(|field| field > 9) {
-                Style::default().fg(theme.text_muted)
-            } else {
-                crate::ui::field_style(theme, false)
-            };
-            ListItem::new(text.clone()).style(style)
-        })
-        .collect::<Vec<_>>();
+    ];
+    let row_count = rows.len();
+    let items = rows.into_iter().enumerate().map(|(index, text)| {
+        let style = if index == modal.events.cursor || index < 2 {
+            crate::ui::field_style(theme, index == modal.events.cursor)
+        } else {
+            Style::default().fg(theme.text_muted)
+        };
+        ListItem::new(text).style(style)
+    });
     let offset = mouse::list(
         f,
         ctx.interactions,
-        S::Common,
+        S::Events,
         List::new(items).block(block),
         (area, inner),
-        selected,
-        rows.len(),
+        modal.events.cursor,
+        row_count,
     );
     for y in 0..inner.height {
-        let Some((Some(field), text)) = rows.get(offset + usize::from(y)) else {
-            continue;
-        };
-        let row_area = Rect::new(inner.x, inner.y + y, inner.width, 1);
-        if matches!(field, 0 | 8 | 9) {
-            // Command contents are text: arrows in them must never become adjustment targets.
-            let intent = if *field == 0 {
-                I::Text
-            } else {
-                I::TextField(*field)
-            };
-            ctx.interactions
-                .borrow_mut()
-                .add(row_area, mouse::modal_target(intent));
-        } else if *field <= 7 {
-            mouse::field(ctx.interactions, row_area, *field, text);
+        let field = offset + usize::from(y);
+        if field >= 2 {
+            break;
         }
+        ctx.interactions.borrow_mut().add(
+            Rect::new(inner.x, inner.y + y, inner.width, 1),
+            mouse::modal_target(I::TextField(field)),
+        );
     }
 }
 

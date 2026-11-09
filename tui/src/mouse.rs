@@ -29,6 +29,7 @@ pub enum ScrollTarget {
     Fields,
     Common,
     Scheduler,
+    Events,
     Items,
     Help,
 }
@@ -242,6 +243,7 @@ pub fn route_mouse_at(app: &mut App, event: MouseEvent, now: Instant) -> Option<
                     | ScrollTarget::Fields
                     | ScrollTarget::Common
                     | ScrollTarget::Scheduler
+                    | ScrollTarget::Events
                     | ScrollTarget::Items => dispatch(app, ModalIntent::Navigate(forward)),
                     _ => None,
                 }

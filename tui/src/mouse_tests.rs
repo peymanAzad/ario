@@ -534,10 +534,12 @@ fn scheduler_controls_and_wheel_select_without_changing_values() {
 fn queue_items_scroll_and_reorder_only_when_requested() {
     let mut app = app();
     let mut modal = QueueModal::edit(&queue(1));
-    modal.tab = QueueModalTab::DownloadItems;
     modal.set_items((1..=40).map(|id| download(id).download).collect());
     modal.item_cursor = 30;
     app.modal = Some(Modal::Queue(modal));
+    draw(&mut app, 60, 20);
+    click(&mut app, ModalIntent::Tab(3));
+    assert_eq!(app.queue_modal().unwrap().tab, QueueModalTab::DownloadItems);
     draw(&mut app, 120, 20);
     assert!(app.interactions.borrow().lists[&ScrollTarget::Items].offset() > 0);
     wheel(&mut app, ScrollTarget::Items, true);
@@ -803,7 +805,7 @@ fn spans_use_unicode_cell_widths_and_clip_without_making_spacing_clickable() {
 }
 #[test]
 fn every_view_handles_tiny_sizes_and_only_registers_visible_controls() {
-    for modal in 0..9 {
+    for modal in 0..10 {
         for (width, height) in [(1, 1), (2, 2), (8, 5), (30, 12), (120, 40)] {
             let mut app = app();
             app.downloads = (1..=40).map(download).collect();
@@ -835,6 +837,7 @@ fn every_view_handles_tiny_sizes_and_only_registers_visible_controls() {
                     m.tab = match index {
                         6 => QueueModalTab::Common,
                         7 => QueueModalTab::Scheduler,
+                        8 => QueueModalTab::Events,
                         _ => QueueModalTab::DownloadItems,
                     };
                     m.set_items((1..=30).map(|id| download(id).download).collect());
@@ -1035,26 +1038,34 @@ fn queue_event_inputs_support_paste_discard_and_staged_save() {
     let mut app = app();
     let mut modal = QueueModal::create();
     modal.name = "Hooks".into();
-    modal.common_cursor = 8;
     app.modal = Some(Modal::Queue(modal));
     let screen = draw(&mut app, 120, 40);
     assert!(screen.contains("Events"));
-    click(&mut app, ModalIntent::TextField(8));
+    assert!(!screen.contains("On success"));
+    click(&mut app, ModalIntent::Tab(2));
+    assert_eq!(app.queue_modal().unwrap().tab, QueueModalTab::Events);
+    draw(&mut app, 120, 40);
+    click(&mut app, ModalIntent::TextField(0));
     crate::keymap::paste(&mut app, "printf '成功; s q c j ◀ ▶' >> /tmp/example");
     // Switching fields commits the local draft, without sending requests.
-    assert!(click(&mut app, ModalIntent::TextField(9)).is_empty());
+    assert!(click(&mut app, ModalIntent::TextField(1)).is_empty());
     crate::keymap::paste(&mut app, "exit 9");
     if let Some(message) =
         crate::keymap::route_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
     {
         assert!(update::update(&mut app, message).is_empty());
     }
-    assert!(app.queue_modal().unwrap().on_stop_command.is_empty());
+    assert!(app.queue_modal().unwrap().events.on_stop_command.is_empty());
     draw(&mut app, 120, 40);
-    click(&mut app, ModalIntent::TextField(9));
+    click(&mut app, ModalIntent::TextField(1));
     crate::keymap::paste(&mut app, "printf stop");
+    click(&mut app, ModalIntent::Tab(0));
+    assert_eq!(
+        app.queue_modal().unwrap().events.on_stop_command,
+        "printf stop"
+    );
+    draw(&mut app, 120, 40);
     click(&mut app, ModalIntent::Text);
-    assert_eq!(app.queue_modal().unwrap().on_stop_command, "printf stop");
     assert_eq!(app.queue_modal().unwrap().text_input.buffer, "Hooks");
     let effects = click(&mut app, ModalIntent::Command(Command::Save));
     assert!(
@@ -1069,8 +1080,9 @@ fn queue_event_inputs_support_paste_discard_and_staged_save() {
 fn queue_event_commands_and_read_only_results_are_visible_on_small_terminals() {
     let mut app = app();
     let mut modal = QueueModal::create();
-    modal.common_cursor = 9;
-    modal.on_stop_command = format!("{}VISIBLE_END", "long-command-界".repeat(40));
+    modal.tab = QueueModalTab::Events;
+    modal.events.cursor = 1;
+    modal.events.on_stop_command = format!("{}VISIBLE_END", "long-command-界".repeat(40));
     app.modal = Some(Modal::Queue(modal));
     for (width, height) in [(60, 16), (80, 20), (120, 40)] {
         let screen = draw(&mut app, width, height);
@@ -1078,21 +1090,14 @@ fn queue_event_commands_and_read_only_results_are_visible_on_small_terminals() {
             screen.contains("VISIBLE_END"),
             "command tail lost at {width}x{height}"
         );
-        let hits = app.interactions.borrow();
-        assert!(!hits.hits.iter().any(|hit| matches!(
-            hit.target,
-            Target::Modal(ModalIntent::Adjust {
-                field: Some(8 | 9),
-                ..
-            })
-        )));
-        drop(hits);
-        app.queue_modal_mut().unwrap().common_cursor = 11;
+        wheel(&mut app, ScrollTarget::Events, true);
+        wheel(&mut app, ScrollTarget::Events, true);
+        assert_eq!(app.queue_modal().unwrap().events.cursor, 3);
         let screen = draw(&mut app, width, height);
         assert!(screen.contains("Stop: never run"));
-        app.queue_modal_mut().unwrap().common_cursor = 9;
+        app.queue_modal_mut().unwrap().events.cursor = 1;
     }
-    app.queue_modal_mut().unwrap().common_cursor = 13;
+    app.queue_modal_mut().unwrap().events.cursor = 5;
     draw(&mut app, 60, 16);
     // Read-only rows can be scrolled into view but Enter cannot edit them.
     let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);

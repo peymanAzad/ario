@@ -162,8 +162,9 @@ fn queue_event_results_refresh_without_overwriting_unsaved_commands() {
     let mut app = app();
     let mut q = app.queues[1].clone();
     let mut modal = crate::modal::QueueModal::edit(&q);
-    modal.on_success_command = "unsaved command".into();
-    modal.common_cursor = 9;
+    modal.events.on_success_command = "unsaved command".into();
+    modal.tab = crate::modal::QueueModalTab::Events;
+    modal.events.cursor = 1;
     modal.text_input.start("unsaved input draft".into());
     app.modal = Some(crate::modal::Modal::Queue(modal));
     q.event_results.on_stop = Some(QueueEventResult {
@@ -187,8 +188,8 @@ fn queue_event_results_refresh_without_overwriting_unsaved_commands() {
         app.lifecycle_revision,
     );
     let modal = app.queue_modal().unwrap();
-    assert_eq!(modal.event_results.as_ref(), &q.event_results);
-    assert_eq!(modal.on_success_command, "unsaved command");
+    assert_eq!(&modal.events.results, &q.event_results);
+    assert_eq!(modal.events.on_success_command, "unsaved command");
     assert_eq!(modal.text_input.buffer, "unsaved input draft");
     assert!(modal.text_input.editing);
 }

@@ -381,7 +381,7 @@ impl App {
                 && let crate::modal::queue::QueueModalMode::Edit { queue_id } = modal.mode
                 && let Some(queue) = queues.iter().find(|queue| queue.id == queue_id)
             {
-                *modal.event_results = queue.event_results.clone();
+                modal.events.results = queue.event_results.clone();
             }
             self.queues = queues;
             self.selected_queue = selected_id

@@ -19,7 +19,8 @@ mod view;
 
 const TIME_STEP_MIN: i64 = 5;
 
-const LAST_COMMON_ROW: usize = 13;
+const LAST_COMMON_ROW: usize = 7;
+const LAST_EVENTS_ROW: usize = 5;
 
 /// Help section for the queue editor modal.
 pub const HELP: &[(&str, &str)] = &[
@@ -53,26 +54,29 @@ pub const HELP_TEXT_EDITING: &[(&str, &str)] = &[
 pub enum QueueModalTab {
     Common,
     Scheduler,
+    Events,
     DownloadItems,
 }
 
 impl QueueModalTab {
-    fn next(self, mode: QueueModalMode) -> Self {
-        match (self, mode) {
-            (QueueModalTab::Common, _) => QueueModalTab::Scheduler,
-            (QueueModalTab::Scheduler, QueueModalMode::Edit { .. }) => QueueModalTab::DownloadItems,
-            (QueueModalTab::Scheduler, QueueModalMode::Create) => QueueModalTab::Common,
-            (QueueModalTab::DownloadItems, _) => QueueModalTab::Common,
+    fn available(mode: QueueModalMode) -> &'static [Self] {
+        const TABS: [QueueModalTab; 4] = [
+            QueueModalTab::Common,
+            QueueModalTab::Scheduler,
+            QueueModalTab::Events,
+            QueueModalTab::DownloadItems,
+        ];
+        match mode {
+            QueueModalMode::Create => &TABS[..3],
+            QueueModalMode::Edit { .. } => &TABS,
         }
     }
 
-    fn prev(self, mode: QueueModalMode) -> Self {
-        match (self, mode) {
-            (QueueModalTab::Common, QueueModalMode::Edit { .. }) => QueueModalTab::DownloadItems,
-            (QueueModalTab::Common, QueueModalMode::Create) => QueueModalTab::Scheduler,
-            (QueueModalTab::Scheduler, _) => QueueModalTab::Common,
-            (QueueModalTab::DownloadItems, _) => QueueModalTab::Scheduler,
-        }
+    fn cycle(self, mode: QueueModalMode, forward: bool) -> Self {
+        let tabs = Self::available(mode);
+        let index = tabs.iter().position(|&tab| tab == self).unwrap_or(0);
+        let step = if forward { 1 } else { tabs.len() - 1 };
+        tabs[(index + step) % tabs.len()]
     }
 }
 
@@ -100,6 +104,15 @@ const WEEKDAY_ORDER: [Weekday; 7] = [
     Weekday::Sun,
 ];
 
+#[derive(Debug, Default)]
+pub struct QueueModalEvents {
+    pub on_success_command: String,
+    pub on_stop_command: String,
+    pub results: common::queue::QueueEventResults,
+    /// 0-1 = event commands, 2-5 = read-only results and help.
+    pub cursor: usize,
+}
+
 /// State for the create/edit queue modal. Everything here is staged
 /// in-memory and only sent to the server on Save — Cancel just drops this
 /// struct with zero side effects, including any reordering done on the
@@ -112,16 +125,13 @@ pub struct QueueModal {
 
     // ---- Common tab ----
     pub name: String,
-    pub on_success_command: String,
-    pub on_stop_command: String,
-    pub event_results: Box<common::queue::QueueEventResults>,
     pub max_concurrent_downloads: u32,
     pub max_retries: u32,
     pub retry_wait_seconds: u32,
     pub finetune_editor: FineTuneEditor,
     /// 0 = name, 1 = max_concurrent_downloads, 2 = max_retries,
     /// 3 = retry_wait_seconds, 4-7 = finetune fields 0..=3
-    /// (connections / max connections / alloc / stream selector); 8-9 = event commands; 10-13 = read-only results/help.
+    /// (connections / max connections / alloc / stream selector).
     pub common_cursor: usize,
 
     // ---- Scheduler tab ----
@@ -149,6 +159,9 @@ pub struct QueueModal {
     /// 4: end date, 5: end time, 6: run_missed_on_startup].
     pub scheduler_cursor: usize,
 
+    // ---- Events tab ----
+    pub events: Box<QueueModalEvents>,
+
     // ---- Shared text-editing state (name and event commands) ----
     pub text_input: TextInput,
 
@@ -174,24 +187,29 @@ impl QueueModal {
     }
 
     fn next_tab(&mut self) {
-        self.tab = self.tab.next(self.mode);
+        self.tab = self.tab.cycle(self.mode, true);
     }
 
     fn prev_tab(&mut self) {
-        self.tab = self.tab.prev(self.mode);
+        self.tab = self.tab.cycle(self.mode, false);
+    }
+
+    fn selected_text_field(&mut self) -> Option<&mut String> {
+        match self.tab {
+            QueueModalTab::Common if self.common_cursor == 0 => Some(&mut self.name),
+            QueueModalTab::Events => match self.events.cursor {
+                0 => Some(&mut self.events.on_success_command),
+                1 => Some(&mut self.events.on_stop_command),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     fn start_text_edit(&mut self) {
-        if self.tab != QueueModalTab::Common {
-            return;
+        if let Some(text) = self.selected_text_field().cloned() {
+            self.text_input.start(text);
         }
-        let text = match self.common_cursor {
-            0 => &self.name,
-            8 => &self.on_success_command,
-            9 => &self.on_stop_command,
-            _ => return,
-        };
-        self.text_input.start(text.clone());
     }
 
     fn confirm_text_edit(&mut self) {
@@ -199,11 +217,8 @@ impl QueueModal {
             return;
         }
         let value = self.text_input.take();
-        match self.common_cursor {
-            0 => self.name = value,
-            8 => self.on_success_command = value,
-            9 => self.on_stop_command = value,
-            _ => {}
+        if let Some(field) = self.selected_text_field() {
+            *field = value;
         }
     }
 
@@ -223,6 +238,9 @@ impl QueueModal {
                 };
                 self.scheduler_cursor = (self.scheduler_cursor + 1).min(max);
             }
+            QueueModalTab::Events => {
+                self.events.cursor = (self.events.cursor + 1).min(LAST_EVENTS_ROW);
+            }
             QueueModalTab::DownloadItems => {
                 if !self.items.is_empty() {
                     self.item_cursor = (self.item_cursor + 1).min(self.items.len() - 1);
@@ -237,6 +255,7 @@ impl QueueModal {
             QueueModalTab::Scheduler => {
                 self.scheduler_cursor = self.scheduler_cursor.saturating_sub(1)
             }
+            QueueModalTab::Events => self.events.cursor = self.events.cursor.saturating_sub(1),
             QueueModalTab::DownloadItems => self.item_cursor = self.item_cursor.saturating_sub(1),
         }
     }
@@ -305,7 +324,7 @@ impl QueueModal {
                 }
                 _ => {}
             },
-            QueueModalTab::DownloadItems => {}
+            QueueModalTab::Events | QueueModalTab::DownloadItems => {}
         }
     }
 
@@ -375,8 +394,8 @@ impl QueueModal {
             QueueModalMode::Create => ModalOutcome::Emit(Action::SaveQueue {
                 mode: QueueModalMode::Create,
                 request: QueueSaveRequest::Create(CreateQueueRequest {
-                    on_success_command: Some(self.on_success_command.clone()),
-                    on_stop_command: Some(self.on_stop_command.clone()),
+                    on_success_command: Some(self.events.on_success_command.clone()),
+                    on_stop_command: Some(self.events.on_stop_command.clone()),
                     name: self.name.clone(),
                     position: 0,
                     max_concurrent_downloads: self.max_concurrent_downloads,
@@ -396,8 +415,8 @@ impl QueueModal {
                     request: QueueSaveRequest::Update {
                         id: queue_id,
                         request: UpdateQueueRequest {
-                            on_success_command: Some(self.on_success_command.clone()),
-                            on_stop_command: Some(self.on_stop_command.clone()),
+                            on_success_command: Some(self.events.on_success_command.clone()),
+                            on_stop_command: Some(self.events.on_stop_command.clone()),
                             name: self.name.clone(),
                             position: 0,
                             max_concurrent_downloads: self.max_concurrent_downloads,
@@ -531,9 +550,7 @@ impl QueueModal {
             mode: QueueModalMode::Create,
             tab: QueueModalTab::Common,
             name: String::new(),
-            on_success_command: String::new(),
-            on_stop_command: String::new(),
-            event_results: Default::default(),
+            events: Default::default(),
             max_concurrent_downloads: 1,
             max_retries: 3,
             retry_wait_seconds: DEFAULT_RETRY_WAIT_SECONDS,
@@ -609,13 +626,16 @@ impl QueueModal {
             mode: QueueModalMode::Edit { queue_id: queue.id },
             tab: QueueModalTab::Common,
             name: queue.name.clone(),
-            on_success_command: queue
-                .settings
-                .on_success_command
-                .clone()
-                .unwrap_or_default(),
-            on_stop_command: queue.settings.on_stop_command.clone().unwrap_or_default(),
-            event_results: Box::new(queue.event_results.clone()),
+            events: Box::new(QueueModalEvents {
+                on_success_command: queue
+                    .settings
+                    .on_success_command
+                    .clone()
+                    .unwrap_or_default(),
+                on_stop_command: queue.settings.on_stop_command.clone().unwrap_or_default(),
+                results: queue.event_results.clone(),
+                cursor: 0,
+            }),
             max_concurrent_downloads: queue.settings.max_concurrent_downloads,
             max_retries: queue.settings.max_retries,
             retry_wait_seconds: queue.settings.retry_wait_seconds,
@@ -721,26 +741,18 @@ impl QueueModal {
         }
         match intent {
             I::Tab(index) => {
-                self.tab = match index {
-                    0 => QueueModalTab::Common,
-                    1 => QueueModalTab::Scheduler,
-                    _ if matches!(self.mode, QueueModalMode::Edit { .. }) => {
-                        QueueModalTab::DownloadItems
-                    }
-                    _ => self.tab,
+                if let Some(&tab) = QueueModalTab::available(self.mode).get(index) {
+                    self.tab = tab;
                 }
             }
-            I::Text => {
-                if self.text_input.editing && self.common_cursor != 0 {
-                    self.confirm_text_edit();
-                }
+            I::Text if self.tab == QueueModalTab::Common => {
                 self.common_cursor = 0;
                 if !self.text_input.editing {
                     self.start_text_edit();
                 }
             }
-            I::TextField(index) => {
-                self.common_cursor = index.min(LAST_COMMON_ROW);
+            I::TextField(index @ 0..=1) if self.tab == QueueModalTab::Events => {
+                self.events.cursor = index;
                 self.start_text_edit();
             }
             I::Field(index) => match self.tab {
@@ -753,6 +765,7 @@ impl QueueModal {
                             6
                         })
                 }
+                QueueModalTab::Events => self.events.cursor = index.min(LAST_EVENTS_ROW),
                 QueueModalTab::DownloadItems => {
                     self.item_cursor = index.min(self.items.len().saturating_sub(1))
                 }
