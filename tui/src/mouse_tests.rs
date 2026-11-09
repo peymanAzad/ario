@@ -1044,7 +1044,25 @@ fn queue_event_inputs_support_paste_discard_and_staged_save() {
     assert!(!screen.contains("On success"));
     click(&mut app, ModalIntent::Tab(2));
     assert_eq!(app.queue_modal().unwrap().tab, QueueModalTab::Events);
-    draw(&mut app, 120, 40);
+    let screen = draw(&mut app, 120, 40);
+    let sections = [
+        "Commands",
+        "On success",
+        "Latest results",
+        "Success: never run",
+        "Notes",
+    ];
+    let positions = sections.map(|section| screen.find(section).expect(section));
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    let first_input = intent(&app, ModalIntent::TextField(0));
+    send(
+        &mut app,
+        event(
+            MouseEventKind::Down(MouseButton::Left),
+            Rect::new(first_input.x, first_input.y - 1, 1, 1),
+        ),
+    );
+    assert!(!app.queue_modal().unwrap().text_input.editing);
     click(&mut app, ModalIntent::TextField(0));
     crate::keymap::paste(&mut app, "printf '成功; s q c j ◀ ▶' >> /tmp/example");
     // Switching fields commits the local draft, without sending requests.
@@ -1094,10 +1112,25 @@ fn queue_event_commands_and_read_only_results_are_visible_on_small_terminals() {
         wheel(&mut app, ScrollTarget::Events, true);
         assert_eq!(app.queue_modal().unwrap().events.cursor, 3);
         let screen = draw(&mut app, width, height);
+        assert!(screen.contains("Latest results"));
         assert!(screen.contains("Stop: never run"));
+        for _ in 0..4 {
+            wheel(&mut app, ScrollTarget::Events, true);
+        }
+        assert_eq!(app.queue_modal().unwrap().events.cursor, 7);
+        let screen = draw(&mut app, width, height);
+        assert!(screen.contains("Notes"));
+        for note in [
+            "• Commands run on the daemon host.",
+            "• Commands cannot prompt for input.",
+            "• On success, then On automatic stop.",
+            "• Manual queue stops skip both commands.",
+        ] {
+            assert!(screen.contains(note), "note clipped at {width}x{height}");
+        }
         app.queue_modal_mut().unwrap().events.cursor = 1;
     }
-    app.queue_modal_mut().unwrap().events.cursor = 5;
+    app.queue_modal_mut().unwrap().events.cursor = 7;
     draw(&mut app, 60, 16);
     // Read-only rows can be scrolled into view but Enter cannot edit them.
     let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);

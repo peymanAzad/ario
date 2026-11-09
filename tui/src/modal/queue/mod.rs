@@ -20,7 +20,7 @@ mod view;
 const TIME_STEP_MIN: i64 = 5;
 
 const LAST_COMMON_ROW: usize = 7;
-const LAST_EVENTS_ROW: usize = 5;
+const LAST_EVENTS_ROW: usize = 7;
 
 /// Help section for the queue editor modal.
 pub const HELP: &[(&str, &str)] = &[
@@ -109,7 +109,7 @@ pub struct QueueModalEvents {
     pub on_success_command: String,
     pub on_stop_command: String,
     pub results: common::queue::QueueEventResults,
-    /// 0-1 = event commands, 2-5 = read-only results and help.
+    /// 0-1 = event commands, 2-3 = latest results, 4-7 = notes.
     pub cursor: usize,
 }
 

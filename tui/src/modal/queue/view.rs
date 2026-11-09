@@ -238,28 +238,60 @@ fn draw_queue_modal_events_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal,
             label_width,
         )
     };
+    let bullet = if ctx.icons.glyph_mode() == crate::icons::GlyphMode::Ascii {
+        "-"
+    } else {
+        "•"
+    };
+    let note = |text| format!("{bullet} {text}");
     let rows = [
-        command_row(0, "On success", &modal.events.on_success_command),
-        command_row(1, "On automatic stop", &modal.events.on_stop_command),
-        format!(
-            "Success: {}",
-            event_result(modal.events.results.on_success.as_ref())
+        (None, "Commands".into()),
+        (
+            Some(0),
+            command_row(0, "On success", &modal.events.on_success_command),
         ),
-        format!(
-            "Stop: {}",
-            event_result(modal.events.results.on_stop.as_ref())
+        (
+            Some(1),
+            command_row(1, "On automatic stop", &modal.events.on_stop_command),
         ),
-        "Commands run on the daemon's machine without interactive input.".into(),
-        "Success runs both commands. Manual queue stops run neither.".into(),
+        (None, String::new()),
+        (None, "Latest results".into()),
+        (
+            Some(2),
+            format!(
+                "Success: {}",
+                event_result(modal.events.results.on_success.as_ref())
+            ),
+        ),
+        (
+            Some(3),
+            format!(
+                "Stop: {}",
+                event_result(modal.events.results.on_stop.as_ref())
+            ),
+        ),
+        (None, String::new()),
+        (None, "Notes".into()),
+        (Some(4), note("Commands run on the server machine.")),
+        (Some(5), note("Commands cannot prompt for input.")),
+        (Some(6), note("Success runs both commands in order.")),
+        (Some(7), note("Manual queue stops skip both commands.")),
     ];
-    let row_count = rows.len();
-    let items = rows.into_iter().enumerate().map(|(index, text)| {
-        let style = if index == modal.events.cursor || index < 2 {
-            crate::ui::field_style(theme, index == modal.events.cursor)
-        } else {
-            Style::default().fg(theme.text_muted)
+    let selected = rows
+        .iter()
+        .position(|(field, _)| *field == Some(modal.events.cursor))
+        .unwrap_or_default();
+    let items = rows.iter().map(|(field, text)| {
+        let style = match field {
+            None => Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+            Some(index) if *index == modal.events.cursor || *index < 4 => {
+                crate::ui::field_style(theme, *index == modal.events.cursor)
+            }
+            Some(_) => Style::default().fg(theme.text_muted),
         };
-        ListItem::new(text).style(style)
+        ListItem::new(text.as_str()).style(style)
     });
     let offset = mouse::list(
         f,
@@ -267,18 +299,16 @@ fn draw_queue_modal_events_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal,
         S::Events,
         List::new(items).block(block),
         (area, inner),
-        modal.events.cursor,
-        row_count,
+        selected,
+        rows.len(),
     );
     for y in 0..inner.height {
-        let field = offset + usize::from(y);
-        if field >= 2 {
-            break;
+        if let Some((Some(field @ 0..=1), _)) = rows.get(offset + usize::from(y)) {
+            ctx.interactions.borrow_mut().add(
+                Rect::new(inner.x, inner.y + y, inner.width, 1),
+                mouse::modal_target(I::TextField(*field)),
+            );
         }
-        ctx.interactions.borrow_mut().add(
-            Rect::new(inner.x, inner.y + y, inner.width, 1),
-            mouse::modal_target(I::TextField(field)),
-        );
     }
 }
 
