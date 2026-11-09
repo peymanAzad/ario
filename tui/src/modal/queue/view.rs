@@ -108,56 +108,200 @@ fn draw_queue_modal_tab_bar(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal, ar
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn draw_queue_modal_common_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal, area: Rect) {
-    let name_display = if modal.name_input.editing && modal.common_cursor == 0 {
-        format!("{}▏", modal.name_input.buffer)
+fn text_value(modal: &QueueModal, field: usize, value: &str, width: usize) -> String {
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
+    let editing = modal.text_input.editing && modal.common_cursor == field;
+    let value = if editing {
+        modal.text_input.buffer.as_str()
     } else {
-        modal.name.clone()
+        value
     };
+    let value = if value.is_empty() && !editing {
+        "(disabled)"
+    } else {
+        value
+    };
+    let mut displayed = if editing {
+        format!("{value}▏")
+    } else {
+        value.to_string()
+    };
+    if displayed.width() > width {
+        let mut used = 1;
+        let tail = displayed
+            .graphemes(true)
+            .rev()
+            .take_while(|g| {
+                used += g.width();
+                used <= width
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<String>();
+        displayed = format!("…{tail}");
+    }
+    displayed
+}
 
-    let mut rows = vec![
-        ("Name".to_string(), name_display),
+fn event_result(result: Option<&common::queue::QueueEventResult>) -> String {
+    use common::queue::QueueEventStatus as Status;
+    let Some(result) = result else {
+        return "never run".into();
+    };
+    let status = match result.status {
+        Status::Queued => "queued",
+        Status::Running => "running",
+        Status::Succeeded => "succeeded",
+        Status::Failed => "failed",
+        Status::Interrupted => "interrupted",
+    };
+    let timestamp = result
+        .finished_at
+        .or(result.started_at)
+        .unwrap_or(result.queued_at)
+        .with_timezone(&chrono::Local)
+        .format("%m-%d %H:%M")
+        .to_string();
+    let detail = result
+        .message
+        .as_deref()
+        .map(|message| format!(" — {message}"))
+        .unwrap_or_default();
+    format!("{status} ({timestamp}){detail}")
+}
+
+fn draw_queue_modal_common_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal, area: Rect) {
+    use ratatui::widgets::{List, ListItem};
+    let theme = ctx.theme;
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border))
+        .title(" j/k: field   h/l: adjust   Enter: edit text ");
+    let inner = block.inner(area);
+    let label_width = 28.min(usize::from(inner.width) / 2);
+    let value_width = usize::from(inner.width)
+        .saturating_sub(label_width + 1)
+        .max(1);
+    let row = |label: &str, value: String| {
+        let label: String = label.chars().take(label_width).collect();
+        format!("{label:<label_width$} {value}")
+    };
+    let mut rows: Vec<(Option<usize>, String)> = vec![
         (
-            "Max concurrent downloads".to_string(),
-            format!("◀ {} ▶", modal.max_concurrent_downloads),
+            Some(0),
+            row("Name", text_value(modal, 0, &modal.name, value_width)),
         ),
         (
-            "Max retries".to_string(),
-            format!("◀ {} ▶", modal.max_retries),
+            Some(1),
+            row(
+                "Max concurrent downloads",
+                format!("◀ {} ▶", modal.max_concurrent_downloads),
+            ),
         ),
         (
-            "Retry wait (seconds)".to_string(),
-            format!("◀ {} ▶", modal.retry_wait_seconds),
+            Some(2),
+            row("Max retries", format!("◀ {} ▶", modal.max_retries)),
+        ),
+        (
+            Some(3),
+            row(
+                "Retry wait (seconds)",
+                format!("◀ {} ▶", modal.retry_wait_seconds),
+            ),
         ),
     ];
-    // Queue common tab shows only the first four finetune fields (not retries).
-    for (label, value) in modal
+    for (index, (label, value)) in modal
         .finetune_editor
         .rows(ctx.aria2_global_options)
         .into_iter()
         .take(4)
+        .enumerate()
     {
-        rows.push((label, format!("◀ {value} ▶")));
+        rows.push((Some(index + 4), row(&label, format!("◀ {value} ▶"))));
     }
-
-    let rows = rows
-        .into_iter()
-        .map(|(label, value)| format!("{label:<28} {value}"))
+    rows.push((None, "Events".into()));
+    rows.push((
+        Some(8),
+        row(
+            "On success",
+            text_value(modal, 8, &modal.on_success_command, value_width),
+        ),
+    ));
+    rows.push((
+        Some(9),
+        row(
+            "On automatic stop",
+            text_value(modal, 9, &modal.on_stop_command, value_width),
+        ),
+    ));
+    rows.push((
+        Some(10),
+        format!(
+            "Success: {}",
+            event_result(modal.event_results.on_success.as_ref())
+        ),
+    ));
+    rows.push((
+        Some(11),
+        format!(
+            "Stop: {}",
+            event_result(modal.event_results.on_stop.as_ref())
+        ),
+    ));
+    rows.push((
+        Some(12),
+        "Commands run on the daemon's machine; no interactive input.".into(),
+    ));
+    rows.push((
+        Some(13),
+        "Success runs both commands. Manual queue stops run neither.".into(),
+    ));
+    let selected = rows
+        .iter()
+        .position(|(field, _)| *field == Some(modal.common_cursor))
+        .unwrap_or(0);
+    let items = rows
+        .iter()
+        .map(|(field, text)| {
+            let style = if *field == Some(modal.common_cursor) {
+                crate::ui::field_style(theme, true)
+            } else if field.is_none() || field.is_some_and(|field| field > 9) {
+                Style::default().fg(theme.text_muted)
+            } else {
+                crate::ui::field_style(theme, false)
+            };
+            ListItem::new(text.clone()).style(style)
+        })
         .collect::<Vec<_>>();
-    let (inner, offset) = mouse::fields(
+    let offset = mouse::list(
         f,
-        ctx,
+        ctx.interactions,
         S::Common,
-        area,
-        modal.common_cursor,
-        &rows,
-        " j/k: field   h/l: adjust   Enter: edit name ",
+        List::new(items).block(block),
+        (area, inner),
+        selected,
+        rows.len(),
     );
-    if offset == 0 && inner.height > 0 {
-        ctx.interactions.borrow_mut().add(
-            Rect::new(inner.x, inner.y, inner.width, 1),
-            mouse::modal_target(I::Text),
-        );
+    for y in 0..inner.height {
+        let Some((Some(field), text)) = rows.get(offset + usize::from(y)) else {
+            continue;
+        };
+        let row_area = Rect::new(inner.x, inner.y + y, inner.width, 1);
+        if matches!(field, 0 | 8 | 9) {
+            // Command contents are text: arrows in them must never become adjustment targets.
+            let intent = if *field == 0 {
+                I::Text
+            } else {
+                I::TextField(*field)
+            };
+            ctx.interactions
+                .borrow_mut()
+                .add(row_area, mouse::modal_target(intent));
+        } else if *field <= 7 {
+            mouse::field(ctx.interactions, row_area, *field, text);
+        }
     }
 }
 

@@ -16,6 +16,8 @@ async fn client_contract_real_routes_decode_success_errors_and_confirmation() {
         assert!(tui_api::health(&base).unwrap().aria2_reachable);
         assert_eq!(tui_api::list_queues(&base).unwrap().len(), 1);
         let req = CreateQueueRequest {
+            on_success_command: None,
+            on_stop_command: None,
             name: "client".into(),
             position: 1,
             max_concurrent_downloads: 1,

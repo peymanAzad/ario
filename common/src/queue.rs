@@ -15,6 +15,10 @@ fn default_retry_wait_seconds() -> u32 {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct QueueSettings {
+    #[serde(default)]
+    pub on_success_command: Option<String>,
+    #[serde(default)]
+    pub on_stop_command: Option<String>,
     /// aria2 `-j` / `--max-concurrent-downloads`
     pub max_concurrent_downloads: u32,
     pub max_retries: u32,
@@ -25,6 +29,8 @@ pub struct QueueSettings {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Queue {
+    #[serde(default)]
+    pub event_results: QueueEventResults,
     /// Scheduled boundary for the current manual or automatic run.
     #[serde(default)]
     pub scheduled_stop_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -39,6 +45,10 @@ pub struct Queue {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct CreateQueueRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_success_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_stop_command: Option<String>,
     pub name: String,
     pub position: i32,
     pub max_concurrent_downloads: u32,
@@ -53,6 +63,10 @@ pub struct CreateQueueRequest {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct UpdateQueueRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_success_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_stop_command: Option<String>,
     pub name: String,
     pub position: i32,
     pub max_concurrent_downloads: u32,
@@ -78,6 +92,9 @@ mod tests {
             "created_at":"2026-09-26T00:00:00Z","status":"Paused"
         }"#).unwrap();
         assert!(queue.scheduled_stop_at.is_none());
+        assert_eq!(queue.event_results, super::QueueEventResults::default());
+        assert!(queue.settings.on_success_command.is_none());
+        assert!(queue.settings.on_stop_command.is_none());
     }
 
     #[test]
@@ -89,4 +106,33 @@ mod tests {
 
         assert_eq!(settings.retry_wait_seconds, DEFAULT_RETRY_WAIT_SECONDS);
     }
+}
+
+/// Latest command attempt for each event; execution history remains in the daemon database.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct QueueEventResults {
+    pub on_success: Option<QueueEventResult>,
+    pub on_stop: Option<QueueEventResult>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueEventStatus {
+    Queued,
+    Running,
+    Succeeded,
+    Failed,
+    Interrupted,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct QueueEventResult {
+    pub id: i64,
+    pub run_id: i64,
+    pub status: QueueEventStatus,
+    pub queued_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub exit_code: Option<i32>,
+    pub message: Option<String>,
 }

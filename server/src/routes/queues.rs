@@ -75,6 +75,10 @@ async fn get_queue(
     Ok(Json(queue))
 }
 
+fn normalize_command(command: Option<String>) -> Option<String> {
+    command.filter(|value| !value.trim().is_empty())
+}
+
 async fn create_queue(
     State(state): State<AppState>,
     Json(req): Json<CreateQueueRequest>,
@@ -83,11 +87,14 @@ async fn create_queue(
     let _control = state.control.lock().await;
     validate_schedule(req.scheduler_enabled, &req.recurrence, state.now())?;
     let queue = Queue {
+        event_results: Default::default(),
         scheduled_stop_at: None,
         id: 0, // placeholder — overwritten by the id sqlite assigns on insert
         name: req.name,
         position: req.position,
         settings: QueueSettings {
+            on_success_command: normalize_command(req.on_success_command),
+            on_stop_command: normalize_command(req.on_stop_command),
             max_concurrent_downloads: req.max_concurrent_downloads,
             max_retries: req.max_retries,
             retry_wait_seconds: req.retry_wait_seconds,
@@ -125,11 +132,20 @@ async fn update_queue(
 
     validate_schedule(req.scheduler_enabled, &req.recurrence, state.now())?;
     let queue = Queue {
+        event_results: Default::default(),
         scheduled_stop_at: existing.scheduled_stop_at,
         id,
         name: req.name,
         position: req.position,
         settings: QueueSettings {
+            on_success_command: req.on_success_command.map_or_else(
+                || existing.settings.on_success_command.clone(),
+                |value| normalize_command(Some(value)),
+            ),
+            on_stop_command: req.on_stop_command.map_or_else(
+                || existing.settings.on_stop_command.clone(),
+                |value| normalize_command(Some(value)),
+            ),
             max_concurrent_downloads: req.max_concurrent_downloads,
             max_retries: req.max_retries,
             retry_wait_seconds: req.retry_wait_seconds,
@@ -273,6 +289,7 @@ async fn pause_queue(
     state
         .db
         .update_queue_status(id, common::enums::QueueStatus::Paused)?;
+    state.db.cancel_event_run(id)?;
     pause_downloads(&state, &queue, PauseReason::User).await?;
     if state.db.count_active_downloads_in_queue(id)? == 0 {
         state.db.set_scheduled_stop(id, None)?;
@@ -309,6 +326,8 @@ mod control_tests {
 
     fn request(queue: &Queue) -> UpdateQueueRequest {
         UpdateQueueRequest {
+            on_success_command: None,
+            on_stop_command: None,
             name: queue.name.clone(),
             position: queue.position,
             max_concurrent_downloads: queue.settings.max_concurrent_downloads,
@@ -601,11 +620,14 @@ mod delete_tests {
         state
             .db
             .insert_queue(&Queue {
+                event_results: Default::default(),
                 scheduled_stop_at: None,
                 id: 0,
                 name: name.into(),
                 position: 1,
                 settings: QueueSettings {
+                    on_success_command: None,
+                    on_stop_command: None,
                     max_concurrent_downloads: 1,
                     max_retries: 3,
                     retry_wait_seconds: 5,

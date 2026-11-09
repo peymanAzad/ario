@@ -19,6 +19,8 @@ mod view;
 
 const TIME_STEP_MIN: i64 = 5;
 
+const LAST_COMMON_ROW: usize = 13;
+
 /// Help section for the queue editor modal.
 pub const HELP: &[(&str, &str)] = &[
     ("Tab / Shift+Tab", "Switch to next / previous tab"),
@@ -26,7 +28,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("k / Up", "Select previous field or download item"),
     ("h / Left", "Decrease value or select previous weekday"),
     ("l / Right", "Increase value or select next weekday"),
-    ("Enter", "Edit queue name"),
+    ("Enter", "Edit highlighted text field"),
     (
         "Space",
         "Toggle highlighted weekday (Scheduler weekly days row)",
@@ -39,9 +41,9 @@ pub const HELP: &[(&str, &str)] = &[
     ("c / Esc", "Cancel queue editing"),
 ];
 
-/// Help section for queue-name text editing (nested in the queue editor).
+/// Help section for queue text editing (nested in the queue editor).
 pub const HELP_TEXT_EDITING: &[(&str, &str)] = &[
-    ("Characters", "Type queue name"),
+    ("Characters", "Type text"),
     ("Backspace", "Delete last character"),
     ("Enter", "Accept text edit"),
     ("Esc", "Discard text edit and return to queue editor"),
@@ -110,13 +112,16 @@ pub struct QueueModal {
 
     // ---- Common tab ----
     pub name: String,
+    pub on_success_command: String,
+    pub on_stop_command: String,
+    pub event_results: Box<common::queue::QueueEventResults>,
     pub max_concurrent_downloads: u32,
     pub max_retries: u32,
     pub retry_wait_seconds: u32,
     pub finetune_editor: FineTuneEditor,
     /// 0 = name, 1 = max_concurrent_downloads, 2 = max_retries,
     /// 3 = retry_wait_seconds, 4-7 = finetune fields 0..=3
-    /// (connections / max connections / alloc / stream selector).
+    /// (connections / max connections / alloc / stream selector); 8-9 = event commands; 10-13 = read-only results/help.
     pub common_cursor: usize,
 
     // ---- Scheduler tab ----
@@ -144,8 +149,8 @@ pub struct QueueModal {
     /// 4: end date, 5: end time, 6: run_missed_on_startup].
     pub scheduler_cursor: usize,
 
-    // ---- Name text-editing state ----
-    pub name_input: TextInput,
+    // ---- Shared text-editing state (name and event commands) ----
+    pub text_input: TextInput,
 
     // ---- Download Items tab (Edit mode only) ----
     /// Local snapshot fetched when the modal opened — reordered in-memory,
@@ -177,29 +182,40 @@ impl QueueModal {
     }
 
     fn start_text_edit(&mut self) {
-        if self.tab == QueueModalTab::Common && self.common_cursor == 0 {
-            self.name_input.start(self.name.clone());
+        if self.tab != QueueModalTab::Common {
+            return;
         }
+        let text = match self.common_cursor {
+            0 => &self.name,
+            8 => &self.on_success_command,
+            9 => &self.on_stop_command,
+            _ => return,
+        };
+        self.text_input.start(text.clone());
     }
 
     fn confirm_text_edit(&mut self) {
-        if !self.name_input.editing {
+        if !self.text_input.editing {
             return;
         }
-        if self.tab == QueueModalTab::Common && self.common_cursor == 0 {
-            self.name = self.name_input.take();
-        } else {
-            self.name_input.cancel();
+        let value = self.text_input.take();
+        match self.common_cursor {
+            0 => self.name = value,
+            8 => self.on_success_command = value,
+            9 => self.on_stop_command = value,
+            _ => {}
         }
     }
 
     fn cancel_text_edit(&mut self) {
-        self.name_input.cancel();
+        self.text_input.cancel();
     }
 
     fn move_down(&mut self) {
         match self.tab {
-            QueueModalTab::Common => self.common_cursor = (self.common_cursor + 1).min(7),
+            QueueModalTab::Common => {
+                self.common_cursor = (self.common_cursor + 1).min(LAST_COMMON_ROW)
+            }
             QueueModalTab::Scheduler => {
                 let max = match self.recurrence_kind {
                     RecurrenceKind::Weekly => 5,
@@ -359,6 +375,8 @@ impl QueueModal {
             QueueModalMode::Create => ModalOutcome::Emit(Action::SaveQueue {
                 mode: QueueModalMode::Create,
                 request: QueueSaveRequest::Create(CreateQueueRequest {
+                    on_success_command: Some(self.on_success_command.clone()),
+                    on_stop_command: Some(self.on_stop_command.clone()),
                     name: self.name.clone(),
                     position: 0,
                     max_concurrent_downloads: self.max_concurrent_downloads,
@@ -378,6 +396,8 @@ impl QueueModal {
                     request: QueueSaveRequest::Update {
                         id: queue_id,
                         request: UpdateQueueRequest {
+                            on_success_command: Some(self.on_success_command.clone()),
+                            on_stop_command: Some(self.on_stop_command.clone()),
                             name: self.name.clone(),
                             position: 0,
                             max_concurrent_downloads: self.max_concurrent_downloads,
@@ -398,7 +418,7 @@ impl QueueModal {
 
 impl Component for QueueModal {
     fn handle_key(&mut self, key: KeyEvent, _ctx: &Ctx<'_>) -> ModalOutcome {
-        if self.name_input.editing && matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
+        if self.text_input.editing && matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
             self.confirm_text_edit();
             if key.code == KeyCode::Tab {
                 self.next_tab();
@@ -407,17 +427,17 @@ impl Component for QueueModal {
             }
             return ModalOutcome::Continue;
         }
-        if self.name_input.editing {
+        if self.text_input.editing {
             match key.code {
                 KeyCode::Enter => self.confirm_text_edit(),
                 KeyCode::Esc => self.cancel_text_edit(),
-                KeyCode::Backspace => self.name_input.backspace(),
+                KeyCode::Backspace => self.text_input.backspace(),
                 KeyCode::Char(c)
                     if !key
                         .modifiers
                         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
                 {
-                    self.name_input.input(c)
+                    self.text_input.input(c)
                 }
                 _ => {}
             }
@@ -474,9 +494,9 @@ impl Component for QueueModal {
     }
 
     fn handle_paste(&mut self, text: &str) {
-        if self.name_input.editing {
+        if self.text_input.editing {
             for character in text.chars().filter(|character| !character.is_control()) {
-                self.name_input.input(character);
+                self.text_input.input(character);
             }
         }
     }
@@ -486,7 +506,7 @@ impl Component for QueueModal {
     }
 
     fn hints(&self) -> Vec<(&'static str, &'static str)> {
-        if self.name_input.editing {
+        if self.text_input.editing {
             vec![
                 ("Enter", "Accept"),
                 ("Esc", "Discard"),
@@ -511,6 +531,9 @@ impl QueueModal {
             mode: QueueModalMode::Create,
             tab: QueueModalTab::Common,
             name: String::new(),
+            on_success_command: String::new(),
+            on_stop_command: String::new(),
+            event_results: Default::default(),
             max_concurrent_downloads: 1,
             max_retries: 3,
             retry_wait_seconds: DEFAULT_RETRY_WAIT_SECONDS,
@@ -528,7 +551,7 @@ impl QueueModal {
             run_missed_on_startup: false,
             day_cursor: 0,
             scheduler_cursor: 0,
-            name_input: TextInput::default(),
+            text_input: TextInput::default(),
             items: Vec::new(),
             item_cursor: 0,
             error: None,
@@ -586,6 +609,13 @@ impl QueueModal {
             mode: QueueModalMode::Edit { queue_id: queue.id },
             tab: QueueModalTab::Common,
             name: queue.name.clone(),
+            on_success_command: queue
+                .settings
+                .on_success_command
+                .clone()
+                .unwrap_or_default(),
+            on_stop_command: queue.settings.on_stop_command.clone().unwrap_or_default(),
+            event_results: Box::new(queue.event_results.clone()),
             max_concurrent_downloads: queue.settings.max_concurrent_downloads,
             max_retries: queue.settings.max_retries,
             retry_wait_seconds: queue.settings.retry_wait_seconds,
@@ -603,7 +633,7 @@ impl QueueModal {
             run_missed_on_startup: queue.scheduler.run_missed_on_startup,
             day_cursor: 0,
             scheduler_cursor: 0,
-            name_input: TextInput::default(),
+            text_input: TextInput::default(),
             items: Vec::new(),
             item_cursor: 0,
             error: None,
@@ -685,7 +715,7 @@ impl QueueModal {
         if !matches!(
             intent,
             I::Text | I::Command(C::Accept | C::Discard | C::Erase | C::Cancel)
-        ) && self.name_input.editing
+        ) && self.text_input.editing
         {
             self.confirm_text_edit();
         }
@@ -701,13 +731,20 @@ impl QueueModal {
                 }
             }
             I::Text => {
+                if self.text_input.editing && self.common_cursor != 0 {
+                    self.confirm_text_edit();
+                }
                 self.common_cursor = 0;
-                if !self.name_input.editing {
+                if !self.text_input.editing {
                     self.start_text_edit();
                 }
             }
+            I::TextField(index) => {
+                self.common_cursor = index.min(LAST_COMMON_ROW);
+                self.start_text_edit();
+            }
             I::Field(index) => match self.tab {
-                QueueModalTab::Common => self.common_cursor = index.min(7),
+                QueueModalTab::Common => self.common_cursor = index.min(LAST_COMMON_ROW),
                 QueueModalTab::Scheduler => {
                     self.scheduler_cursor =
                         index.min(if self.recurrence_kind == RecurrenceKind::Weekly {
@@ -751,7 +788,7 @@ impl QueueModal {
                 C::ItemDown => self.move_item_down(),
                 C::Accept => self.confirm_text_edit(),
                 C::Discard => self.cancel_text_edit(),
-                C::Erase => self.name_input.backspace(),
+                C::Erase => self.text_input.backspace(),
                 _ => {}
             },
             _ => {}

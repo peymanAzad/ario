@@ -17,6 +17,7 @@ mod error;
 mod live_status;
 mod poller;
 mod proxy_probe;
+mod queue_events;
 mod routes;
 mod routing;
 mod scheduler;
@@ -75,6 +76,9 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             shutdown_signal(shutdown_notify).await;
+            if let Err(error) = shutdown_state.stop_event_commands().await {
+                eprintln!("queue events: {error}");
+            }
             println!("shutting down: stopping aria2c...");
             shutdown_process.shutdown(&shutdown_state.aria2).await;
             if let Err(e) = supervisor.await {

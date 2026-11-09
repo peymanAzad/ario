@@ -45,11 +45,14 @@ mod tests {
 
     fn queue(name: &str, id: i64) -> Queue {
         Queue {
+            event_results: Default::default(),
             scheduled_stop_at: None,
             id,
             name: name.into(),
             position: id as i32,
             settings: QueueSettings {
+                on_success_command: None,
+                on_stop_command: None,
                 max_concurrent_downloads: 1,
                 max_retries: 3,
                 retry_wait_seconds: 5,

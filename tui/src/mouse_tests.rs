@@ -446,7 +446,7 @@ fn queue_name_draft_survives_tab_and_field_changes_and_save_uses_it() {
     click(&mut app, ModalIntent::Tab(1));
     if let Some(Modal::Queue(m)) = &app.modal {
         assert_eq!(m.name, "My queue 界");
-        assert!(!m.name_input.editing);
+        assert!(!m.text_input.editing);
     }
     draw(&mut app, 120, 40);
     click(&mut app, ModalIntent::Tab(0));
@@ -1028,4 +1028,79 @@ fn torrent_start_and_save_use_the_draft_even_while_path_is_focused() {
         assert!(app.modal.is_none());
     }
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn queue_event_inputs_support_paste_discard_and_staged_save() {
+    let mut app = app();
+    let mut modal = QueueModal::create();
+    modal.name = "Hooks".into();
+    modal.common_cursor = 8;
+    app.modal = Some(Modal::Queue(modal));
+    let screen = draw(&mut app, 120, 40);
+    assert!(screen.contains("Events"));
+    click(&mut app, ModalIntent::TextField(8));
+    crate::keymap::paste(&mut app, "printf '成功; s q c j ◀ ▶' >> /tmp/example");
+    // Switching fields commits the local draft, without sending requests.
+    assert!(click(&mut app, ModalIntent::TextField(9)).is_empty());
+    crate::keymap::paste(&mut app, "exit 9");
+    if let Some(message) =
+        crate::keymap::route_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+    {
+        assert!(update::update(&mut app, message).is_empty());
+    }
+    assert!(app.queue_modal().unwrap().on_stop_command.is_empty());
+    draw(&mut app, 120, 40);
+    click(&mut app, ModalIntent::TextField(9));
+    crate::keymap::paste(&mut app, "printf stop");
+    click(&mut app, ModalIntent::Text);
+    assert_eq!(app.queue_modal().unwrap().on_stop_command, "printf stop");
+    assert_eq!(app.queue_modal().unwrap().text_input.buffer, "Hooks");
+    let effects = click(&mut app, ModalIntent::Command(Command::Save));
+    assert!(
+        matches!(effects.as_slice(), [Effect::Api(ApiRequest::CreateQueue(request))]
+        if request.on_success_command.as_deref() == Some("printf '成功; s q c j ◀ ▶' >> /tmp/example")
+        && request.on_stop_command.as_deref() == Some("printf stop"))
+    );
+    assert!(app.modal.is_none());
+}
+
+#[test]
+fn queue_event_commands_and_read_only_results_are_visible_on_small_terminals() {
+    let mut app = app();
+    let mut modal = QueueModal::create();
+    modal.common_cursor = 9;
+    modal.on_stop_command = format!("{}VISIBLE_END", "long-command-界".repeat(40));
+    app.modal = Some(Modal::Queue(modal));
+    for (width, height) in [(60, 16), (80, 20), (120, 40)] {
+        let screen = draw(&mut app, width, height);
+        assert!(
+            screen.contains("VISIBLE_END"),
+            "command tail lost at {width}x{height}"
+        );
+        let hits = app.interactions.borrow();
+        assert!(!hits.hits.iter().any(|hit| matches!(
+            hit.target,
+            Target::Modal(ModalIntent::Adjust {
+                field: Some(8 | 9),
+                ..
+            })
+        )));
+        drop(hits);
+        app.queue_modal_mut().unwrap().common_cursor = 11;
+        let screen = draw(&mut app, width, height);
+        assert!(screen.contains("Stop: never run"));
+        app.queue_modal_mut().unwrap().common_cursor = 9;
+    }
+    app.queue_modal_mut().unwrap().common_cursor = 13;
+    draw(&mut app, 60, 16);
+    // Read-only rows can be scrolled into view but Enter cannot edit them.
+    let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+    if let Some(message) = crate::keymap::route_key(&mut app, key) {
+        update::update(&mut app, message);
+    }
+    assert!(!app.queue_modal().unwrap().text_input.editing);
+    for (width, height) in [(0, 0), (1, 1), (15, 5)] {
+        draw(&mut app, width, height);
+    }
 }

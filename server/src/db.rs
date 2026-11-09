@@ -21,6 +21,8 @@ pub struct DownloadArtifact {
     pub kind: DownloadArtifactKind,
 }
 
+mod events;
+
 const SCHEMA: &str = include_str!("../schema.sql");
 
 pub struct Database {
@@ -36,6 +38,7 @@ impl Database {
         )?;
         conn.execute_batch(SCHEMA)?;
         run_migrations(&conn)?;
+        events::interrupt_unfinished(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -49,8 +52,8 @@ impl Database {
         conn.execute(
             "INSERT INTO queues (name, position, max_concurrent_downloads, max_retries, retry_wait_seconds,
                                   default_finetune, scheduler_enabled, scheduler_recurrence,
-                                  scheduler_run_missed, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                                  scheduler_run_missed, created_at, on_success_command, on_stop_command)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 q.name,
                 q.position,
@@ -62,6 +65,8 @@ impl Database {
                 recurrence_json,
                 q.scheduler.run_missed_on_startup as i64,
                 q.created_at,
+                q.settings.on_success_command,
+                q.settings.on_stop_command,
             ],
         )?;
         Ok(conn.last_insert_rowid())
@@ -69,19 +74,28 @@ impl Database {
 
     pub fn get_queue(&self, id: i64) -> SqlResult<Option<Queue>> {
         let conn = self.conn.lock().unwrap();
-        conn.query_row(
-            "SELECT * FROM queues WHERE id = ?1",
-            params![id],
-            row_to_queue,
-        )
-        .optional()
+        let mut queue = conn
+            .query_row(
+                "SELECT * FROM queues WHERE id = ?1",
+                params![id],
+                row_to_queue,
+            )
+            .optional()?;
+        if let Some(queue) = &mut queue {
+            queue.event_results = events::latest_results(&conn, id)?;
+        }
+        Ok(queue)
     }
 
     pub fn list_queues(&self) -> SqlResult<Vec<Queue>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT * FROM queues ORDER BY position ASC")?;
         let rows = stmt.query_map([], row_to_queue)?;
-        rows.collect()
+        let mut queues = rows.collect::<SqlResult<Vec<_>>>()?;
+        for queue in &mut queues {
+            queue.event_results = events::latest_results(&conn, queue.id)?;
+        }
+        Ok(queues)
     }
 
     pub fn update_queue(&self, q: &Queue) -> SqlResult<()> {
@@ -93,7 +107,7 @@ impl Database {
             "UPDATE queues SET name = ?1, position = ?2, max_concurrent_downloads = ?3,
                                 max_retries = ?4, retry_wait_seconds = ?5, default_finetune = ?6,
                                 scheduler_enabled = ?7, scheduler_recurrence = ?8,
-                                scheduler_run_missed = ?9
+                                scheduler_run_missed = ?9, on_success_command = ?11, on_stop_command = ?12
              WHERE id = ?10",
             params![
                 q.name,
@@ -106,6 +120,8 @@ impl Database {
                 recurrence_json,
                 q.scheduler.run_missed_on_startup as i64,
                 q.id,
+                q.settings.on_success_command,
+                q.settings.on_stop_command,
             ],
         )?;
         Ok(())
@@ -577,6 +593,7 @@ fn insert_download_on(conn: &Connection, d: &Download) -> SqlResult<i64> {
 }
 
 fn run_migrations(conn: &Connection) -> SqlResult<()> {
+    events::migrate(conn)?;
     let has_started_occurrence: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('queues') WHERE name = 'scheduler_active_occurrence')",
         [], |row| row.get(0),
@@ -803,11 +820,14 @@ fn row_to_queue(row: &Row) -> SqlResult<Queue> {
     let status: String = row.get("status")?;
 
     Ok(Queue {
+        event_results: Default::default(),
         scheduled_stop_at: row.get("scheduled_stop_at")?,
         id: row.get("id")?,
         name: row.get("name")?,
         position: row.get("position")?,
         settings: QueueSettings {
+            on_success_command: row.get("on_success_command")?,
+            on_stop_command: row.get("on_stop_command")?,
             max_concurrent_downloads: row.get("max_concurrent_downloads")?,
             max_retries: row.get("max_retries")?,
             retry_wait_seconds: row.get("retry_wait_seconds")?,

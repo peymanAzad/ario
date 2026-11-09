@@ -63,6 +63,9 @@ tower-http = { version = "0.7", features = ["cors"] }
 unicode-segmentation = "1.13.3"
 unicode-width = "0.2.2"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }

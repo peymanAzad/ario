@@ -62,6 +62,7 @@ pub enum ModalIntent {
     ToggleUrl(usize),
     Day(usize),
     Text,
+    TextField(usize),
     Queue,
     Navigate(bool),
     HelpScroll(bool),
@@ -401,7 +402,7 @@ pub fn fields(
 /// while navigation/adjustment pairs get separate visible controls.
 pub fn modal_hint(key: &str, modal: &Modal) -> Option<ModalIntent> {
     let editing = match modal {
-        Modal::Queue(m) => m.name_input.editing,
+        Modal::Queue(m) => m.text_input.editing,
         Modal::TorrentFile(m) => m.path_input.editing,
         Modal::Help(m) => m.editing_search,
         _ => false,

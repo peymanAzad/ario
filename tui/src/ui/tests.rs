@@ -23,11 +23,14 @@ fn test_app(mode: GlyphMode) -> App {
 
 fn queue(name: &str, status: QueueStatus, scheduled: bool) -> Queue {
     Queue {
+        event_results: Default::default(),
         scheduled_stop_at: None,
         id: 1,
         name: name.into(),
         position: 0,
         settings: QueueSettings {
+            on_success_command: None,
+            on_stop_command: None,
             max_concurrent_downloads: 1,
             max_retries: 3,
             retry_wait_seconds: 5,

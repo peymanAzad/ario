@@ -116,10 +116,10 @@ fn existing_modals_block_help_and_text_editing_keeps_question_mark() {
     let _ = update(&mut app, Msg::Action(Action::OpenHelp));
     assert!(app.help_modal().is_none());
     press(&mut app, KeyCode::Enter);
-    let before = app.queue_modal().unwrap().name_input.buffer.clone();
+    let before = app.queue_modal().unwrap().text_input.buffer.clone();
     press(&mut app, KeyCode::Char('?'));
     assert_eq!(
-        app.queue_modal().unwrap().name_input.buffer,
+        app.queue_modal().unwrap().text_input.buffer,
         format!("{before}?")
     );
     assert!(app.help_modal().is_none());
@@ -203,7 +203,7 @@ fn one_time_schedule_uses_adjustable_date_and_time_fields() {
     );
 
     press(&mut app, KeyCode::Enter);
-    assert!(!app.queue_modal().unwrap().name_input.editing);
+    assert!(!app.queue_modal().unwrap().text_input.editing);
 }
 
 #[test]
@@ -365,4 +365,32 @@ fn confirmation_modal_consumes_cancel_before_global_quit() {
     }
     assert!(app.confirmation_modal().is_none());
     assert!(!app.should_quit);
+}
+
+#[test]
+fn event_command_keyboard_editing_accepts_shortcuts_as_text_and_escape_discards() {
+    let mut app = test_app();
+    let mut modal = crate::modal::QueueModal::create();
+    modal.common_cursor = 8;
+    app.modal = Some(Modal::Queue(modal));
+    press(&mut app, KeyCode::Enter);
+    for c in "echo sqcj界".chars() {
+        press(&mut app, KeyCode::Char(c));
+    }
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.queue_modal().unwrap().on_success_command, "echo sqcj界");
+    press(&mut app, KeyCode::Down);
+    assert_eq!(app.queue_modal().unwrap().common_cursor, 9);
+    press(&mut app, KeyCode::Enter);
+    crate::keymap::paste(&mut app, "exit 7");
+    press(&mut app, KeyCode::Esc);
+    assert!(app.queue_modal().unwrap().on_stop_command.is_empty());
+    press(&mut app, KeyCode::Enter);
+    crate::keymap::paste(&mut app, "echo stop");
+    press(&mut app, KeyCode::Tab);
+    let modal = app.queue_modal().unwrap();
+    assert_eq!(modal.on_stop_command, "echo stop");
+    assert_eq!(modal.tab, QueueModalTab::Scheduler);
+    press(&mut app, KeyCode::Esc);
+    assert!(app.queue_modal().is_none());
 }

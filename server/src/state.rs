@@ -9,6 +9,9 @@ use tokio::sync::{Notify, RwLock, RwLockReadGuard, watch};
 
 #[derive(Clone)]
 pub struct AppState {
+    pub event_directory: Option<std::path::PathBuf>,
+    pub event_workers: crate::queue_events::EventWorkers,
+    pub event_cancel: watch::Sender<bool>,
     pub db: Arc<Database>,
     pub aria2: Arc<Aria2Client>,
     pub config: Arc<ServerConfig>,
@@ -28,6 +31,9 @@ pub struct AppState {
 impl AppState {
     pub fn new(db: Database, aria2: Aria2Client, config: ServerConfig, tui_managed: bool) -> Self {
         Self {
+            event_directory: crate::config::config_dir().ok(),
+            event_workers: Default::default(),
+            event_cancel: watch::channel(false).0,
             db: Arc::new(db),
             aria2: Arc::new(aria2),
             config: Arc::new(config),
@@ -72,6 +78,21 @@ impl AppState {
         Ok(guard)
     }
 
+    /// Stop new queue mutations before interrupting hooks on signal-driven shutdown.
+    pub async fn stop_event_commands(&self) -> Result<(), crate::error::AppError> {
+        {
+            let _guard = self.activity_gate.write().await;
+            self.stopping.store(true, Ordering::SeqCst);
+            self.event_cancel.send_replace(true);
+            self.db.interrupt_events()?;
+        }
+        // Workers kill/reap their shell process trees outside the activity gate.
+        while !self.event_workers.lock().unwrap().is_empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        Ok(())
+    }
+
     pub async fn request_idle_shutdown(
         &self,
     ) -> Result<common::lifecycle::ShutdownIfIdleResponse, crate::error::AppError> {
@@ -79,9 +100,10 @@ impl AppState {
 
         let _guard = self.activity_gate.write().await;
         let (active_downloads, scheduled_queues) = self.db.lifecycle_blocker_counts()?;
+        let event_commands = self.db.event_command_count()?;
         let outcome = if !self.tui_managed {
             ShutdownOutcome::NotManaged
-        } else if active_downloads > 0 || scheduled_queues > 0 {
+        } else if active_downloads > 0 || scheduled_queues > 0 || event_commands > 0 {
             ShutdownOutcome::KeptRunning
         } else {
             self.stopping.store(true, Ordering::SeqCst);
@@ -90,6 +112,7 @@ impl AppState {
         };
 
         Ok(ShutdownIfIdleResponse {
+            event_commands,
             outcome,
             active_downloads,
             scheduled_queues,
@@ -103,15 +126,19 @@ impl AppState {
 
         let _guard = self.activity_gate.write().await;
         let (active_downloads, scheduled_queues) = self.db.lifecycle_blocker_counts()?;
+        let event_commands = self.db.event_command_count()?;
         let outcome = if !self.tui_managed {
             ShutdownOutcome::NotManaged
         } else {
             self.stopping.store(true, Ordering::SeqCst);
+            self.event_cancel.send_replace(true);
+            self.db.interrupt_events()?;
             self.shutdown_notify.notify_one();
             ShutdownOutcome::ShuttingDown
         };
 
         Ok(ShutdownIfIdleResponse {
+            event_commands,
             outcome,
             active_downloads,
             scheduled_queues,
