@@ -23,9 +23,10 @@ Ario combines aria2 with a managed daemon, scheduled queues, and batch clipboard
 - 🌙 **No extra window babysitting your downloads** — Close the TUI and get on with your work. The separate daemon keeps your downloads and scheduled queues running in the background.
 - 🗓️ **Download on your schedule** — Set one-time, daily, or weekly download windows, including overnight schedules with automatic start and stop times.
 - 🧲 **HTTP downloads and BitTorrent** — Manage HTTP/HTTPS downloads, magnet links, and `.torrent` files in one interface.
+- 📋 **Batch imports from your clipboard** — Copy text containing download links and press `v`. Ario automatically finds HTTP/HTTPS URLs and magnet links, then lets you select items, choose a queue, and start downloading immediately or save them for later.
+- ⚡ **Queue event commands** — Run scripts when every download succeeds or when a queue runs out of work or reaches its scheduled stop.
 - 🎛️ **Your queues, your settings** — Prioritize downloads within each queue and control concurrency, connections, retries, file allocation, and piece selection. Set queue defaults and override them for individual downloads.
 - 🦀 **Built for the terminal** — Written in Rust with Ratatui, with keyboard shortcuts and mouse support.
-- 📋 **Batch imports from your clipboard** — Copy text containing download links and press `v`. Ario automatically finds HTTP/HTTPS URLs and magnet links, then lets you select items, choose a queue, and start downloading immediately or save them for later.
 - 🗂️ **Automatic file organization** — Automatically categorize downloads by file type and save them to configurable folders.
 - 🌐 **HTTP proxy support** — Configure aria2’s HTTP proxy in the daemon and monitor its reachability and ability to transfer data from the TUI.
 - 🎨 **Make it yours** — Choose Catppuccin themes or custom colors, and select Nerd Font, Unicode, or ASCII icons. Configure the server address, automatic daemon startup, and daemon behavior when you exit.
@@ -303,11 +304,82 @@ stop_managed_daemon = "when_idle"
 
 Restart the TUI after changing `tui.toml`. Changes to `server.toml` require restarting the daemon; reopening the TUI alone may reconnect to the existing daemon.
 
+### Queue event commands
+
+In the queue create/edit modal, open the **Events** tab and enter either or both
+commands. Leave a command blank to disable it. **Latest results** shows the
+most recent run of each command and refreshes while the modal is open.
+
+| Event                 | Trigger                                                                                                                                                  |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **On success**        | Every item in a nonempty queue is Completed. Failed, paused, or retained Removed items prevent success.                                                  |
+| **On automatic stop** | No active or automatically eligible downloads remain, or all required pauses at the scheduled stop succeed. Failed and manually paused items may remain. |
+
+Successful completion runs **On success**, then **On automatic stop**, even if
+the success command fails. Manually stopping the **queue** runs neither command;
+individually pausing its last active download can trigger automatic exhaustion.
+Aria2 retries still count as work. Empty or already idle queues do not fire events.
+
+Each event runs at most once per run. Work starts a run through queue Start,
+scheduled starts, Start immediately, or individual starts/retries. Additional work
+joins an ongoing run; work started after it ends begins another run. An exhausted
+queue keeps its existing behavior of accepting new work automatically. Exhaustion
+before a scheduled deadline does not trigger the stop command again at that
+deadline unless new work has begun. If completion coincides with the deadline,
+successful completion takes precedence.
+
+Commands execute **on the daemon's machine**, as the daemon user, with the Ario
+configuration directory as their working directory. Linux/macOS use `/bin/sh -c`;
+Windows uses `cmd.exe /D /S /C`. Use the corresponding shell's quoting and script
+syntax. Commands inherit the daemon's environment and receive:
+
+| Variable            | Value                                                |
+| ------------------- | ---------------------------------------------------- |
+| `ARIO_QUEUE_ID`     | Queue ID                                             |
+| `ARIO_QUEUE_NAME`   | Queue name, passed literally through the environment |
+| `ARIO_QUEUE_RUN_ID` | Run number within the queue                          |
+| `ARIO_EVENT`        | `success` or `stop`                                  |
+| `ARIO_STOP_REASON`  | `completed`, `exhausted`, or `scheduled_stop`        |
+
+For example, a Linux/macOS command can invoke a script with the queue name:
+
+```sh
+/absolute/path/to/script.sh "$ARIO_QUEUE_NAME" "$ARIO_STOP_REASON"
+```
+
+On Windows, use `%ARIO_QUEUE_NAME%` and `%ARIO_STOP_REASON%` in the command instead.
+
+Commands have no interactive input or attached terminal. Ario does not collect
+passwords or grant administrator access. For a command requiring sudo, use
+`sudo -n` with permission already configured for that specific command; otherwise
+sudo exits with an error. Standard output and errors go to the daemon logs
+(`server.log` for a TUI-managed daemon); the modal reports status, timestamps, and
+command failures.
+
+There is **no execution time limit**. Commands run sequentially within a queue,
+including across successive runs; other queues and downloads continue normally.
+A stuck success command delays that queue's stop command. Queued/running commands
+keep a managed daemon alive under the default `when_idle` exit policy. Forced
+shutdown interrupts outstanding commands and does not retry them.
+
+Event attempts and command snapshots are saved before execution. Editing a
+command affects future events, not attempts already queued. Following a daemon
+restart, unfinished attempts are marked **interrupted** and **never replayed**.
+A crash between recording an attempt and launching its command can therefore
+cause a command to be missed. Downloads in a persisted run continue normally.
+
 ## 🧭 Controls
 
 Use keyboard shortcuts or the mouse to navigate Ario. The footer shows available actions for your current selection.
 
 Press `?` or click **Help** from the main screen for the full keyboard reference. Mouse support is enabled by default and can be disabled in `tui.toml`.
+
+### Text inputs
+
+Press `Enter` to edit the selected text field, such as the
+queue name or an event command in the queue modal. Press `Enter` again to accept the draft or
+`Esc` to discard it. Use **Save** to apply your queue changes or **Cancel** to
+discard them.
 
 ## 🤝 Contributing
 
