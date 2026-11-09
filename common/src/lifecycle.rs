@@ -10,6 +10,8 @@ pub enum ShutdownOutcome {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ShutdownIfIdleResponse {
+    #[serde(default)]
+    pub event_commands: u64,
     pub outcome: ShutdownOutcome,
     pub active_downloads: u64,
     pub scheduled_queues: u64,

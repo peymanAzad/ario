@@ -116,10 +116,10 @@ fn existing_modals_block_help_and_text_editing_keeps_question_mark() {
     let _ = update(&mut app, Msg::Action(Action::OpenHelp));
     assert!(app.help_modal().is_none());
     press(&mut app, KeyCode::Enter);
-    let before = app.queue_modal().unwrap().name_input.buffer.clone();
+    let before = app.queue_modal().unwrap().text_input.buffer.clone();
     press(&mut app, KeyCode::Char('?'));
     assert_eq!(
-        app.queue_modal().unwrap().name_input.buffer,
+        app.queue_modal().unwrap().text_input.buffer,
         format!("{before}?")
     );
     assert!(app.help_modal().is_none());
@@ -168,9 +168,14 @@ fn queue_editor_can_save_from_download_items_tab() {
     let _ = update(&mut app, Msg::Action(Action::OpenCreateQueue));
     let modal = app.queue_modal_mut().unwrap();
     modal.mode = QueueModalMode::Edit { queue_id: 1 };
-    modal.tab = QueueModalTab::DownloadItems;
     modal.name = "Queue".into();
 
+    press(&mut app, KeyCode::BackTab);
+    assert_eq!(app.queue_modal().unwrap().tab, QueueModalTab::DownloadItems);
+    press(&mut app, KeyCode::BackTab);
+    assert_eq!(app.queue_modal().unwrap().tab, QueueModalTab::Events);
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(app.queue_modal().unwrap().tab, QueueModalTab::DownloadItems);
     press(&mut app, KeyCode::Char('s'));
 
     assert!(app.queue_modal().is_none());
@@ -203,7 +208,7 @@ fn one_time_schedule_uses_adjustable_date_and_time_fields() {
     );
 
     press(&mut app, KeyCode::Enter);
-    assert!(!app.queue_modal().unwrap().name_input.editing);
+    assert!(!app.queue_modal().unwrap().text_input.editing);
 }
 
 #[test]
@@ -365,4 +370,40 @@ fn confirmation_modal_consumes_cancel_before_global_quit() {
     }
     assert!(app.confirmation_modal().is_none());
     assert!(!app.should_quit);
+}
+
+#[test]
+fn event_command_keyboard_editing_accepts_shortcuts_as_text_and_escape_discards() {
+    let mut app = test_app();
+    app.modal = Some(Modal::Queue(crate::modal::QueueModal::create()));
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(app.queue_modal().unwrap().tab, QueueModalTab::Scheduler);
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(app.queue_modal().unwrap().tab, QueueModalTab::Events);
+    press(&mut app, KeyCode::Enter);
+    for c in "echo sqcj界".chars() {
+        press(&mut app, KeyCode::Char(c));
+    }
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(
+        app.queue_modal().unwrap().events.on_success_command,
+        "echo sqcj界"
+    );
+    press(&mut app, KeyCode::Down);
+    assert_eq!(app.queue_modal().unwrap().events.cursor, 1);
+    press(&mut app, KeyCode::Enter);
+    crate::keymap::paste(&mut app, "exit 7");
+    press(&mut app, KeyCode::Esc);
+    assert!(app.queue_modal().unwrap().events.on_stop_command.is_empty());
+    press(&mut app, KeyCode::Enter);
+    crate::keymap::paste(&mut app, "echo stop");
+    press(&mut app, KeyCode::Tab);
+    let modal = app.queue_modal().unwrap();
+    assert_eq!(modal.events.on_stop_command, "echo stop");
+    assert_eq!(modal.tab, QueueModalTab::Common);
+    press(&mut app, KeyCode::BackTab);
+    assert_eq!(app.queue_modal().unwrap().tab, QueueModalTab::Events);
+    assert_eq!(app.queue_modal().unwrap().events.cursor, 1);
+    press(&mut app, KeyCode::Esc);
+    assert!(app.queue_modal().is_none());
 }

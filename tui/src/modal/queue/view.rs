@@ -50,6 +50,7 @@ pub fn draw_queue_modal(f: &mut Frame, modal: &QueueModal, ctx: &Ctx<'_>) {
     match modal.tab {
         QueueModalTab::Common => draw_queue_modal_common_tab(f, ctx, modal, layout[1]),
         QueueModalTab::Scheduler => draw_queue_modal_scheduler_tab(f, ctx, modal, layout[1]),
+        QueueModalTab::Events => draw_queue_modal_events_tab(f, ctx, modal, layout[1]),
         QueueModalTab::DownloadItems => draw_queue_modal_items_tab(f, ctx, modal, layout[1]),
     }
 
@@ -76,74 +77,131 @@ fn draw_queue_modal_tab_bar(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal, ar
         }
     };
 
-    let mut spans = vec![
-        Span::styled(" Common ", tab_style(modal.tab == QueueModalTab::Common)),
-        Span::raw("  "),
-        Span::styled(
-            " Scheduler ",
-            tab_style(modal.tab == QueueModalTab::Scheduler),
-        ),
-    ];
-
-    if matches!(modal.mode, QueueModalMode::Edit { .. }) {
-        spans.push(Span::raw("  "));
-        spans.push(Span::styled(
-            format!(" Download Items ({}) ", modal.items.len()),
-            tab_style(modal.tab == QueueModalTab::DownloadItems),
-        ));
+    let tabs = QueueModalTab::available(modal.mode);
+    let items_label = format!(" Download Items ({}) ", modal.items.len());
+    let compact_items_label = format!(" Items ({}) ", modal.items.len());
+    let mut labels = [" Common ", " Scheduler ", " Events ", &items_label];
+    let full_width = labels[..tabs.len()]
+        .iter()
+        .map(|label| label.len())
+        .sum::<usize>()
+        + (tabs.len() - 1) * 2;
+    let compact = full_width > usize::from(area.width);
+    if compact {
+        labels[3] = &compact_items_label;
     }
 
+    let mut spans = Vec::new();
+    let mut targets = Vec::new();
+    for (index, (&tab, label)) in tabs.iter().zip(labels).enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(if compact { " " } else { "  " }));
+        }
+        targets.push((spans.len(), mouse::modal_target(I::Tab(index))));
+        spans.push(Span::styled(label, tab_style(modal.tab == tab)));
+    }
     spans.push(Span::raw("   (Tab to switch)"));
-
-    mouse::spans(
-        ctx.interactions,
-        area,
-        &spans,
-        &[
-            (0, mouse::modal_target(I::Tab(0))),
-            (2, mouse::modal_target(I::Tab(1))),
-            (4, mouse::modal_target(I::Tab(2))),
-        ],
-    );
+    mouse::spans(ctx.interactions, area, &spans, &targets);
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn draw_queue_modal_common_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal, area: Rect) {
-    let name_display = if modal.name_input.editing && modal.common_cursor == 0 {
-        format!("{}▏", modal.name_input.buffer)
+fn text_value(modal: &QueueModal, selected: bool, value: &str, width: usize) -> String {
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
+    let editing = modal.text_input.editing && selected;
+    let value = if editing {
+        modal.text_input.buffer.as_str()
     } else {
-        modal.name.clone()
+        value
     };
+    let value = if value.is_empty() && !editing {
+        "(disabled)"
+    } else {
+        value
+    };
+    let mut displayed = if editing {
+        format!("{value}▏")
+    } else {
+        value.to_string()
+    };
+    if displayed.width() > width {
+        let mut used = 1;
+        let tail = displayed
+            .graphemes(true)
+            .rev()
+            .take_while(|g| {
+                used += g.width();
+                used <= width
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<String>();
+        displayed = format!("…{tail}");
+    }
+    displayed
+}
 
+fn event_result(result: Option<&common::queue::QueueEventResult>) -> String {
+    use common::queue::QueueEventStatus as Status;
+    let Some(result) = result else {
+        return "never run".into();
+    };
+    let status = match result.status {
+        Status::Queued => "queued",
+        Status::Running => "running",
+        Status::Succeeded => "succeeded",
+        Status::Failed => "failed",
+        Status::Interrupted => "interrupted",
+    };
+    let timestamp = result
+        .finished_at
+        .or(result.started_at)
+        .unwrap_or(result.queued_at)
+        .with_timezone(&chrono::Local)
+        .format("%m-%d %H:%M")
+        .to_string();
+    let detail = result
+        .message
+        .as_deref()
+        .map(|message| format!(" — {message}"))
+        .unwrap_or_default();
+    format!("{status} ({timestamp}){detail}")
+}
+
+fn field_row(label: &str, value: String, label_width: usize) -> String {
+    let label: String = label.chars().take(label_width).collect();
+    format!("{label:<label_width$} {value}")
+}
+
+fn draw_queue_modal_common_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal, area: Rect) {
+    let inner_width = usize::from(area.width.saturating_sub(2));
+    let label_width = 28.min(inner_width / 2);
+    let value_width = inner_width.saturating_sub(label_width + 1).max(1);
+    let row = |label: &str, value| field_row(label, value, label_width);
     let mut rows = vec![
-        ("Name".to_string(), name_display),
-        (
-            "Max concurrent downloads".to_string(),
+        row(
+            "Name",
+            text_value(modal, modal.common_cursor == 0, &modal.name, value_width),
+        ),
+        row(
+            "Max concurrent downloads",
             format!("◀ {} ▶", modal.max_concurrent_downloads),
         ),
-        (
-            "Max retries".to_string(),
-            format!("◀ {} ▶", modal.max_retries),
-        ),
-        (
-            "Retry wait (seconds)".to_string(),
+        row("Max retries", format!("◀ {} ▶", modal.max_retries)),
+        row(
+            "Retry wait (seconds)",
             format!("◀ {} ▶", modal.retry_wait_seconds),
         ),
     ];
-    // Queue common tab shows only the first four finetune fields (not retries).
     for (label, value) in modal
         .finetune_editor
         .rows(ctx.aria2_global_options)
         .into_iter()
         .take(4)
     {
-        rows.push((label, format!("◀ {value} ▶")));
+        rows.push(row(&label, format!("◀ {value} ▶")));
     }
-
-    let rows = rows
-        .into_iter()
-        .map(|(label, value)| format!("{label:<28} {value}"))
-        .collect::<Vec<_>>();
     let (inner, offset) = mouse::fields(
         f,
         ctx,
@@ -151,13 +209,106 @@ fn draw_queue_modal_common_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal,
         area,
         modal.common_cursor,
         &rows,
-        " j/k: field   h/l: adjust   Enter: edit name ",
+        " j/k: field   h/l: adjust   Enter: edit text ",
     );
     if offset == 0 && inner.height > 0 {
         ctx.interactions.borrow_mut().add(
             Rect::new(inner.x, inner.y, inner.width, 1),
             mouse::modal_target(I::Text),
         );
+    }
+}
+
+fn draw_queue_modal_events_tab(f: &mut Frame, ctx: &Ctx<'_>, modal: &QueueModal, area: Rect) {
+    use ratatui::widgets::{List, ListItem};
+    let theme = ctx.theme;
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border))
+        .title(" j/k: field   Enter: edit command ");
+    let inner = block.inner(area);
+    let label_width = "On automatic stop".len().min(usize::from(inner.width) / 2);
+    let value_width = usize::from(inner.width)
+        .saturating_sub(label_width + 1)
+        .max(1);
+    let command_row = |index, label, command| {
+        field_row(
+            label,
+            text_value(modal, modal.events.cursor == index, command, value_width),
+            label_width,
+        )
+    };
+    let bullet = if ctx.icons.glyph_mode() == crate::icons::GlyphMode::Ascii {
+        "-"
+    } else {
+        "•"
+    };
+    let note = |text| format!("{bullet} {text}");
+    let rows = [
+        (None, "Commands".into()),
+        (
+            Some(0),
+            command_row(0, "On success", &modal.events.on_success_command),
+        ),
+        (
+            Some(1),
+            command_row(1, "On automatic stop", &modal.events.on_stop_command),
+        ),
+        (None, String::new()),
+        (None, "Latest results".into()),
+        (
+            Some(2),
+            format!(
+                "Success: {}",
+                event_result(modal.events.results.on_success.as_ref())
+            ),
+        ),
+        (
+            Some(3),
+            format!(
+                "Stop: {}",
+                event_result(modal.events.results.on_stop.as_ref())
+            ),
+        ),
+        (None, String::new()),
+        (None, "Notes".into()),
+        (Some(4), note("Commands run on the server machine.")),
+        (Some(5), note("Commands cannot prompt for input.")),
+        (Some(6), note("Success runs both commands in order.")),
+        (Some(7), note("Manual queue stops skip both commands.")),
+    ];
+    let selected = rows
+        .iter()
+        .position(|(field, _)| *field == Some(modal.events.cursor))
+        .unwrap_or_default();
+    let items = rows.iter().map(|(field, text)| {
+        let style = match field {
+            None => Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+            Some(index) if *index == modal.events.cursor || *index < 4 => {
+                crate::ui::field_style(theme, *index == modal.events.cursor)
+            }
+            Some(_) => Style::default().fg(theme.text_muted),
+        };
+        ListItem::new(text.as_str()).style(style)
+    });
+    let offset = mouse::list(
+        f,
+        ctx.interactions,
+        S::Events,
+        List::new(items).block(block),
+        (area, inner),
+        selected,
+        rows.len(),
+    );
+    for y in 0..inner.height {
+        if let Some((Some(field @ 0..=1), _)) = rows.get(offset + usize::from(y)) {
+            ctx.interactions.borrow_mut().add(
+                Rect::new(inner.x, inner.y + y, inner.width, 1),
+                mouse::modal_target(I::TextField(*field)),
+            );
+        }
     }
 }
 

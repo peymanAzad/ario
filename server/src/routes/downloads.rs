@@ -300,6 +300,7 @@ async fn create_download(
     };
 
     if start_immediately {
+        state.db.begin_event_run(queue_id)?;
         state.db.set_manually_started(download.id, true)?;
         state.db.set_paused_by_scheduler(download.id, false)?;
         match start_in_aria2(state, &download, Aria2AddMode::Fresh).await {
@@ -697,6 +698,7 @@ async fn resume_download(
     crate::scheduler::prepare_start(&state, &queue, state.now()).await?;
 
     // Individual runs bypass manual queue pauses; scheduled deadlines still apply.
+    state.db.begin_event_run(queue.id)?;
     state.db.set_manually_started(id, true)?;
     state.db.set_paused_by_scheduler(id, false)?;
 
@@ -1223,6 +1225,8 @@ mod finetune_resolution_tests {
     #[test]
     fn unset_download_fields_inherit_individual_queue_defaults() {
         let settings = QueueSettings {
+            on_success_command: None,
+            on_stop_command: None,
             max_concurrent_downloads: 2,
             max_retries: 3,
             retry_wait_seconds: 5,

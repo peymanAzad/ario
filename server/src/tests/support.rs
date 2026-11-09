@@ -320,13 +320,15 @@ impl Fixture {
         let mut config = ServerConfig::default();
         config.settings.default_download_location = root.join("downloads").to_string_lossy().into();
         config.settings.category_locations.clear();
-        AppState::new(
+        let mut state = AppState::new(
             Database::open(root.join("ario.db").to_str().unwrap()).unwrap(),
             Aria2Client::new(rpc_url, Some(SECRET.into())),
             config,
             false,
         )
-        .with_clock(move || *clock.lock().unwrap())
+        .with_clock(move || *clock.lock().unwrap());
+        state.event_directory = Some(root.to_path_buf());
+        state
     }
     pub(super) async fn reconfigure(&mut self, config: ServerConfig) {
         self.api_task.stop().await;
@@ -429,6 +431,8 @@ impl Fixture {
         catchup: bool,
     ) -> Queue {
         let req = CreateQueueRequest {
+            on_success_command: None,
+            on_stop_command: None,
             name: "integration".into(),
             position: 1,
             max_concurrent_downloads: 1,
@@ -458,6 +462,8 @@ impl Fixture {
     }
     pub(super) async fn edit(&self, q: &Queue) -> Queue {
         let req = UpdateQueueRequest {
+            on_success_command: None,
+            on_stop_command: None,
             name: q.name.clone(),
             position: q.position,
             max_concurrent_downloads: q.settings.max_concurrent_downloads,

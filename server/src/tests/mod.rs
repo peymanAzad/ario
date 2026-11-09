@@ -1,6 +1,8 @@
 //! Workflow integration tests grouped by subject; only aria2 is mocked.
 mod client;
 mod download;
+#[cfg(unix)]
+mod events;
 mod lifecycle;
 mod queue;
 mod scheduler;

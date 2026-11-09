@@ -289,6 +289,8 @@ async fn scheduler_invalid_and_expired_schedules_reject_all_start_paths() {
         },
     ] {
         let req = CreateQueueRequest {
+            on_success_command: None,
+            on_stop_command: None,
             name: "invalid".into(),
             position: 1,
             max_concurrent_downloads: 1,

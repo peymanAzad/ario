@@ -15,6 +15,12 @@ CREATE TABLE IF NOT EXISTS queues (
     retry_wait_seconds          INTEGER NOT NULL DEFAULT 5,
     default_finetune            TEXT NOT NULL DEFAULT '{}', -- JSON: FineTune
 
+    -- Optional commands; blank/NULL disables an event.
+    on_success_command          TEXT,
+    on_stop_command             TEXT,
+    event_run_id                INTEGER NOT NULL DEFAULT 0,
+    event_run_active            INTEGER NOT NULL DEFAULT 0,
+
     -- Scheduler
     scheduler_enabled           INTEGER NOT NULL DEFAULT 0, -- 0/1 boolean
     scheduler_recurrence        TEXT,                       -- JSON: Recurrence, NULL if scheduler disabled
@@ -93,3 +99,18 @@ CREATE TABLE IF NOT EXISTS download_torrent_data (
     download_id INTEGER PRIMARY KEY REFERENCES downloads(id) ON DELETE CASCADE,
     data        BLOB NOT NULL CHECK(length(data) > 0)
 );
+
+-- Durable event attempts; unfinished attempts are interrupted, never replayed.
+CREATE TABLE IF NOT EXISTS queue_event_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    queue_id INTEGER NOT NULL REFERENCES queues(id) ON DELETE CASCADE,
+    run_id INTEGER NOT NULL,
+    event TEXT NOT NULL,
+    command TEXT NOT NULL,
+    queue_name TEXT NOT NULL,
+    stop_reason TEXT NOT NULL,
+    result TEXT NOT NULL,
+    UNIQUE(queue_id, run_id, event)
+);
+CREATE INDEX IF NOT EXISTS idx_queue_event_attempts_queue
+    ON queue_event_attempts(queue_id, id);

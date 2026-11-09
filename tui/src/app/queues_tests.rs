@@ -10,11 +10,14 @@ use common::{
 
 fn queue(id: i64, name: &str) -> Queue {
     Queue {
+        event_results: Default::default(),
         scheduled_stop_at: None,
         id,
         name: name.into(),
         position: id as i32,
         settings: QueueSettings {
+            on_success_command: None,
+            on_stop_command: None,
             max_concurrent_downloads: 1,
             max_retries: 3,
             retry_wait_seconds: 5,
@@ -151,4 +154,42 @@ fn delete_error_is_shown_as_a_toast() {
             .iter()
             .any(|toast| toast.level == ToastLevel::Error && toast.message == "boom")
     );
+}
+
+#[test]
+fn queue_event_results_refresh_without_overwriting_unsaved_commands() {
+    use common::queue::{QueueEventResult, QueueEventStatus};
+    let mut app = app();
+    let mut q = app.queues[1].clone();
+    let mut modal = crate::modal::QueueModal::edit(&q);
+    modal.events.on_success_command = "unsaved command".into();
+    modal.tab = crate::modal::QueueModalTab::Events;
+    modal.events.cursor = 1;
+    modal.text_input.start("unsaved input draft".into());
+    app.modal = Some(crate::modal::Modal::Queue(modal));
+    q.event_results.on_stop = Some(QueueEventResult {
+        id: 1,
+        run_id: 1,
+        status: QueueEventStatus::Failed,
+        queued_at: Utc::now(),
+        started_at: Some(Utc::now()),
+        finished_at: Some(Utc::now()),
+        exit_code: Some(7),
+        message: Some("Command exited with status 7".into()),
+    });
+    app.apply_refresh(
+        Ok(vec![]),
+        Ok(vec![q.clone()]),
+        RefreshStatus {
+            server_reachable: true,
+            aria2_reachable: true,
+            ..Default::default()
+        },
+        app.lifecycle_revision,
+    );
+    let modal = app.queue_modal().unwrap();
+    assert_eq!(&modal.events.results, &q.event_results);
+    assert_eq!(modal.events.on_success_command, "unsaved command");
+    assert_eq!(modal.text_input.buffer, "unsaved input draft");
+    assert!(modal.text_input.editing);
 }

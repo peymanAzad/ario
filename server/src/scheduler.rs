@@ -78,6 +78,8 @@ pub async fn prepare_start(
         pause_downloads(state, queue, PauseReason::ScheduledStop)
             .await
             .map_err(|error| crate::error::AppError::Internal(error.to_string()))?;
+        crate::queue_events::reconcile(state, queue, true)
+            .map_err(|error| crate::error::AppError::Internal(error.to_string()))?;
     }
     // Repeated starts must not extend an existing run past its original stop.
     state.db.set_scheduled_stop(
@@ -100,6 +102,7 @@ pub async fn reconcile_queue(state: &AppState, id: i64, now: DateTime<Utc>) -> a
         if queue.status == QueueStatus::Active {
             start_eligible_downloads(state, &queue, false).await?;
         }
+        crate::queue_events::reconcile(state, &queue, false)?;
         return Ok(());
     }
     let active = state.db.count_active_downloads_in_queue(id)?;
@@ -112,6 +115,7 @@ pub async fn reconcile_queue(state: &AppState, id: i64, now: DateTime<Utc>) -> a
         // Keep the expired deadline until all RPC pauses succeed; never refill while stopping.
         state.db.update_queue_status(id, QueueStatus::Paused)?;
         pause_downloads(state, &queue, PauseReason::ScheduledStop).await?;
+        crate::queue_events::reconcile(state, &queue, true)?;
         if let Some(stop) = queue.scheduled_stop_at {
             let ended = schedule_occurrence(
                 &queue.scheduler.recurrence,
@@ -154,6 +158,7 @@ pub async fn reconcile_queue(state: &AppState, id: i64, now: DateTime<Utc>) -> a
             }
         }
     }
+    crate::queue_events::reconcile(state, &queue, false)?;
     Ok(())
 }
 
@@ -215,6 +220,7 @@ pub async fn start_eligible_downloads(
         {
             break;
         }
+        state.db.begin_event_run(queue.id)?;
         let result: anyhow::Result<()> = async {
             if let Some(gid) = &download.aria2_gid {
                 state.aria2.unpause(gid).await?;
@@ -1257,11 +1263,14 @@ mod tests {
 
     fn queue(status: QueueStatus, scheduler_enabled: bool) -> Queue {
         Queue {
+            event_results: Default::default(),
             scheduled_stop_at: None,
             id: 1,
             name: "test".into(),
             position: 0,
             settings: QueueSettings {
+                on_success_command: None,
+                on_stop_command: None,
                 max_concurrent_downloads: 1,
                 max_retries: 3,
                 retry_wait_seconds: 5,

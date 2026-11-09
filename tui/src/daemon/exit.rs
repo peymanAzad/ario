@@ -51,8 +51,8 @@ fn apply_shutdown_result(
             common::lifecycle::ShutdownOutcome::ShuttingDown => process.wait_for_shutdown(),
             common::lifecycle::ShutdownOutcome::KeptRunning => {
                 eprintln!(
-                    "ario_daemon kept running: {} active download(s), {} scheduled queue(s)",
-                    result.active_downloads, result.scheduled_queues
+                    "ario_daemon kept running: {} active download(s), {} scheduled queue(s), {} event command(s)",
+                    result.active_downloads, result.scheduled_queues, result.event_commands
                 );
                 process.detach();
             }

@@ -52,11 +52,14 @@ fn add_download(app: &mut App, status: DownloadStatus) {
 
 fn add_queue(app: &mut App, id: i64, status: QueueStatus) {
     app.queues.push(Queue {
+        event_results: Default::default(),
         scheduled_stop_at: None,
         id,
         name: format!("Queue {id}"),
         position: 0,
         settings: QueueSettings {
+            on_success_command: None,
+            on_stop_command: None,
             max_concurrent_downloads: 1,
             max_retries: 0,
             retry_wait_seconds: 0,

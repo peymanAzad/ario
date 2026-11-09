@@ -81,6 +81,7 @@ dependencies = [
  "crossterm",
  "directories",
  "http-body-util",
+ "libc",
  "rand 0.10.2",
  "ratatui",
  "regex",
