@@ -14,14 +14,18 @@ targets = [
 unix-archive = ".tar.gz"
 windows-archive = ".zip"
 checksum = "sha256"
+# Keep the tap in the generated release notes. The custom job handles publishing.
 tap = "peymanAzad/homebrew-tap"
-publish-jobs = ["homebrew"]
+publish-jobs = ["./release-homebrew"]
 post-announce-jobs = ["./release-winget"]
 publish-prereleases = false
 pr-run-mode = "upload"
 cache-builds = false
 global-artifacts-jobs = ["./release-linux-packages"]
 github-build-setup = "../release-build-setup.yml"
+
+[dist.github-custom-job-permissions.release-homebrew]
+contents = "read"
 
 [dist.github-custom-runners]
 aarch64-apple-darwin = "macos-15"

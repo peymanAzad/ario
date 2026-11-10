@@ -173,7 +173,11 @@ cargo-dist and nFPM deliberately; update the nFPM archive checksum when changing
 its version. If available, run `actionlint` against the workflows.
 
 If a release fails before publication, fix the failure and rerun failed jobs.
-If only Homebrew or WinGet publishing fails, repair its credentials or settings
-and rerun that failed job. Avoid rerunning an already successful GitHub release
-creation job, which would attempt to create the same release again. Published
-versions and their tags should remain immutable.
+If Homebrew publishing fails after the GitHub release is live, run **Publish
+Homebrew formula** from the Actions tab on the default branch and enter the
+published tag, for example `v0.2.2`. The workflow downloads `ario.rb` from that
+release, adds the formula test, checks its style, and updates the tap if the
+formula changed. Use the tag you want users to install from the tap.
+
+If only WinGet publishing fails, repair its credentials or settings and rerun
+that failed job. Published versions and their tags should remain immutable.

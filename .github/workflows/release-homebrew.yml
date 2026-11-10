@@ -1,0 +1,79 @@
+name: Publish Homebrew formula
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+    secrets:
+      HOMEBREW_TAP_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag of the published stable release, for example v0.2.2
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    env:
+      TAG: ${{ inputs.tag || fromJson(inputs.plan).announcement_tag }}
+    steps:
+      - name: Download the published formula
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release view --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease -- "$TAG" \
+            | jq -e '.isDraft == false and .isPrerelease == false' > /dev/null
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern ario.rb \
+            --output "$RUNNER_TEMP/ario.rb" -- "$TAG"
+
+      - uses: actions/checkout@v6
+        with:
+          repository: peymanAzad/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          persist-credentials: true
+
+      - name: Add the formula test and check style
+        shell: bash
+        run: |
+          generated="$RUNNER_TEMP/ario.rb"
+          formula=Formula/ario.rb
+          if [[ $(tail -n 1 "$generated") != end ]]; then
+            echo 'Unexpected cargo-dist formula ending' >&2
+            exit 1
+          fi
+
+          mkdir -p Formula
+          sed '$d' "$generated" > "$formula"
+          cat >> "$formula" <<'RUBY'
+
+            test do
+              assert_match "invalid glyph mode", shell_output("#{bin}/ario --glyphs=invalid 2>&1", 1)
+              assert_match "--host must be a loopback address", shell_output("#{bin}/ario_daemon --host 0.0.0.0 2>&1", 1)
+            end
+          end
+          RUBY
+
+          export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
+          brew update
+          brew style --except-cops FormulaAudit/Homepage,FormulaAudit/Desc,FormulaAuditStrict --fix "$formula"
+
+      - name: Commit and push the formula
+        shell: bash
+        run: |
+          git add -- Formula/ario.rb
+          if git diff --cached --quiet -- Formula/ario.rb; then
+            echo "Formula is already up to date for $TAG"
+            exit 0
+          fi
+
+          git -c user.name='axo bot' -c user.email='admin+bot@axo.dev' commit -m "ario ${TAG#v}"
+          git push
