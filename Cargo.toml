@@ -1,6 +1,6 @@
 [package]
 name = "ario"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2024"
 rust-version = "1.95"
 description = "A batteries-included terminal download manager powered by aria2"
