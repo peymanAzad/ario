@@ -106,29 +106,99 @@ than replacing its reviewed settings with the bootstrap template.
 
 ## Preparing a release
 
-1. Choose an unused version, update `version` in `Cargo.toml`, and run
-   `cargo check` to update `Cargo.lock`. Commit both files with the release
-   workflow changes.
-2. Let the pull request checks finish. They build release archives and Linux
-   packages, and upload workflow artifacts without publishing a GitHub release,
-   updating Homebrew, or submitting to WinGet. The native build jobs run tests
-   on all four release targets; Linux also runs formatting, Clippy, and Cargo
-   package verification.
-   The Debian package is installed on the runner, then a smoke check starts
-   its daemon with aria2, verifies `/health`, and requests a graceful shutdown.
-   An Arch container installs the nFPM package and runs the same smoke check.
-3. Merge the release commit, then push its matching tag. For example, if
-   `Cargo.toml` contains `version = "0.1.0"` and `v0.1.0` does not exist:
+Use this checklist for every release. The commands below use **0.2.3** as an
+example; substitute the version being released throughout.
 
-   ```sh
-   git tag v0.1.0
-   git push origin v0.1.0
-   ```
+- [ ] **Finish and commit the intended changes.** Review the diff and confirm
+  that the release includes the fixes or features you want to ship. Write a
+  short user-facing summary of changes, compatibility requirements, and any
+  migration steps for the release notes.
+- [ ] **Choose an unused version.** Use a patch increment for compatible bug
+  fixes, such as `0.2.2` → `0.2.3`. Fetch tags and confirm the proposed tag is
+  absent:
 
-The tag version must match the package version. cargo-dist rejects mismatches.
-Do not create the GitHub release manually first; the workflow creates it after
-the builds and Linux packaging succeed. Wait for the **Release** workflow,
-including Homebrew publishing, to complete.
+  ```sh
+  git fetch origin --tags
+  git tag --list v0.2.3
+  ```
+
+  The second command must print nothing. Also check GitHub Releases for an
+  existing release or draft using that version.
+- [ ] **Update both Cargo files.** Change the package's `version` in
+  `Cargo.toml`, then run:
+
+  ```sh
+  cargo check
+  git diff -- Cargo.toml Cargo.lock
+  git add Cargo.toml Cargo.lock
+  git commit -m "Release v0.2.3"
+  ```
+
+  Verify that the `ario` entry in `Cargo.lock` has the new version. Other
+  packages have their own versions; do not replace matching version strings
+  throughout the lockfile.
+- [ ] **Run the release checks from a clean working tree.** Install the pinned
+  cargo-dist version using the maintenance instructions below if needed:
+
+  ```sh
+  git status --short
+  cargo fmt --all --check
+  cargo clippy --locked --all-targets -- -D warnings
+  cargo test --locked --all-targets --no-fail-fast
+  cargo package --locked
+  dist generate --check
+  dist plan --tag v0.2.3
+  ```
+
+  `git status --short` should print nothing, and every check must pass. If a
+  check requires changes, commit those changes and repeat the affected checks.
+- [ ] **Push the release branch, open a pull request, and wait for CI.** The
+  **Release** PR checks build archives and Linux packages without publishing.
+  They test all four release targets; Linux also checks formatting, Clippy,
+  and Cargo packaging. Debian and Arch installation smoke checks verify that
+  the packaged daemon starts aria2, serves `/health`, and shuts down. Merge
+  only after the required checks pass.
+- [ ] **Tag the merged release commit and push that tag.** Update your local
+  `master`, verify that its package version and release changes are correct,
+  and confirm the working tree is clean before tagging:
+
+  ```sh
+  git switch master
+  git pull --ff-only origin master
+  git status --short
+  git log -1 --oneline
+  git tag -a v0.2.3 -m "Ario v0.2.3"
+  git push origin v0.2.3
+  ```
+
+  The tag version must match `Cargo.toml` and the `ario` entry in `Cargo.lock`.
+  Pushing this tag starts publication. The workflow creates the GitHub release
+  after builds and Linux packaging succeed; leave release creation to it.
+- [ ] **Wait for the entire Release workflow.** Confirm GitHub publication,
+  Homebrew publishing, and the WinGet submission job if enabled. Review the
+  published assets and checksums for all supported platforms. Add your
+  user-facing change summary to the generated release notes, retaining their
+  installation and download information.
+- [ ] **Publish the Cargo package.** The GitHub release workflow does **not**
+  publish to crates.io. To make this version available through
+  `cargo install ario --locked`, run these commands from the clean tagged
+  release commit, using your crates.io publishing credentials:
+
+  ```sh
+  cargo publish --locked --dry-run
+  cargo publish --locked
+  ```
+
+  Confirm that crates.io lists the intended version. Skip this step for
+  releases you intentionally do not distribute through Cargo.
+- [ ] **Verify the installed release.** Install or upgrade using the published
+  packages or archives, confirm both `ario` and `ario_daemon` are installed,
+  and restart the daemon to use the new binary. Launch Ario, download a small
+  file, and exercise the behavior changed in this release. For the clipboard
+  concurrency fix, import several links with a queue limit of one and verify
+  that one transfers at a time and the next starts automatically. Check
+  Homebrew on macOS and Windows installation on Windows when available;
+  record any platform checks you could not perform.
 
 Prerelease versions such as `0.2.0-beta.1` must also be recorded in Cargo.toml
 and Cargo.lock before pushing their tags. They produce GitHub prereleases and
