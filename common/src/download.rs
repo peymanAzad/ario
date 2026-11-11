@@ -19,8 +19,8 @@ pub struct Download {
     pub status: DownloadStatus,
     /// Eligible for automatic resume after a queue pause or explicit queue Start.
     pub paused_by_scheduler: bool,
-    /// True while an explicitly started download is allowed to run
-    /// independently of manual queue pauses, but never past a scheduled stop.
+    /// Explicit start intent, including imports waiting for queue capacity.
+    /// Allows work in a paused queue until the next queue pause or scheduled stop.
     pub manually_started: bool,
     pub size: Option<u64>,
     /// Last-known bytes completed; `None` until aria2 has reported progress.

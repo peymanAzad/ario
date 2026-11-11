@@ -52,6 +52,32 @@ fn lines(f: &Fixture, file: &str) -> String {
 }
 
 #[tokio::test]
+async fn start_now_batch_refills_before_running_completion_commands() {
+    let f = Fixture::new().await;
+    let q = queue(
+        &f,
+        false,
+        &append(&f, "success", "success"),
+        &append(&f, "stop", "stop"),
+    )
+    .await;
+    let items = f.add(q.id, 3, true).await;
+    for (index, item) in items.iter().enumerate() {
+        f.status(item.download.id, DownloadStatus::Active).await;
+        f.transfer(item.download.id, "complete", 100).await;
+        f.tick().await;
+        if index + 1 < items.len() {
+            assert_eq!(f.get_queue(q.id).await.event_results, Default::default());
+        }
+    }
+    settled(&f).await;
+    assert_eq!(lines(&f, "success"), "success\n");
+    assert_eq!(lines(&f, "stop"), "stop\n");
+    f.capacity(1);
+    f.close().await;
+}
+
+#[tokio::test]
 async fn concurrent_out_of_order_completion_runs_both_once_with_literal_context() {
     let f = Fixture::new().await;
     let context = format!(
@@ -61,6 +87,7 @@ async fn concurrent_out_of_order_completion_runs_both_once_with_literal_context(
     );
     let mut q = queue(&f, false, &context, &append(&f, "order", "stop")).await;
     q.name = "literal $(false); 'name'".into();
+    q.settings.max_concurrent_downloads = 2;
     f.state.db.update_queue(&q).unwrap();
     let items = f.add(q.id, 2, true).await;
     // Last position finishes first; it must not count as queue completion.
@@ -91,13 +118,15 @@ async fn concurrent_out_of_order_completion_runs_both_once_with_literal_context(
 #[tokio::test]
 async fn failed_and_manually_paused_items_exhaust_then_individual_retry_rearms() {
     let f = Fixture::new().await;
-    let q = queue(
+    let mut q = queue(
         &f,
         false,
         &append(&f, "success", "success"),
         &append(&f, "stop", "stop"),
     )
     .await;
+    q.settings.max_concurrent_downloads = 2;
+    f.edit(&q).await;
     let items = f.add(q.id, 2, true).await;
     f.transfer(items[0].download.id, "error", 10).await;
     f.post(&format!("/downloads/{}/pause", items[1].download.id))
@@ -408,6 +437,7 @@ async fn start_failures_exhaust_and_retained_removed_items_prevent_success() {
         } else {
             let items = f.add(q.id, 2, true).await;
             f.transfer(items[0].download.id, "removed", 10).await;
+            f.tick().await;
             f.transfer(items[1].download.id, "complete", 100).await;
         }
         f.tick().await;

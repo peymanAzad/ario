@@ -5,6 +5,7 @@ use chrono::{
     DateTime, Datelike, Local, LocalResult, NaiveDate, NaiveTime, TimeZone, Utc, Weekday,
 };
 use common::{
+    download::Download,
     enums::{DownloadStatus, QueueStatus, Recurrence},
     queue::Queue,
 };
@@ -101,6 +102,8 @@ pub async fn reconcile_queue(state: &AppState, id: i64, now: DateTime<Utc>) -> a
         state.db.set_scheduled_stop(id, None)?;
         if queue.status == QueueStatus::Active {
             start_eligible_downloads(state, &queue, false).await?;
+        } else {
+            start_requested_downloads(state, &queue).await?;
         }
         crate::queue_events::reconcile(state, &queue, false)?;
         return Ok(());
@@ -158,6 +161,11 @@ pub async fn reconcile_queue(state: &AppState, id: i64, now: DateTime<Utc>) -> a
             }
         }
     }
+    // Imports can request a bounded batch without starting unrelated saved work.
+    // Their intent lasts until a queue pause or the scheduled stop.
+    if queue.scheduled_stop_at.is_some() {
+        start_requested_downloads(state, &queue).await?;
+    }
     crate::queue_events::reconcile(state, &queue, false)?;
     Ok(())
 }
@@ -195,9 +203,6 @@ pub async fn start_eligible_downloads(
     queue: &Queue,
     explicit: bool,
 ) -> anyhow::Result<()> {
-    let mut capacity = (queue.settings.max_concurrent_downloads as i64
-        - state.db.count_active_downloads_in_queue(queue.id)?)
-    .max(0);
     let candidates = state.db.list_startable_downloads(queue.id, explicit)?;
     if explicit {
         // Queue Start authorizes every paused item, including those beyond current capacity.
@@ -208,6 +213,28 @@ pub async fn start_eligible_downloads(
             }
         }
     }
+    start_downloads(state, queue, candidates).await
+}
+
+/// Caller holds control mutex. Only fill slots with explicitly requested imports.
+pub async fn start_requested_downloads(state: &AppState, queue: &Queue) -> anyhow::Result<()> {
+    let candidates = state
+        .db
+        .list_startable_downloads(queue.id, false)?
+        .into_iter()
+        .filter(|download| download.manually_started)
+        .collect();
+    start_downloads(state, queue, candidates).await
+}
+
+async fn start_downloads(
+    state: &AppState,
+    queue: &Queue,
+    candidates: Vec<Download>,
+) -> anyhow::Result<()> {
+    let mut capacity = (queue.settings.max_concurrent_downloads as i64
+        - state.db.count_active_downloads_in_queue(queue.id)?)
+    .max(0);
     for download in candidates {
         if capacity == 0 {
             break;
@@ -238,6 +265,7 @@ pub async fn start_eligible_downloads(
         match result {
             Ok(()) => capacity -= 1,
             Err(error) => {
+                state.db.set_manually_started(download.id, false)?;
                 eprintln!(
                     "queue {}: failed to start item {}: {error}",
                     queue.id, download.id
@@ -266,6 +294,14 @@ pub async fn pause_downloads(
     reason: PauseReason,
 ) -> anyhow::Result<()> {
     let paused_by_scheduler = reason == PauseReason::ScheduledStop;
+    if reason != PauseReason::SuppressedSchedule {
+        // Cancel batch items still waiting for a slot as well as active items.
+        for download in state.db.list_startable_downloads(queue.id, false)? {
+            if download.manually_started {
+                state.db.set_manually_started(download.id, false)?;
+            }
+        }
+    }
     let active = if reason != PauseReason::SuppressedSchedule {
         state.db.list_downloads(&common::download::DownloadFilter {
             queue_id: Some(queue.id),

@@ -2,6 +2,110 @@ use super::support::{Fixture, weekly};
 use common::enums::{DownloadStatus, QueueStatus};
 
 #[tokio::test]
+async fn start_now_batches_respect_capacity_and_refill_paused_queues_after_restart() {
+    for (scheduled, suppressed) in [(false, false), (true, false), (true, true)] {
+        for capacity in [1, 2, 3] {
+            let mut f = Fixture::new().await;
+            let mut q = f.once().await;
+            q.scheduler.enabled = scheduled;
+            if suppressed {
+                q.scheduler.recurrence = common::enums::Recurrence::Once {
+                    start: f.now() - chrono::Duration::minutes(1),
+                    end: f.now() + chrono::Duration::minutes(1),
+                };
+            }
+            q.settings.max_concurrent_downloads = capacity;
+            f.edit(&q).await;
+            let saved = f.add(q.id, 2, false).await;
+            if suppressed {
+                f.post(&format!("/queues/{}/pause", q.id)).await;
+            }
+            // A second import must account for the first import's running item.
+            let mut items = f.add(q.id, 1, true).await;
+            items.extend(f.add(q.id, 4, true).await);
+            assert_eq!(f.calls("aria2.addUri"), capacity as usize);
+            for (index, item) in items.iter().enumerate() {
+                assert_eq!(
+                    item.download.status,
+                    if index < capacity as usize {
+                        DownloadStatus::Active
+                    } else {
+                        DownloadStatus::Pending
+                    }
+                );
+                assert!(item.download.manually_started);
+                assert_eq!(item.download.aria2_gid.is_some(), index < capacity as usize);
+            }
+            f.restart().await;
+            f.tick().await;
+            assert_eq!(f.calls("aria2.addUri"), capacity as usize);
+            for (index, item) in items.iter().enumerate() {
+                f.status(item.download.id, DownloadStatus::Active).await;
+                f.transfer(item.download.id, "complete", 100).await;
+                f.tick().await;
+                assert_eq!(
+                    f.calls("aria2.addUri"),
+                    (capacity as usize + index + 1).min(items.len())
+                );
+                for item in &saved {
+                    f.status(item.download.id, DownloadStatus::Pending).await;
+                }
+                assert_eq!(
+                    f.state.db.get_queue(q.id).unwrap().unwrap().status,
+                    QueueStatus::Paused
+                );
+            }
+            f.capacity(capacity as usize);
+            f.close().await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn start_now_batch_waits_for_existing_active_queue_items() {
+    for capacity in [1, 2] {
+        let f = Fixture::new().await;
+        let mut q = f.queue(false, weekly(12, 13), false).await;
+        q.settings.max_concurrent_downloads = capacity;
+        f.edit(&q).await;
+        let mut items = f.add(q.id, capacity as usize, false).await;
+        f.post(&format!("/queues/{}/resume", q.id)).await;
+        let imported = f.add(q.id, 4, true).await;
+        assert_eq!(f.calls("aria2.addUri"), capacity as usize);
+        for item in &imported {
+            assert_eq!(item.download.status, DownloadStatus::Pending);
+            assert!(item.download.aria2_gid.is_none());
+        }
+        items.extend(imported);
+        for item in &items {
+            f.status(item.download.id, DownloadStatus::Active).await;
+            f.transfer(item.download.id, "complete", 100).await;
+            f.tick().await;
+        }
+        f.capacity(capacity as usize);
+        f.close().await;
+    }
+}
+
+#[tokio::test]
+async fn failed_start_now_item_does_not_block_the_remaining_batch() {
+    use super::support::Fault;
+    let f = Fixture::new().await;
+    let q = f.queue(false, weekly(12, 13), false).await;
+    f.fault("aria2.addUri", Fault::Rpc);
+    let items = f.add(q.id, 3, true).await;
+    assert!(matches!(items[0].download.status, DownloadStatus::Error(_)));
+    assert!(!items[0].download.manually_started);
+    assert_eq!(items[1].download.status, DownloadStatus::Active);
+    assert_eq!(items[2].download.status, DownloadStatus::Pending);
+    f.transfer(items[1].download.id, "complete", 100).await;
+    f.tick().await;
+    f.status(items[2].download.id, DownloadStatus::Active).await;
+    f.capacity(1);
+    f.close().await;
+}
+
+#[tokio::test]
 async fn queue_pause_stops_start_now_items_whether_or_not_queue_was_started() {
     for scheduled in [false, true] {
         for started in [false, true] {
@@ -14,8 +118,16 @@ async fn queue_pause_stops_start_now_items_whether_or_not_queue_was_started() {
             let items = f.add(q.id, 3, true).await;
             let other = f.queue(false, weekly(12, 13), false).await;
             let unrelated = f.add(other.id, 1, true).await.remove(0);
-            for item in &items {
-                f.status(item.download.id, DownloadStatus::Active).await;
+            for (index, item) in items.iter().enumerate() {
+                f.status(
+                    item.download.id,
+                    if !started && index == 0 {
+                        DownloadStatus::Active
+                    } else {
+                        DownloadStatus::Pending
+                    },
+                )
+                .await;
                 assert!(f.get(item.download.id).await.download.manually_started);
             }
             assert_eq!(
@@ -30,8 +142,16 @@ async fn queue_pause_stops_start_now_items_whether_or_not_queue_was_started() {
             f.post(&format!("/queues/{}/pause", q.id)).await;
             f.tick().await;
             assert_eq!(f.get_queue(q.id).await.status, QueueStatus::Paused);
-            for item in &items {
-                f.status(item.download.id, DownloadStatus::Paused).await;
+            for (index, item) in items.iter().enumerate() {
+                f.status(
+                    item.download.id,
+                    if !started && index == 0 {
+                        DownloadStatus::Paused
+                    } else {
+                        DownloadStatus::Pending
+                    },
+                )
+                .await;
                 assert!(!f.get(item.download.id).await.download.manually_started);
                 assert!(
                     !f.state
@@ -54,7 +174,7 @@ async fn queue_pause_stops_start_now_items_whether_or_not_queue_was_started() {
                 .await;
             f.status(unrelated.download.id, DownloadStatus::Active)
                 .await;
-            let pauses = 3 + usize::from(started);
+            let pauses = 1;
             assert_eq!(f.calls("aria2.pause"), pauses);
 
             // Repeated pauses are harmless; a later individual resume still overrides suppression.
@@ -64,7 +184,8 @@ async fn queue_pause_stops_start_now_items_whether_or_not_queue_was_started() {
                 .await;
             f.tick().await;
             f.status(items[0].download.id, DownloadStatus::Active).await;
-            f.status(items[1].download.id, DownloadStatus::Paused).await;
+            f.status(items[1].download.id, DownloadStatus::Pending)
+                .await;
             f.close().await;
         }
     }
