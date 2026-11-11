@@ -197,7 +197,7 @@ async fn scheduler_overdue_deadline_stops_individual_before_refill() {
     let mut f = Fixture::new().await;
     let q = f.once().await;
     let items = f.add(q.id, 2, true).await;
-    assert_eq!(f.calls("aria2.addUri"), 2); // Individual starts deliberately bypass capacity.
+    assert_eq!(f.calls("aria2.addUri"), 1);
     let pending = f.add(q.id, 1, false).await.remove(0);
     f.state
         .db
@@ -205,14 +205,21 @@ async fn scheduler_overdue_deadline_stops_individual_before_refill() {
         .unwrap();
     f.restart().await;
     f.tick().await;
-    for item in items {
+    for (index, item) in items.into_iter().enumerate() {
         let d = f.get(item.download.id).await;
-        assert_eq!(d.download.status, DownloadStatus::Paused);
-        assert!(d.download.paused_by_scheduler);
+        assert_eq!(
+            d.download.status,
+            if index == 0 {
+                DownloadStatus::Paused
+            } else {
+                DownloadStatus::Pending
+            }
+        );
+        assert_eq!(d.download.paused_by_scheduler, index == 0);
         assert!(!d.download.manually_started);
     }
     f.status(pending.download.id, DownloadStatus::Pending).await;
-    assert_eq!(f.calls("aria2.addUri"), 2);
+    assert_eq!(f.calls("aria2.addUri"), 1);
     assert_eq!(f.get_queue(q.id).await.status, QueueStatus::Paused);
     f.close().await;
 }

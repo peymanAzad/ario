@@ -39,14 +39,14 @@ pub fn reconcile(state: &AppState, queue: &Queue, scheduled_stop: bool) -> anyho
     let active = downloads
         .iter()
         .any(|item| item.status == DownloadStatus::Active);
-    // Individual runs in a paused queue do not authorize pending queue work.
+    // A paused queue can still have imported items waiting for a slot.
     let queue_running = crate::scheduler::effective_queue_status(&state.db, queue, state.now())?
         == common::enums::QueueStatus::Active;
-    let eligible = queue_running
-        && !state
-            .db
-            .list_startable_downloads(queue.id, false)?
-            .is_empty();
+    let eligible = state
+        .db
+        .list_startable_downloads(queue.id, false)?
+        .iter()
+        .any(|item| queue_running || item.manually_started);
     if scheduled_stop || (!active && !eligible) {
         let reason = if success {
             "completed"

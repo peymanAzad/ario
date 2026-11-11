@@ -300,24 +300,12 @@ async fn create_download(
     };
 
     if start_immediately {
-        state.db.begin_event_run(queue_id)?;
         state.db.set_manually_started(download.id, true)?;
-        state.db.set_paused_by_scheduler(download.id, false)?;
-        match start_in_aria2(state, &download, Aria2AddMode::Fresh).await {
-            Ok(gid) => {
-                state.db.update_download_gid(download.id, &gid)?;
-                state
-                    .db
-                    .update_download_status(download.id, &DownloadStatus::Active)?;
-            }
-            Err(error) => {
-                state.db.set_manually_started(download.id, false)?;
-                state.db.update_download_status(
-                    download.id,
-                    &DownloadStatus::Error(error.to_string()),
-                )?;
-            }
-        }
+        let queue = state
+            .db
+            .get_queue(queue_id)?
+            .ok_or_else(|| AppError::NotFound(format!("queue {queue_id}")))?;
+        crate::scheduler::start_requested_downloads(state, &queue).await?;
     }
 
     let row = state
