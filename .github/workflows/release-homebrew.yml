@@ -52,10 +52,14 @@ jobs:
           fi
 
           mkdir -p Formula
-          sed '$d' "$generated" > "$formula"
+          grep -Fx '    install_binary_aliases!' "$generated"
+          sed -e '/^    install_binary_aliases!$/i\    man1.install "man/ario.1", "man/ario_daemon.1"' \
+            -e '$d' "$generated" > "$formula"
           cat >> "$formula" <<'RUBY'
 
             test do
+              assert_path_exists man1/"ario.1"
+              assert_path_exists man1/"ario_daemon.1"
               assert_match "invalid glyph mode", shell_output("#{bin}/ario --glyphs=invalid 2>&1", 1)
               assert_match "--host must be a loopback address", shell_output("#{bin}/ario_daemon --host 0.0.0.0 2>&1", 1)
             end

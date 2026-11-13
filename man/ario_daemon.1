@@ -1,0 +1,42 @@
+.TH ARIO_DAEMON 1 "November 2026" "Ario" "User Commands"
+.SH NAME
+ario_daemon \- background download service for Ario
+.SH SYNOPSIS
+.B ario_daemon
+.RI [ OPTIONS ]
+.SH DESCRIPTION
+The Ario daemon manages aria2, downloads, and scheduled queues.
+It normally starts automatically with
+.BR ario (1).
+It can also be run manually and stopped with Ctrl+C or SIGTERM.
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Print command-line help and exit.
+.TP
+.BR \-v ", " \-\-version
+Print the installed version and exit.
+.TP
+.BI \-\-host " ADDRESS"
+Listen on a loopback address. Default:
+.BR 127.0.0.1 .
+Also accepts
+.BR localhost .
+.TP
+.BI \-\-port " PORT"
+Listen on the specified port, from 1 to 65535. Default: 47812.
+.TP
+.B \-\-tui-managed
+Allow the TUI to manage daemon shutdown.
+.SH FILES
+Settings are stored in
+.I $XDG_CONFIG_HOME/ario/server.toml
+or
+.I \(ti/.config/ario/server.toml
+on Linux, and
+.I \(ti/Library/Application Support/ario/server.toml
+on macOS.
+The file is created on first launch.
+.SH SEE ALSO
+.BR ario (1),
+.BR aria2c (1)

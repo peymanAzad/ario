@@ -50,9 +50,13 @@ jobs:
           rpm --query --package --list "$rpm" | tee "$RUNNER_TEMP/rpm-files.txt"
           grep -Fx /usr/bin/ario "$RUNNER_TEMP/rpm-files.txt"
           grep -Fx /usr/bin/ario_daemon "$RUNNER_TEMP/rpm-files.txt"
+          grep -Fx /usr/share/man/man1/ario.1.gz "$RUNNER_TEMP/rpm-files.txt"
+          grep -Fx /usr/share/man/man1/ario_daemon.1.gz "$RUNNER_TEMP/rpm-files.txt"
           sudo apt-get install --yes "./$deb"
           test -x /usr/bin/ario
           test -x /usr/bin/ario_daemon
+          test -f /usr/share/man/man1/ario.1.gz
+          test -f /usr/share/man/man1/ario_daemon.1.gz
           aria2c --version
       - name: Verify installed daemon and aria2
         run: python3 scripts/smoke-linux.py /usr/bin/ario_daemon
@@ -78,6 +82,8 @@ jobs:
           pacman -U --noconfirm "$package"
           test -x /usr/bin/ario
           test -x /usr/bin/ario_daemon
+          test -f /usr/share/man/man1/ario.1.gz
+          test -f /usr/share/man/man1/ario_daemon.1.gz
           python /scripts/smoke-linux.py /usr/bin/ario_daemon
           SH
       - name: Prepare first WinGet submission

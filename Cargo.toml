@@ -11,13 +11,14 @@ repository = "https://github.com/peymanAzad/ario"
 license = "MIT"
 keywords = ["aria2", "bittorrent", "download", "terminal", "tui"]
 categories = ["command-line-utilities"]
-# Publish only crate metadata, Rust sources (including tests), and the SQL schema.
+# Publish crate metadata, Rust sources (including tests), the SQL schema, and manuals.
 # Leave demo media, development docs, CI, and runtime files out of the archive.
 include = [
   "/Cargo.lock",
   "/Cargo.toml",
   "/LICENSE",
   "/README.md",
+  "/man/*.1",
   "/common/src/**/*.rs",
   "/server/schema.sql",
   "/server/src/**/*.rs",

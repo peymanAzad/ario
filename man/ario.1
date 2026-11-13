@@ -1,0 +1,68 @@
+.TH ARIO 1 "November 2026" "Ario" "User Commands"
+.SH NAME
+ario \- terminal download manager powered by aria2
+.SH SYNOPSIS
+.B ario
+.RI [ OPTIONS ]
+.SH DESCRIPTION
+Ario manages HTTP, HTTPS, and BitTorrent downloads in a terminal interface.
+It supports batch import of URLs and magnet links from the clipboard, local
+torrent files, and automatic file categorization.
+.PP
+Organize downloads into queues, prioritize their order, and limit how many run
+at once. Each queue has its own retry and download settings, which can be
+overridden for individual downloads.
+.PP
+Queues can run on one-time, daily, or weekly schedules with automatic start and
+stop times, including overnight windows. Queue event commands can run when all
+downloads succeed or when a queue runs out of work or reaches its scheduled stop.
+.PP
+By default, it starts a local daemon and aria2 automatically.
+Downloads and scheduled queues can continue after the interface closes.
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Print command-line help and exit.
+.TP
+.BR \-v ", " \-\-version
+Print the installed version and exit.
+.TP
+.BI \-\-glyphs " MODE"
+Choose the icon style:
+.BR nerd ,
+.BR unicode ,
+or
+.BR ascii .
+Overrides the configured glyph mode.
+Also accepts
+.BR \-\-glyphs=MODE .
+.SH KEYS
+.TP
+.B ?
+Show keyboard shortcuts from the main screen.
+.TP
+.B v
+Import URLs and magnet links from the clipboard.
+.TP
+.B a
+Add a local torrent file.
+.TP
+.B q
+Close the interface from the main screen.
+By default, the daemon stays running while downloads are active or scheduled
+queues are enabled.
+.SH FILES
+.B tui.toml
+contains interface settings;
+.B server.toml
+contains daemon settings.
+Both are created on first launch in
+.IR $XDG_CONFIG_HOME/ario ,
+or
+.I \(ti/.config/ario
+if unset, on Linux.
+On macOS, they are in
+.IR "\(ti/Library/Application Support/ario" .
+.SH SEE ALSO
+.BR ario_daemon (1),
+.BR aria2c (1)

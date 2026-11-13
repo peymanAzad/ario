@@ -25,6 +25,7 @@ arch_config="$(pwd)/packaging/nfpm-arch.yaml"
 tar -xzf "$archive" --strip-components=1 -C "$stage"
 test -x "$stage/ario"
 test -x "$stage/ario_daemon"
+gzip -n "$stage/man/ario.1" "$stage/man/ario_daemon.1"
 mkdir -p "$output"
 output=$(cd "$output" && pwd)
 (

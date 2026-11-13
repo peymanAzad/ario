@@ -33,3 +33,7 @@ contents:
     dst: /usr/share/licenses/ario-download-bin/LICENSE
   - src: README.md
     dst: /usr/share/doc/ario-download-bin/README.md
+  - src: man/ario.1.gz
+    dst: /usr/share/man/man1/ario.1.gz
+  - src: man/ario_daemon.1.gz
+    dst: /usr/share/man/man1/ario_daemon.1.gz
