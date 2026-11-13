@@ -5,6 +5,7 @@ use crate::{
     state::AppState,
 };
 use axum::Router;
+use common::cli::Command;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
@@ -23,9 +24,24 @@ mod routing;
 mod scheduler;
 mod state;
 
+const HELP: &str = "Run the Ario download daemon powered by aria2.
+
+Usage: ario_daemon [OPTIONS]
+
+Options:
+      --host <ADDRESS>  Loopback address to listen on [default: 127.0.0.1]
+      --port <PORT>     Port to listen on [default: 47812]
+      --tui-managed     Allow the TUI to manage daemon shutdown
+  -h, --help            Print help
+  -v, --version         Print version";
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
-    let launch = LaunchOptions::parse(std::env::args().skip(1))?;
+    let Some(launch) =
+        LaunchOptions::parse(std::env::args().skip(1))?.into_options("ario_daemon", HELP)
+    else {
+        return Ok(());
+    };
     let server_config = config::load_or_create()?;
 
     let db_path = config::config_dir()?.join("ario.db");
@@ -181,10 +197,13 @@ impl Default for LaunchOptions {
 }
 
 impl LaunchOptions {
-    fn parse(args: impl IntoIterator<Item = String>) -> anyhow::Result<Self> {
+    fn parse(args: impl IntoIterator<Item = String>) -> anyhow::Result<Command<Self>> {
         let mut options = Self::default();
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
+            if let Some(command) = Command::from_common_arg(&arg) {
+                return Ok(command);
+            }
             match arg.as_str() {
                 "--host" => {
                     let value = args
@@ -216,7 +235,7 @@ impl LaunchOptions {
                 _ => anyhow::bail!("unknown argument: {arg}"),
             }
         }
-        Ok(options)
+        Ok(Command::Run(options))
     }
 }
 
@@ -226,12 +245,14 @@ mod launch_tests {
 
     #[test]
     fn parses_custom_managed_listener() {
-        let options = LaunchOptions::parse(
+        let Command::Run(options) = LaunchOptions::parse(
             ["--host", "::1", "--port", "49123", "--tui-managed"]
                 .into_iter()
                 .map(str::to_string),
         )
-        .unwrap();
+        .unwrap() else {
+            panic!("expected launch options");
+        };
         assert_eq!(options.host, "::1".parse::<IpAddr>().unwrap());
         assert_eq!(options.port, 49123);
         assert!(options.tui_managed);

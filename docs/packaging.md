@@ -9,6 +9,7 @@ crates.io. It allows:
 - `Cargo.toml`, `Cargo.lock`, `README.md`, and `LICENSE`.
 - Rust sources under `common/src`, `server/src`, and `tui/src`, including tests.
 - `server/schema.sql`, which the daemon embeds at compile time.
+- The `ario(1)` and `ario_daemon(1)` manual pages under `man/`.
 
 Cargo normalizes `Cargo.toml`, saves the original as `Cargo.toml.orig`, and adds
 Git revision metadata when available.

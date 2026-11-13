@@ -1,5 +1,6 @@
 mod api;
 mod app;
+mod cli;
 mod clipboard;
 mod config;
 mod daemon;
@@ -34,8 +35,12 @@ use tui::Tui;
 const TICK_RATE_MS: u64 = 500;
 
 fn main() -> anyhow::Result<()> {
+    let Some(cli_glyph_mode) =
+        cli::parse(std::env::args().skip(1))?.into_options("ario", cli::HELP)
+    else {
+        return Ok(());
+    };
     let tui_config = config::load_or_create()?;
-    let cli_glyph_mode = icons::parse_glyph_args(std::env::args().skip(1))?;
     let lc_all = std::env::var("LC_ALL").ok();
     let lc_ctype = std::env::var("LC_CTYPE").ok();
     let lang = std::env::var("LANG").ok();

@@ -1,6 +1,6 @@
 [package]
 name = "ario"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 rust-version = "1.95"
 description = "A batteries-included terminal download manager powered by aria2"
@@ -11,7 +11,7 @@ repository = "https://github.com/peymanAzad/ario"
 license = "MIT"
 keywords = ["aria2", "bittorrent", "download", "terminal", "tui"]
 categories = ["command-line-utilities"]
-# Publish only crate metadata, Rust sources (including tests), and the SQL schema.
+# Publish crate metadata, Rust sources (including tests), the SQL schema, and manuals.
 # Leave demo media, development docs, CI, and runtime files out of the archive.
 include = [
   "/Cargo.lock",
@@ -19,8 +19,10 @@ include = [
   "/LICENSE",
   "/README.md",
   "/common/src/**/*.rs",
+  "/man/*.1",
   "/server/schema.sql",
   "/server/src/**/*.rs",
+  "/tests/**/*.rs",
   "/tui/src/**/*.rs",
 ]
 default-run = "ario"

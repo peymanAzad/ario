@@ -14,7 +14,9 @@ workflow directly; edit the configuration or reusable workflows, then run
 | Windows | x64 | `.zip` |
 
 Every binary archive and Linux package contains both `ario` and `ario_daemon`.
-Archives include the license and README. The release includes SHA-256 checksums,
+Archives include the license, README, and `man/` directory. Linux packages and
+Homebrew install the `ario(1)` and `ario_daemon(1)` manual pages.
+The release includes SHA-256 checksums,
 the Homebrew formula, a source archive, and the cargo-dist manifest. Linux
 packages have a separate `linux-packages.sha256` checksum file.
 

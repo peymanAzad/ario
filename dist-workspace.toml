@@ -14,6 +14,7 @@ targets = [
 unix-archive = ".tar.gz"
 windows-archive = ".zip"
 checksum = "sha256"
+include = ["man"]
 # Keep the tap in the generated release notes. The custom job handles publishing.
 tap = "peymanAzad/homebrew-tap"
 publish-jobs = ["./release-homebrew"]
