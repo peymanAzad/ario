@@ -1,6 +1,6 @@
 [package]
 name = "ario"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 rust-version = "1.95"
 description = "A batteries-included terminal download manager powered by aria2"
@@ -18,12 +18,12 @@ include = [
   "/Cargo.toml",
   "/LICENSE",
   "/README.md",
-  "/man/*.1",
   "/common/src/**/*.rs",
+  "/man/*.1",
   "/server/schema.sql",
   "/server/src/**/*.rs",
-  "/tui/src/**/*.rs",
   "/tests/**/*.rs",
+  "/tui/src/**/*.rs",
 ]
 default-run = "ario"
 autobins = false
