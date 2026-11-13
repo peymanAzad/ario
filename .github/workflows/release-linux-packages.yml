@@ -67,6 +67,7 @@ jobs:
             --mount "type=bind,source=$PWD/scripts,target=/scripts,readonly" \
             --mount "type=bind,source=$PWD/target/linux-packages,target=/packages,readonly" \
             archlinux:base bash -seuo pipefail <<'SH'
+          trap 'echo "Arch package verification failed: $BASH_COMMAND" >&2' ERR
           pacman -Syu --noconfirm --needed python
           packages=(/packages/*.pkg.tar.zst)
           test "${#packages[@]}" -eq 1
@@ -79,6 +80,8 @@ jobs:
             packaged_version=$(pacman -Qp "$package" | cut -d ' ' -f2)
             test "$(vercmp "$packaged_version" "${ARIO_VERSION%%-*}-1")" -lt 0
           fi
+          # The minimal Arch image excludes man pages from package extraction.
+          sed -i '/^NoExtract[[:space:]]*=.*usr\/share\/man\//d' /etc/pacman.conf
           pacman -U --noconfirm "$package"
           test -x /usr/bin/ario
           test -x /usr/bin/ario_daemon
