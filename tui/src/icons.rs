@@ -128,30 +128,6 @@ impl IconSet {
     }
 }
 
-pub fn parse_glyph_args<I, S>(args: I) -> anyhow::Result<Option<GlyphMode>>
-where
-    I: IntoIterator<Item = S>,
-    S: Into<String>,
-{
-    let mut args = args.into_iter().map(Into::into);
-    let mut mode = None;
-    while let Some(arg) = args.next() {
-        let value = if arg == "--glyphs" {
-            args.next()
-                .ok_or_else(|| anyhow::anyhow!("--glyphs requires nerd, unicode, or ascii"))?
-        } else if let Some(value) = arg.strip_prefix("--glyphs=") {
-            value.to_string()
-        } else {
-            anyhow::bail!("unknown argument {arg:?}");
-        };
-        if mode.is_some() {
-            anyhow::bail!("--glyphs may only be specified once");
-        }
-        mode = Some(value.parse().map_err(anyhow::Error::msg)?);
-    }
-    Ok(mode)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,20 +164,5 @@ mod tests {
                 assert_ne!(glyph, "?");
             }
         }
-    }
-
-    #[test]
-    fn parses_both_cli_forms_and_rejects_bad_values() {
-        assert_eq!(
-            parse_glyph_args(["--glyphs=nerd"]).unwrap(),
-            Some(GlyphMode::NerdFont)
-        );
-        assert_eq!(
-            parse_glyph_args(["--glyphs", "ascii"]).unwrap(),
-            Some(GlyphMode::Ascii)
-        );
-        assert!(parse_glyph_args(["--glyphs=emoji"]).is_err());
-        assert!(parse_glyph_args(["--glyphs"]).is_err());
-        assert!(parse_glyph_args(["--other"]).is_err());
     }
 }

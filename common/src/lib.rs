@@ -1,4 +1,5 @@
 pub mod api;
+pub mod cli;
 pub mod download;
 pub mod enums;
 pub mod finetune;
